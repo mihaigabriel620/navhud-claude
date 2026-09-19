@@ -20,6 +20,11 @@ $ProgressPreference    = 'SilentlyContinue'
 $root = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 Set-Location $root
 
+# Everything gradle prints goes here, so a console that closes on you takes
+# nothing with it. Open it in VS Code if anything below says FAIL.
+$log = Join-Path $root "navhud-setup.log"
+Remove-Item $log -ErrorAction SilentlyContinue
+
 $results = [ordered]@{}
 function Step($name, $ok, $note = '') { $results[$name] = @($ok, $note) }
 function Say($msg, $colour = 'Gray') { Write-Host $msg -ForegroundColor $colour }
@@ -133,7 +138,8 @@ if ((Test-Path "$root\android\gradlew.bat") -and $sdk) {
     Say ""
     Say "Running the unit tests. First run downloads a lot - be patient." Yellow
     Push-Location "$root\android"
-    & .\gradlew.bat --console=plain :app:testDebugUnitTest 2>&1 | Tee-Object -Variable out | Out-Null
+    & .\gradlew.bat --console=plain :app:testDebugUnitTest 2>&1 |
+        Tee-Object -Variable out | Tee-Object -FilePath $log -Append | Out-Null
     Pop-Location
     $testsOk = ($out -join "`n") -match 'BUILD SUCCESSFUL'
     # count them out of the XML the test task leaves behind
@@ -157,7 +163,8 @@ $apkOk = $false; $apkNote = "skipped"
 if ($testsOk) {
     Say "Building the signed APK..." Yellow
     Push-Location "$root\android"
-    & .\gradlew.bat --console=plain :app:assembleRelease 2>&1 | Out-Null
+    & .\gradlew.bat --console=plain :app:assembleRelease 2>&1 |
+        Tee-Object -FilePath $log -Append | Out-Null
     Pop-Location
     $apk = "$root\android\app\build\outputs\apk\release\app-release.apk"
     $apkOk = Test-Path $apk
@@ -208,5 +215,12 @@ if ($bad -eq 0) {
     Say "  gh repo create navhud --private --source=. --push" Green
 } else {
     Say "$bad problem(s) above. Paste this whole output and I will sort it." Yellow
+    Say "Gradle's full output is in navhud-setup.log next to this script." Yellow
 }
 Say ""
+
+# If this was launched by double-clicking, the console closes the instant the
+# script ends and you never see any of the above. Hold it open.
+if ($Host.Name -eq 'ConsoleHost') {
+    Read-Host "Press Enter to close"
+}
