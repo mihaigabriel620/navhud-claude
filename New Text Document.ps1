@@ -53,7 +53,7 @@ $gitOk = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 Step "git installed" $gitOk
 
 $acli = Get-Command arduino-cli -ErrorAction SilentlyContinue
-Step "arduino-cli installed" ($null -ne $acli) $(if ($acli) { "" } else { "optional - only needed to flash the board" })
+Step "arduino-cli installed" $(if ($acli) { $true } else { $null }) $(if ($acli) { "" } else { "optional - only needed to flash the board" })
 
 # ---- 3. the SDK and local.properties ---------------------------------------
 $sdk = $null
@@ -75,12 +75,14 @@ if ($sdk) {
 # ---- 4. replace the stale firmware -----------------------------------------
 # The source zip carried an arduino/ folder from before the firmware rewrite:
 # hud_imu.h, hud_mag.h, hud_probe.h and friends, none of which exist any more.
-$stale = Test-Path "$root\arduino\NavHud\hud_probe.h"
+$current = (Test-Path "$root\arduino\NavHud\hud_pins.h") -and
+            (Test-Path "$root\arduino\NavHud\hud_compass.h") -and
+            -not (Test-Path "$root\arduino\NavHud\hud_probe.h")
 $fw = Get-ChildItem -Path "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop",$root `
         -Filter "NavHud-firmware-2.7.zip" -File -ErrorAction SilentlyContinue |
       Select-Object -First 1
 
-if (-not $stale) {
+if ($current) {
     Step "firmware is current" $true "already 2.7"
 } elseif (-not $fw) {
     Step "firmware is current" $false "NavHud-firmware-2.7.zip not found in Downloads, Desktop or the repo"
