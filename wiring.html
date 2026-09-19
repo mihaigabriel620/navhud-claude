@@ -1,0 +1,252 @@
+<title>NavHUD Wiring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+
+<style>
+:root{
+  --ground:#F6F3EE; --panel:#FFFFFF; --sunk:#EFEAE2;
+  --rule:#DCD5C9; --rule-strong:#BFB6A6;
+  --ink:#1C1A17; --ink-2:#4A463F; --ink-3:#7A7365;
+  --accent:#B26A00; --accent-wash:#FBEFDC;
+  --danger:#B3231A; --danger-wash:#FBE7E5;
+  --ok:#2F7D46; --ok-wash:#E4F1E7;
+  --wire-3v3:#B26A00; --wire-gnd:#4A463F; --wire-spi:#1F6FB2; --wire-i2c:#7A2FA8;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0B0C0F; --panel:#14161B; --sunk:#0F1116;
+  --rule:#262A31; --rule-strong:#3A3F47;
+  --ink:#F2F4F7; --ink-2:#A6AEB9; --ink-3:#828A95;
+  --accent:#FF9D00; --accent-wash:#241906;
+  --danger:#FF6A55; --danger-wash:#2A100C;
+  --ok:#6FBF73; --ok-wash:#102113;
+  --wire-3v3:#FF9D00; --wire-gnd:#8A93A0; --wire-spi:#5AA9E6; --wire-i2c:#B983E0;
+}}
+:root[data-theme="dark"]{
+  --ground:#0B0C0F; --panel:#14161B; --sunk:#0F1116;
+  --rule:#262A31; --rule-strong:#3A3F47;
+  --ink:#F2F4F7; --ink-2:#A6AEB9; --ink-3:#828A95;
+  --accent:#FF9D00; --accent-wash:#241906;
+  --danger:#FF6A55; --danger-wash:#2A100C;
+  --ok:#6FBF73; --ok-wash:#102113;
+  --wire-3v3:#FF9D00; --wire-gnd:#8A93A0; --wire-spi:#5AA9E6; --wire-i2c:#B983E0;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);margin:0;padding:0 20px 90px;
+  font-family:"Barlow",ui-sans-serif,system-ui,sans-serif;font-size:16px;line-height:1.6;
+  -webkit-font-smoothing:antialiased}
+.sheet{max-width:920px;margin:0 auto}
+
+.masthead{border-bottom:2px solid var(--ink);padding:40px 0 14px;margin-bottom:30px;
+  display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 28px}
+.masthead h1{font-family:"Barlow Condensed",sans-serif;font-weight:700;
+  font-size:clamp(36px,6.5vw,58px);letter-spacing:-.015em;line-height:.94;margin:0}
+.masthead h1 em{font-style:normal;color:var(--accent)}
+.masthead .strap{color:var(--ink-2);font-size:15px;max-width:46ch;margin:0 0 4px;flex:1 1 280px}
+.stamp{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-3);border:1px solid var(--rule-strong);
+  border-radius:3px;padding:4px 9px;white-space:nowrap;margin-bottom:6px}
+
+section{margin:0 0 46px}
+h2{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:27px;margin:0 0 6px}
+h3{font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:19px;margin:26px 0 4px}
+.lede{color:var(--ink-2);margin:0 0 20px;max-width:68ch}
+p{max-width:68ch}
+
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14.5px;font-variant-numeric:tabular-nums}
+thead th{text-align:left;font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:13px;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);
+  border-bottom:1px solid var(--rule-strong);padding:0 14px 7px 0;white-space:nowrap}
+tbody td{border-bottom:1px solid var(--rule);padding:8px 14px 8px 0;vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+td.note{color:var(--ink-2)}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em}
+.pin{font-family:"JetBrains Mono",monospace;font-weight:700;white-space:nowrap}
+.tag{display:inline-block;font-family:"Barlow Condensed",sans-serif;font-weight:700;
+  font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;padding:1px 6px;border-radius:3px}
+.tag.spi{background:color-mix(in srgb,var(--wire-spi) 16%,transparent);color:var(--wire-spi)}
+.tag.i2c{background:color-mix(in srgb,var(--wire-i2c) 16%,transparent);color:var(--wire-i2c)}
+.tag.pwr{background:var(--accent-wash);color:var(--accent)}
+
+.callout{border-radius:4px;padding:16px 18px;margin:22px 0 0;font-size:15px;
+  border:1px solid var(--rule);background:var(--panel)}
+.callout p{margin:0 0 9px;max-width:72ch}
+.callout p:last-child{margin-bottom:0}
+.callout .tag{display:block;margin-bottom:5px;font-size:13px;letter-spacing:.09em}
+.callout.warn{background:var(--danger-wash);border-color:color-mix(in srgb,var(--danger) 32%,var(--rule))}
+.callout.warn .tag{color:var(--danger);background:none;padding:0}
+.callout.good{background:var(--ok-wash);border-color:color-mix(in srgb,var(--ok) 32%,var(--rule))}
+.callout.good .tag{color:var(--ok);background:none;padding:0}
+
+.files{margin:0;padding:0;list-style:none;max-width:72ch}
+.files li{border-top:1px solid var(--rule);padding:10px 0;font-size:14.5px;color:var(--ink-2)}
+.files li:last-child{border-bottom:1px solid var(--rule)}
+.files b{font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--ink);font-weight:700}
+
+svg.fig{display:block;width:100%;height:auto;background:var(--panel);
+  border:1px solid var(--rule);border-radius:6px;margin:8px 0 6px}
+figcaption{font-size:14px;color:var(--ink-3);margin-bottom:18px}
+ol{max-width:68ch}
+ol li{margin-bottom:8px}
+footer{border-top:1px solid var(--rule);margin-top:54px;padding-top:16px;
+  color:var(--ink-3);font-size:13.5px}
+</style>
+
+<div class="sheet">
+
+<header class="masthead">
+  <h1>NavHUD<br><em>Wiring</em></h1>
+  <p class="strap">One ESP8266, three peripherals, eleven usable pins. Every one is spoken for, and two of them have a trap on them.</p>
+  <span class="stamp">ESP-12F &middot; ST7796S &middot; MCP2515 &middot; MPU-6050</span>
+</header>
+
+<section>
+  <h2>The pin map</h2>
+  <p class="lede">This is the whole budget. GPIO0, 2 and 15 are boot-strapping pins and GPIO16 is on a different peripheral block entirely, so the order below is not a preference &mdash; it is the only arrangement that leaves nothing stranded.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ESP8266</th><th>D-label</th><th>Goes to</th><th>Bus</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="pin">GPIO14</td><td>D5</td><td>TFT <code>SCK</code> + MCP2515 <code>SCK</code></td><td><span class="tag spi">SPI</span></td><td class="note">HSPI clock, fixed in silicon</td></tr>
+        <tr><td class="pin">GPIO13</td><td>D7</td><td>TFT <code>SDI</code> + MCP2515 header pin marked <code>SO</code></td><td><span class="tag spi">SPI</span></td><td class="note">HSPI MOSI, fixed. See the GPIO12 row for why this looks crossed</td></tr>
+        <tr><td class="pin">GPIO12</td><td>D6</td><td>MCP2515 header pin marked <code>SI</code></td><td><span class="tag spi">SPI</span></td><td class="note">HSPI MISO. Yes, MISO to &ldquo;SI&rdquo; &mdash; the module labels its header from the host&rsquo;s side. <b>The panel&rsquo;s SDO stays unconnected.</b></td></tr>
+        <tr><td class="pin">GPIO15</td><td>D8</td><td>MCP2515 <code>CS</code></td><td><span class="tag spi">SPI</span></td><td class="note">Must be LOW at boot &mdash; keep the board&rsquo;s 12k pulldown. This is the pin the controller was measured answering on</td></tr>
+        <tr><td class="pin">GPIO4</td><td>D2</td><td>TFT <code>CS</code></td><td><span class="tag spi">SPI</span></td><td class="note">A clean pin with nothing fitted, which is all a chip select wants</td></tr>
+        <tr><td class="pin">GPIO5</td><td>D1</td><td>TFT <code>DC / RS</code></td><td></td><td class="note"></td></tr>
+        <tr><td class="pin">GPIO16</td><td>D0</td><td>TFT <code>LED</code> (backlight)</td><td></td><td class="note">PWM works here. Through a transistor if the module draws more than ~12 mA</td></tr>
+        <tr><td class="pin">GPIO0</td><td>D3</td><td>MPU-6050 <code>SDA</code></td><td><span class="tag i2c">I&sup2;C</span></td><td class="note">Boot pin: must be HIGH at reset. The GY-521&rsquo;s own pull-up handles it</td></tr>
+        <tr><td class="pin">GPIO2</td><td>D4</td><td>MPU-6050 <code>SCL</code></td><td><span class="tag i2c">I&sup2;C</span></td><td class="note">Boot pin: must be HIGH at reset. Same</td></tr>
+        <tr><td class="pin">TX / GPIO1</td><td>TX</td><td>USB &rarr; phone</td><td></td><td class="note">115200</td></tr>
+        <tr><td class="pin">RX / GPIO3</td><td>RX</td><td>USB &larr; phone</td><td></td><td class="note"></td></tr>
+        <tr><td class="pin">RST</td><td>&mdash;</td><td>TFT <code>RST</code></td><td></td><td class="note">Or tie the panel&rsquo;s RST to 3V3; the firmware is built with <code>TFT_RST -1</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:18px">Power: the panel runs from 5&nbsp;V (it has its own regulator and level shifters). The MPU-6050 breakout takes 3V3 or 5&nbsp;V &mdash; use <b>3V3</b>, because its I&sup2;C lines then sit at 3V3 and go straight to the ESP. The CAN board must be a 3V3 one; that is the next section.</p>
+
+  <div class="callout warn">
+    <span class="tag">Trap 1 &mdash; the blue MCP2515 board will kill the ESP8266</span>
+    <p>The common module pairs an MCP2515 with a <b>TJA1050</b> transceiver, and the TJA1050 needs 5&nbsp;V. The whole board therefore runs at 5&nbsp;V, so its <code>SO</code> pin drives about 4.5&nbsp;V straight into GPIO12, which is a 3.3&nbsp;V input. It may appear to work for a while. It is out of spec from the first frame.</p>
+    <p><b>Buy the SN65HVD230 version instead</b> &mdash; sold as &ldquo;SN65HVD230 CAN board&rdquo; or CJMCU-230. That transceiver is a 3.3&nbsp;V part, the whole module runs at 3V3, and nothing needs shifting. It is the same money.</p>
+    <p>If you already have a TJA1050 board, the usual fix is to cut the MCP2515&rsquo;s VCC from the 5&nbsp;V rail and feed it 3V3 while the transceiver keeps 5&nbsp;V. That works, but it is a scalpel job on a board that costs less than the blade.</p>
+  </div>
+
+  <div class="callout warn">
+    <span class="tag">Trap 2 &mdash; do not put the CAN chip select on GPIO16</span>
+    <p>GPIO16 is not on the normal GPIO block; it is the RTC pin <code>XPD_DCDC</code>. Espressif&rsquo;s datasheet is explicit: <i>&ldquo;XPD_DCDC can only be configured with internal pull-down, other GPIO PAD can only be configured with internal pull-up.&rdquo;</i></p>
+    <p>A chip select must idle <b>high</b>, and this is the one pin on the board that cannot be held there by anything but software. The MCP2515&rsquo;s CS lived here for months and the controller never answered once &mdash; every register read came back <code>FF</code>, on wiring that measured perfect. What settled it was coryjfowler&rsquo;s <b>loopback</b> example with nothing else connected and CS on D8: the chip configured, sent a frame to itself, and read it back. SPI in both directions, the bit timing and the crystal, all working. The module was never the problem.</p>
+    <p>So the chip select is on <b>D8/GPIO15</b> now, and GPIO16 drives the backlight instead &mdash; the one job on this board that does not care about pull-ups or interrupts. PWM does work there: <code>analogWrite</code> accepts any pin up to 16 and the core&rsquo;s waveform generator carries an explicit <code>pin == 16</code> path.</p>
+    <p>The MCP2515&rsquo;s <code>INT</code> pin is deliberately <b>not wired</b>. The only pin left would be GPIO16, and GPIO16 cannot raise an interrupt at all, so it would mean polling a pin instead of polling a register &mdash; strictly worse, because the register read also tells you which buffer is full.</p>
+  </div>
+</section>
+
+<section>
+  <h2>MPU-6050 &mdash; and which way up</h2>
+  <p class="lede">Four wires, and one decision that matters more than the wiring.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>GY-521 pin</th><th>Goes to</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td class="pin">VCC</td><td>3V3</td><td class="note">Not 5&nbsp;V &mdash; keeps the I&sup2;C lines at 3V3</td></tr>
+        <tr><td class="pin">GND</td><td>GND</td><td class="note"></td></tr>
+        <tr><td class="pin">SDA</td><td>GPIO0 (D3)</td><td class="note">4.7k to 3V3 if your board lacks its own</td></tr>
+        <tr><td class="pin">SCL</td><td>GPIO2 (D4)</td><td class="note">Same</td></tr>
+        <tr><td class="pin">AD0</td><td>leave floating</td><td class="note">The board pulls it down &rarr; address <code>0x68</code></td></tr>
+        <tr><td class="pin">INT, XCL, XDA</td><td>not connected</td><td class="note">Nothing left to connect them to, and nothing needs them</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Orientation: flat, chip facing up</h3>
+  <p>Yaw rate &mdash; how fast the car is turning &mdash; is measured about the <b>vertical</b> axis. On the MPU-6050 that is <b>+Z, which points straight out of the top face of the chip</b> (InvenSense&rsquo;s own orientation figure, with the pin-1 dot on the top face). So the board must lie roughly flat, component side up, in the plane of the dash.</p>
+  <p>Screw or tape it down properly. It does not have to be level, and it does not have to be square to the car &mdash; but it does have to be <b>rigid</b>. A sensor that can rock in its mount measures the rocking.</p>
+
+  <div class="callout good">
+    <span class="tag">It levels itself at boot</span>
+    <p>Your dash slopes, so &ldquo;flat&rdquo; is never level, and reading raw Z under-reads by cos(tilt): 1.5&nbsp;% at 10&deg;, 6&nbsp;% at 20&deg;, 13&nbsp;% at 30&deg; &mdash; plus real yaw leaks onto the axis you are not reading.</p>
+    <p>So the firmware measures the mounting angle once at start-up, from gravity, and rotates every gyro sample into vehicle axes with the standard Euler-rate relation <code>&psi;&#775; = (q&middot;sin&phi; + r&middot;cos&phi;) / cos&theta;</code>. That means <b>you only have to get it roughly flat</b>. It is done at boot and never repeated while driving, on purpose: braking and cornering tilt the measured gravity vector exactly when the yaw rate matters most.</p>
+    <p>One consequence &mdash; <b>have the car parked on level-ish ground when you power it up</b>, and do not remount the sensor without a power cycle.</p>
+  </div>
+
+  <p>The zero point is handled the same way. A gyro&rsquo;s bias is huge (InvenSense quote &plusmn;20&nbsp;&deg;/s at 25&nbsp;&deg;C, and the <em>same</em> &plusmn;20&nbsp;&deg;/s of wander across temperature), so calibrating once at power-on is nowhere near enough. The firmware re-zeros every time the car is provably standing still &mdash; and it now takes that from the <b>CAN speed</b>, not the phone, so it works in a tunnel, in a car park, and with nothing plugged in.</p>
+</section>
+
+<section>
+  <h2>MCP2515 &mdash; and where to tap the bus</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Module pin</th><th>Goes to</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td class="pin">VCC</td><td>3V3</td><td class="note">SN65HVD230 board only. A TJA1050 board needs 5&nbsp;V and will damage the ESP</td></tr>
+        <tr><td class="pin">GND</td><td>GND</td><td class="note">Common ground with the car</td></tr>
+        <tr><td class="pin">CS</td><td>GPIO16 (D0)</td><td class="note">+ 10k to 3V3</td></tr>
+        <tr><td class="pin">SO</td><td>GPIO12 (D6)</td><td class="note"></td></tr>
+        <tr><td class="pin">SI</td><td>GPIO13 (D7)</td><td class="note"></td></tr>
+        <tr><td class="pin">SCK</td><td>GPIO14 (D5)</td><td class="note"></td></tr>
+        <tr><td class="pin">INT</td><td>not connected</td><td class="note">No pin left, and GPIO16 cannot do <code>attachInterrupt</code> anyway. The firmware polls</td></tr>
+        <tr><td class="pin">CANH / CANL</td><td>the car&rsquo;s PT-CAN pair</td><td class="note">Twisted, and <b>remove the module&rsquo;s 120&nbsp;&Omega; terminator</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:18px"><b>Check the crystal on the board with your eyes</b> before you flash. Most are 8&nbsp;MHz, most library examples assume 16, and a mismatch is completely silent &mdash; you simply never receive a frame and there is nothing to see. It is <code>CAN_XTAL_MHZ</code> at the top of <code>hud_can.h</code>.</p>
+
+  <p><b>Do not add termination.</b> The car&rsquo;s bus is already terminated at both ends; a third 120&nbsp;&Omega; across it drags the differential voltage down and can take the whole powertrain bus off the air. Every one of these modules ships with one fitted &mdash; there is a jumper or a resistor marked <code>R1</code>/<code>120R</code> to remove.</p>
+
+  <h3>The bus itself</h3>
+  <p>Your five IDs are PT-CAN, which on an E60 runs at <b>500&nbsp;kbit/s</b> (K-CAN, the body bus, is 100&nbsp;kbit/s &mdash; wrong bus, wrong speed, nothing decodes). Where PT-CAN appears on the OBD connector varies by year and market on the E6x, so <b>verify before you trust a diagram</b>: tap a pair, set the firmware to 500&nbsp;k, and watch for <code>$CAN,ok</code> followed by frames. If nothing arrives, try the other pair before you start doubting the wiring.</p>
+
+  <div class="callout warn">
+    <span class="tag">The firmware never transmits &mdash; and here is why that matters</span>
+    <p>The MCP2515 is put in <b>listen-only</b> mode, which does not even acknowledge frames, so it cannot disturb the bus however wrong its bit timing is.</p>
+    <p>But there is a consequence your notes did not have. Microchip&rsquo;s datasheet, section 10.3: <i>&ldquo;In Listen-Only mode, both valid and invalid messages will be received, regardless of filters and masks.&rdquo;</i> <b>The six hardware filters do nothing in this mode.</b> Every frame on a 500&nbsp;kbit/s bus lands in two RX buffers about 250&nbsp;&micro;s deep, and the sorting happens in software.</p>
+    <p>That is fine &mdash; the speed counter is cumulative so dropped frames cost nothing, and the rest are absolute values that refresh within 100&nbsp;ms. But it is measured rather than assumed: the board reports <code>$CANDROP,&lt;overflows&gt;,&lt;frames&gt;</code> every five seconds. If that first number climbs while you drive, the loop is spending too long painting, not the wiring being wrong.</p>
+  </div>
+</section>
+
+<section>
+  <h2>One line in the display config that is not optional</h2>
+  <p class="lede">The display and the CAN controller share the SPI bus at different clock speeds. That only works if the library gives the bus back.</p>
+  <p>In your <code>User_Setup.h</code> &mdash; the file you copy over from <code>arduino/config/User_Setup.h</code> &mdash; this must be present and uncommented:</p>
+  <pre style="background:var(--sunk);border:1px solid var(--rule);border-radius:5px;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;overflow-x:auto"><code>#define SUPPORT_TRANSACTIONS
+#define TFT_MISO 12</code></pre>
+  <p>TFT_eSPI leaves transactions <b>off</b> by default on ESP8266 &mdash; it force-enables them on ESP32 and nowhere else. Without it, <code>begin_tft_write()</code> never calls <code>beginTransaction</code>, so the library sets the clock and mode once at <code>init()</code> and never again. The first CAN read leaves the bus at 8&nbsp;MHz and the display turns to confetti; or the display leaves it at 20&nbsp;MHz and the CAN controller returns rubbish. Which one you see depends on the order, which is what makes it look intermittent.</p>
+  <p>The library&rsquo;s own comment says it: <i>&ldquo;Transaction support is required if other SPI devices are connected.&rdquo;</i> Both lines are already set in the config file in the repo.</p>
+</section>
+
+<section>
+  <h2>Bring-up order</h2>
+  <ol>
+    <li>Copy <code>arduino/config/User_Setup.h</code> over <code>libraries/TFT_eSPI/User_Setup.h</code>.</li>
+    <li>Flash with <b>nothing</b> on GPIO16 yet. You should get the splash and then the panel. If the screen is white, that is a display problem and the CAN board is not involved &mdash; use <code>PanelDiag</code>.</li>
+    <li>Fit the 10k pull-up, then the MCP2515. Power up with the car&rsquo;s ignition off. The serial line should say <code>$CAN,ok</code>. If it says <code>$CAN,absent</code>, the chip never answered: CS wiring, the pull-up, or power.</li>
+    <li>Ignition on. Frames should start; <code>$CAR,&lt;kmh&gt;,&lt;rpm&gt;,&lt;ps&gt;,&lt;peak&gt;,&lt;volts&gt;,&lt;ign&gt;</code> arrives every five seconds. If <code>$CAN,ok</code> but no <code>$CAR</code>, you are on the wrong pair or the wrong bitrate.</li>
+    <li>Drive it. Check the speed against the dash, then check <b>torque goes negative on overrun</b> &mdash; foot off, still in gear. That is the one on-road test that proves the <code>0x0A8</code> decode, which is the one that has never been verified.</li>
+    <li>Check the battery reading against a multimeter. Within about 0.2&nbsp;V.</li>
+    <li>Only then fit the MPU-6050.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Where to look when something is wrong</h2>
+  <p class="lede">Every file has this list at the top of it as well. One concern per file, so a symptom points at a place.</p>
+  <ul class="files">
+    <li><b>hud_can.h</b> &mdash; the MCP2515 itself. Nothing about BMW. Registers, bit timing, listen-only, the drain. <i>Nothing arrives at all &rarr; here.</i></li>
+    <li><b>hud_car.h</b> &mdash; what the five E60 frames mean. One function per ID, each with its own source note and sanity limits. Compiles on a PC, so it is unit-tested. <i>One field wrong and the rest fine &rarr; here.</i></li>
+    <li><b>theme_dash.h</b> &mdash; the three-band layout, and the coordinates straight out of the HUD Bench export. <i>Something in the wrong place, or old digits showing through &rarr; here.</i></li>
+    <li><b>hud_arrows.h</b> &mdash; the manoeuvre glyphs, including the roundabout and its three geometry rules. <i>One manoeuvre looks wrong &rarr; here.</i></li>
+    <li><b>hud_imu.h</b> &mdash; the gyroscope: pins, levelling, bias. <i>Heading drifts or the map rotates while driving straight &rarr; here.</i></li>
+    <li><b>NavHud.ino</b> &mdash; wiring the above together, and deciding which of the phone or the car owns the screen.</li>
+    <li><b>test/</b> &mdash; <code>make check</code> runs fourteen groups on a PC, including an MCP2515 <em>simulator</em> built from the datasheet&rsquo;s register map. The driver talks to a chip nobody can watch, so that is the only place its register protocol is ever checked.</li>
+  </ul>
+</section>
+
+<footer>
+  Sources for the parts that are not opinion: MCP2515 datasheet DS20001801 (register map, listen-only, bit timing) &middot; InvenSense RM-MPU-6000A and PS-MPU-6000A (registers, axes, zero-rate output) &middot; ESP8266EX datasheet (GPIO16 / XPD_DCDC pull-down only) &middot; TFT_eSPI <code>User_Setup.h</code> and <code>Processors/TFT_eSPI_ESP8266.h</code> (transactions off by default) &middot; NXP AN3461 (tilt from an accelerometer) &middot; BMW ST402 training material (PT-CAN 500 kbit/s, K-CAN 100 kbit/s).
+</footer>
+</div>

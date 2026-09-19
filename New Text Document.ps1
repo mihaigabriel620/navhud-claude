@@ -12,6 +12,17 @@
 #  It is safe to run more than once. Nothing is deleted that git does not
 #  already have, and every step reports PASS or FAIL at the end instead of
 #  stopping at the first problem.
+#
+#  Revision 5:
+#    * extracting the firmware no longer fails when arduino\NavHud is already
+#      gone -- Remove-Item threw, the throw hit the catch, and the catch
+#      reported FAIL on a step that had in fact done nothing wrong yet
+#    * arduino\ and arduino\config are created rather than assumed
+#    * the zip is matched with a wildcard, so "...2.7 (1).zip" is found too
+#    * new step: installs the ESP8266 core, TFT_eSPI and mcp_can, and copies
+#      User_Setup.h into the TFT_eSPI library. Without that last copy the
+#      firmware compiles cleanly and drives the wrong pins.
+#    * a failing compile now quotes its first error instead of "run it by hand"
 # ---------------------------------------------------------------------------
 
 $ErrorActionPreference = 'Continue'
@@ -78,9 +89,11 @@ if ($sdk) {
 $current = (Test-Path "$root\arduino\NavHud\hud_pins.h") -and
             (Test-Path "$root\arduino\NavHud\hud_compass.h") -and
             -not (Test-Path "$root\arduino\NavHud\hud_probe.h")
+# The wildcard is deliberate: a second download of the same file arrives as
+# "NavHud-firmware-2.7 (1).zip", and an exact filter would walk straight past it.
 $fw = Get-ChildItem -Path "$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop",$root `
-        -Filter "NavHud-firmware-2.7.zip" -File -ErrorAction SilentlyContinue |
-      Select-Object -First 1
+        -Filter "NavHud-firmware-2.7*.zip" -File -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
 if ($current) {
     Step "firmware is current" $true "already 2.7"
@@ -92,7 +105,13 @@ if ($current) {
         if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
         Expand-Archive -Path $fw.FullName -DestinationPath $tmp -Force
 
-        Remove-Item -Recurse -Force "$root\arduino\NavHud"
+        # The folder may already be gone (an earlier Expand-Archive that failed
+        # half way deleted it). Removing something that is not there throws,
+        # and the throw landed in the catch below and reported FAIL -- so this
+        # one is deliberately quiet, and the parent folders are made first.
+        New-Item -ItemType Directory -Force "$root\arduino"        | Out-Null
+        New-Item -ItemType Directory -Force "$root\arduino\config" | Out-Null
+        Remove-Item -Recurse -Force "$root\arduino\NavHud" -ErrorAction SilentlyContinue
         Copy-Item -Recurse "$tmp\NavHud" "$root\arduino\NavHud"
         Copy-Item -Force "$tmp\User_Setup.h" "$root\arduino\config\User_Setup.h"
         if (Test-Path "$tmp\CHANGELOG.md") { Copy-Item -Force "$tmp\CHANGELOG.md" "$root\CHANGELOG.md" }
@@ -121,6 +140,56 @@ if (Test-Path $us) {
     $u = Get-Content $us -Raw
     Step "TFT_eSPI config matches" (($u -match 'TFT_CS\s+4') -and ($u -match 'TFT_MISO\s+-1')) "TFT_CS 4, TFT_MISO -1"
 } else { Step "TFT_eSPI config matches" $false "User_Setup.h missing" }
+
+# ---- 5b. the Arduino toolchain ---------------------------------------------
+# arduino-cli on its own compiles nothing for this board: the ESP8266 core is
+# a third-party package, and TFT_eSPI + mcp_can are libraries it has never
+# heard of. This is why "firmware compiles" failed even with arduino-cli
+# installed. Everything below is idempotent - re-running it is a no-op.
+$libsOk = $null; $libsNote = "arduino-cli not installed - skipped"
+if ($acli) {
+    $esp = "https://arduino.esp8266.com/stable/package_esp8266com_index.json"
+    Say ""
+    Say "Setting up the Arduino toolchain (first run downloads ~200 MB)..." Yellow
+
+    # config get needs a config file to exist; make one if there is none.
+    & arduino-cli config dump 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { & arduino-cli config init 2>&1 | Out-Null }
+
+    # --additional-urls on the command line, rather than editing his config.
+    & arduino-cli core update-index --additional-urls $esp 2>&1 |
+        Tee-Object -FilePath $log -Append | Out-Null
+    & arduino-cli core install esp8266:esp8266 --additional-urls $esp 2>&1 |
+        Tee-Object -FilePath $log -Append | Out-Null
+    & arduino-cli lib install "TFT_eSPI" 2>&1 | Tee-Object -FilePath $log -Append | Out-Null
+    & arduino-cli lib install "mcp_can"  2>&1 | Tee-Object -FilePath $log -Append | Out-Null
+
+    $coreOk = (& arduino-cli core list 2>&1 | Out-String) -match 'esp8266:esp8266'
+
+    # TFT_eSPI is configured by a header inside the library itself, not by the
+    # sketch. Compiling without this copy gives a clean build that drives the
+    # wrong pins - the worst possible outcome, because nothing complains.
+    $libRoot = $null
+    try { $libRoot = (& arduino-cli config get directories.user 2>$null | Select-Object -First 1) } catch {}
+    if ($libRoot) { $libRoot = "$libRoot".Trim().Trim('"') }
+    if (-not $libRoot -or -not (Test-Path $libRoot)) { $libRoot = "$env:USERPROFILE\Documents\Arduino" }
+    $tftDir = Join-Path $libRoot "libraries\TFT_eSPI"
+
+    $setupOk = $false
+    if ((Test-Path "$tftDir\User_Setup.h") -and (Test-Path "$root\arduino\config\User_Setup.h")) {
+        Copy-Item -Force "$root\arduino\config\User_Setup.h" "$tftDir\User_Setup.h"
+        $setupOk = ((Get-Content "$tftDir\User_Setup.h" -Raw) -match 'TFT_CS\s+4')
+    }
+    $libsOk = $coreOk -and $setupOk
+    if ($libsOk) {
+        $libsNote = "esp8266 core, TFT_eSPI (configured), mcp_can"
+    } elseif (-not $coreOk) {
+        $libsNote = "esp8266 core did not install - see navhud-setup.log"
+    } else {
+        $libsNote = "TFT_eSPI found but User_Setup.h was not copied into $tftDir"
+    }
+}
+Step "Arduino toolchain ready" $libsOk $libsNote
 
 # ---- 6. the wrapper --------------------------------------------------------
 if (-not (Test-Path "$root\android\gradlew.bat")) {
@@ -175,12 +244,21 @@ if ($testsOk) {
 Step "signed APK built" $apkOk $apkNote
 
 # ---- 8. the firmware compiles, if arduino-cli is here ----------------------
-if ($acli) {
-    $fwOut = & arduino-cli compile --fqbn esp8266:esp8266:d1_mini "$root\arduino\NavHud" 2>&1
-    $fwOk = $LASTEXITCODE -eq 0
-    Step "firmware compiles" $fwOk $(if ($fwOk) { "" } else { "run it by hand to see why" })
-} else {
+if (-not $acli) {
     Step "firmware compiles" $null "arduino-cli not installed - skipped"
+} elseif (-not (Test-Path "$root\arduino\NavHud\NavHud.ino")) {
+    Step "firmware compiles" $false "no sketch at arduino\NavHud - the 2.7 zip never landed"
+} else {
+    Say "Compiling the firmware..." Yellow
+    $fwOut = (& arduino-cli compile --fqbn esp8266:esp8266:d1_mini "$root\arduino\NavHud" 2>&1 | Out-String)
+    $fwOk  = $LASTEXITCODE -eq 0
+    $fwOut | Out-File -Append -Encoding utf8 $log
+    # Quote the first real error rather than sending him back to the log.
+    $first = ($fwOut -split [Environment]::NewLine | Where-Object { $_ -match 'error:|fatal error|No such file' } | Select-Object -First 1)
+    if ($fwOk)        { $fwNote = "esp8266:esp8266:d1_mini" }
+    elseif ($first)   { $fwNote = $first.Trim() }
+    else              { $fwNote = "see navhud-setup.log" }
+    Step "firmware compiles" $fwOk $fwNote
 }
 
 # ---- 9. commit -------------------------------------------------------------

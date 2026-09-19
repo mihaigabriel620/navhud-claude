@@ -1,5 +1,850 @@
 # Changelog
 
+## 2.7 — the roundabout arrow points where the exit actually is
+
+First, a correction to what I told you: `roundaboutArt()` was never drawing a
+fixed stub. It takes a bearing and rotates the whole glyph -- shaft, tip, wings,
+notch -- around it. Free rotation was already there. I was wrong.
+
+The problem was one line up. The caller did:
+
+    roundaboutArt(cx, cy, u, rabBearingFor(exitNo), exitNo, col, numFont);
+
+and `rabBearingFor()` was a seven-entry lookup table indexed by the exit NUMBER:
+
+    { 100, 30, -30, -80, -120, -150, -170 }
+
+So the arrow moved between exit numbers and never moved for a given one --
+because an exit number is not an angle. On a three-exit roundabout "exit 2" is
+almost always dead ahead; the table said 30 degrees. On a five-exit one it might
+be 45. Always plausible, rarely right, which is the worst way for a display to
+be wrong.
+
+**The phone now sends the real bearing, on its own frame:**
+
+    $RAB,<exit>,<bearing>
+
+`<exit>` is 1..12 and `<bearing>` is -180..180 degrees from the road you came in
+on -- 0 straight ahead, positive to the right. Mapbox gives it directly:
+`bearing_after - bearing_before` on the roundabout step, normalised.
+
+Its own frame rather than two more fields on `$HUD`, and that is forced rather
+than chosen: the `$HUD` frame ends with the street name, and the street is
+deliberately allowed to contain commas, so nothing can ever be appended after
+it. A field inserted before it would shift every later position and break an
+older phone. `$CAM` and `$LANE` already work this way.
+
+**The exit number rides along with the angle and is checked.** Frames arrive
+independently, so without it an angle measured at the last roundabout would be
+aimed at the next one -- and would look exactly as authoritative as a correct
+one. `rabBearing()` refuses any angle whose exit does not match the manoeuvre in
+front of it, and falls back to the old table.
+
+**A bearing outside +-180 is refused, not clamped.** A clamped corrupt digit is
+still an arrow pointing somewhere with total confidence.
+
+**And a bug that was probably half of what you were seeing.** `dashTurn_`
+decided whether to repaint from the manoeuvre code and the distance only --
+`rbExit` was not in its paint cache at all. Two roundabouts in a row with no
+other manoeuvre between them left the FIRST one's arrow and the FIRST one's
+digit on the glass for the second. Both the exit and the bearing are cached now.
+
+Two smaller things fell out:
+
+- `rabHasExit()` capped the arrow at exits 1..7 because that is how long the
+  table was. The guard now asks the only question that matters -- do we have a
+  direction -- so exit 8 gets an arrow when the phone knows where it is, and a
+  bare ring when nobody does.
+- The arrow is clamped to +-170 degrees. With a real bearing a roundabout that
+  doubles you back can ask for exactly 180, which lays the exit arrow on top of
+  the entry road and reads as one line through a circle. Ten degrees separates
+  them and is invisible as an error. The old table stopped at -170 for the same
+  reason.
+
+Checked rather than assumed: the arrow sweep was measured across the whole
+clamped range at 0.1 degree steps. It stays inside the clear rectangle at every
+angle (x 22..108 of 0..161, y 81..166 of 66..250), with 35 px of clearance to
+the distance text, and at its lowest it reaches 4 px past where the entry road
+already goes. Compiles clean, 55 % flash, 45 % RAM.
+
+**UNTIL THE APP SENDS `$RAB`, NOTHING CHANGES ON THE GLASS.** The firmware falls
+back to the old table exactly as before. The app half is: read
+`bearing_before`/`bearing_after` off the roundabout step, send the frame, and
+use the same number in `ui/ManeuverView.kt` -- those two tables are deliberately
+kept identical and were found disagreeing on five of seven exits once already,
+including a sign flip where the app pointed down-left and the panel down-right.
+
+## 2.6 — a pass over every file, and one bug that could crash the board
+
+You asked for the bloat out and the bugs found. Two audits went over the
+firmware file by file. Here is what came back, worst first.
+
+**THE ONE THAT MATTERS: a frame could smash memory.** `mcp_can.cpp` masks the
+DLC nibble to four bits and then reads that many bytes into an eight-byte array:
+
+    m_nDlc &= MCP_DLC_MASK;                                   // 0x0F, so 0..15
+    mcp2515_readRegisterS(mcp_addr+5, &(m_nDta[0]), m_nDlc);  // writes up to 15
+
+Seven bytes past the end. On that object they land on the `SPIClass*` it uses
+for every later transfer, so the next register access dereferences whatever was
+written there. It also copies those fifteen bytes into our eight-byte stack
+buffer.
+
+Two ways in, and both are real. A DLC of 9 to 15 is **legal on the wire** --
+the standard says a receiver must treat it as 8 -- and this is a listen-only
+sniffer with no acceptance filtering, so every id on a body bus reaches that
+code. And if the module loses power or a wire lifts mid-drive, MISO floats
+high, the status byte reads `0xFF`, `checkReceive()` says a frame is waiting on
+every call for ever, and the length reads 15 every time. That one fires within
+a single loop pass.
+
+So the drain path now reads the status register and the flagged buffer's length
+itself, with raw SPI, before the library is allowed near the receive buffer. A
+length above 8 is discarded and counted (`status` shows the count; it should be
+zero for ever). A status of `0xFF` marks the controller gone and stops calling
+into the library at all -- which also fixes a second thing: `canOk` was set once
+at boot and never re-evaluated, so a controller that died mid-drive left the
+backlight frozen at whatever the last key signal said.
+
+**Speed was being timestamped with a lie.** There is no interrupt wire, so a
+frame is stamped when it is READ, not when it arrived. The chip holds about
+2.2 ms of this bus and a full repaint takes 185 ms, so after a repaint the
+frames handed over are a tenth of a second old while the timestamp is new. On a
+difference-over-time signal that is a 38 % dip followed by a 40 % overshoot,
+around every screen transition, both comfortably inside the sanity limits. Past
+`CAN_STALE_GAP_MS` the baseline is now dropped and re-acquired on the next
+frame instead. One frame of staleness beats a wrong number.
+
+**An RTR frame was being decoded as data.** The library packs flags into the top
+of the 32-bit id -- bit 31 extended, bit 30 remote-request -- and we truncated
+to 16 bits, throwing both away. A remote-request for 0x1A6 carries no data at
+all and was arriving looking like a speed frame, decoded from whatever was left
+in the buffer. Both flags are checked before the truncation now.
+
+**Torque had no sanity limit.** Only the derived PS number did, and that check
+is skipped entirely when rpm is stale -- in which case the bogus torque was
+still committed and still marked fresh, so the theme drew it. The field reaches
++-1023 Nm on an engine that makes about 300.
+
+**`$CANDROP` was a latch pretending to be a counter.** One unavoidable overflow
+during the first repaint made it non-zero for ever, so a line went up the cable
+twice a second for the rest of the drive whether or not anything was still
+being dropped -- the same latch this code had just fixed in hardware, moved into
+software. It now reports only when the number changes.
+
+**A refused calibration left itself running.** Tap calibrate on and off inside a
+second or two and `calFinish()` refuses, correctly -- but this path had already
+told the app calibration stopped, and did not stop it. `calOn_` stayed set for
+the rest of the trip, `$MAG` kept claiming to be calibrating, and a later `spin
+stop` would then pass its gate using bounds swept across the whole drive.
+`calAbort()` existed for exactly this and had never been called from anywhere.
+
+**A guard that had never once fired.** `hud_pins.h` cross-checks its pin map
+against TFT_eSPI's `User_Setup.h`. The sketch includes it two lines *before*
+`<TFT_eSPI.h>`, so `TFT_CS` was undefined when the `#ifdef` was evaluated and
+every check was silently skipped. It only ever worked in the host tests, where
+the include order differs. Moved to `hud_bus.h`, which is included after -- and
+verified by deliberately breaking it, which now fails the build as it always
+should have.
+
+**And a file that would have undone the whole week.** `config/User_Setup_ESP8266.h`
+still had `TFT_CS 15` and `TFT_MISO 12` -- the pre-2.5 map -- and the sketch
+header, the `#error` text, `docs/BUILD.md` and `wiring.html` all told you to
+copy *that* file into the library. Doing so would have put the display's chip
+select back on the MCP2515's pin and the panel's SDO back on its MISO. Deleted,
+and every reference now points at the correct one.
+
+**Bloat out.** The stale wiring block at the top of `NavHud.ino` (still showing
+the old pins, in the block it calls "the copy you read with a soldering iron in
+your hand"); a boot self-test behind a symbol that was never defined anywhere,
+with a comment telling you to switch off something already off; `CAR_IDS[]` and
+`CAR_ID_COUNT`, which nothing read; `CarState::ignRaw`, written and never read;
+`CANFAULT_GARBLED`, never assigned; five forward declarations for functions
+already defined by then; two dead `HUD_MAG_FORCE_*` knobs; and every remaining
+comment about a gyroscope, an IMU, an MPU-6050, the `scan` command or the
+hand-written MCP2515 driver -- all of it gone. Comments claiming the RX buffers
+hold "250 us at 500 kbit/s" now say 2.2 ms at 100, which is the bus this
+actually runs on.
+
+**One more guard added.** `hud_store.h` reserved a flash size for the compass
+calibration by hand, with a comment asking the next person to keep it in step.
+The last time those drifted, every saved calibration failed its own checksum on
+reload. It is a `static_assert` now.
+
+Also: the backlight is brought up **last**, after the compass. You noticed long
+ago that the compass stops being found when bench mode is on, and bench mode is
+the one thing that forces the backlight on regardless of the key. The panel's
+LED runs straight off a GPIO on the same 3V3 rail the compass sits on, and a
+sagging rail during the I2C probe reads exactly like a chip that is not there.
+Probing first costs a dark panel for half a second. The real fix is a transistor
+on the LED pin.
+
+13/13 suites green, compiles clean, 55 % flash.
+
+## 2.5 — the chip select was the bug
+
+Your loopback test answered it. That example runs the whole controller: it
+configures the chip, hands it a frame, the CAN engine loops it back internally
+and it reads out the other side. SPI in both directions, the bit timing, the
+crystal -- all of it, working, with the chip select on **D8/GPIO15**.
+
+So the module was never the problem. Neither was the wiring, the library, the
+crystal, the 3V3 supply or the SPI clock. It was the pin.
+
+**Three pins rotate. The compass does not move.**
+
+    D8  GPIO15   display CS   ->  MCP2515 CS      measured working
+    D2  GPIO4    backlight    ->  display CS      a clean pin, nothing fitted
+    D0  GPIO16   MCP2515 CS   ->  backlight       the one job that suits it
+
+GPIO16 is the RTC pin `XPD_DCDC`, and Espressif are explicit that it is the one
+pin on the part that can only be pulled **down**, never up. A chip select has
+to idle high. That is a bad match, and it is the kind of bad match that does
+not fail cleanly -- it gives you `FF FF FF FF` from every register, on wiring
+that measures perfect, for as long as you care to keep looking.
+
+A backlight, on the other hand, does not care about pull-ups or interrupts, and
+PWM genuinely works there: `analogWrite` accepts any pin up to 16, and the
+core's waveform generator carries an explicit `pin == 16` path driving `GP16O`.
+I checked the core source rather than assuming it.
+
+**The MCP2515's INT stays unwired, and that is a decision.** The only pin left
+would be GPIO16, and GPIO16 cannot raise an interrupt at all. Wiring INT there
+would mean polling a pin instead of polling a register -- strictly worse, since
+the register read also tells you *which* buffer is full. The bus is polled, as
+it always was.
+
+**About SI and SO.** Your working loopback proves the orientation you have is
+right, whichever way round it is, so nothing changed and nothing should. The
+pin map now records it the way the Bastelplan reads it -- MISO to the header
+pin printed `SI` -- with the note that these modules label their header from
+the host's side. It looks crossed. It works. Leave it.
+
+`hud_pins.h` carries the whole story next to the map, and its `static_assert`s
+caught me twice while making this change: once when `User_Setup.h` still had
+the display on GPIO15, and once when the host test stub did. That is the check
+doing exactly the job it was written for.
+
+`wiring.html` is updated for the new map and Trap 2 now says what actually
+happened instead of telling you to fit a 10k pull-up on a pin that no longer
+has a chip select on it. The compass section of that page is still older than
+the firmware -- it talks about the MPU-6050 -- and I have left it alone rather
+than half-rewrite it.
+
+13/13 suites green, compiles clean.
+
+## 2.4 — one sketch for the MCP2515, and less of everything else
+
+**CanTest is a separate download.** One file, no display, no compass, no theme,
+no fonts, no CAN library -- 240 KB of flash against this firmware's 582, and
+nothing in it can be blamed for anything except the MCP2515.
+
+It runs the bus at **1 MHz**, not 8. The datasheet allows 10; slow is the point.
+It takes clock speed, wire length and signal integrity off the suspect list
+before you start, so if it answers at 1 MHz and not at 8, you have learned
+something instead of guessing.
+
+What it actually checks, in order:
+
+    1. reset, then CANSTAT and CANCTRL       -> is anything there
+    2. sixteen reads of the same register    -> is the line stuck or floating
+    3. write seven patterns and read back    -> MOSI and MISO, separately
+
+Step 3 is the one that matters and the one the HUD never did. Reading a
+register that happens to power up as 0x80 proves less than it looks: a bus
+returning a fixed value passes that test. Writing 00, FF, AA, 55, 01, 80, 5A
+into a scratch register and reading each one back proves MOSI, MISO, chip
+select and the chip's own logic at once. Reads that work with writes that do
+not is a different fault from neither working, and it names a different wire.
+
+On failure it does not say "not found". It gives you the list in the order
+worth checking, with the reason each one is on it -- the display's SDO first,
+then 3.3 V at the MCP2515's own pin 18 rather than at the module header, then
+SI/SO swapped, then the crystal (per DS 8.1 a dead crystal leaves the
+Oscillator Start-up Timer never expiring, so the chip sits in reset and answers
+nothing, which looks identical to no power).
+
+Then `listen` dumps frames with their IDs. Listen-only always, never transmit
+-- it is a car.
+
+**`scan` is gone, and hud_probe.h with it.** Two hundred lines that CanTest now
+does better and in isolation. It is also the file that blanked your panel a
+while back, when its display probe sent an ILI9341 command to an ST7796S.
+
+**`wipe` now rebuilds the screen in four stages** instead of one wash, because
+you said the mark comes back the moment the interface does -- which means it is
+drawn, and the way to find a thing that is drawn is to stop drawing everything
+else:
+
+    1  flat fills straight at the driver     nothing of ours on the glass
+    2  the theme's full-screen clear only    one big SPI burst, no layout
+    3  the car half                          rule, tacho, volts, PS, speed
+    4  the nav half on top                   limit, turn, street
+
+Two seconds each, each one printed on the serial line. Four stages is two
+bisections: whichever number it arrives on removes three quarters of the places
+it can be hiding, and then I can go straight at it instead of reasoning from a
+photo of a finished screen.
+
+## 2.3.1 — the line on the glass
+
+You said earlier firmware did not do this, so I went and checked rather than
+guessing. Three things came out of it, and the first one is the answer.
+
+**It is not the drawing code.** I hashed every drawing file across all eleven
+releases you have: `theme_dash.h`, `hud_canvas.h`, `hud_geom.h`,
+`hud_display.h`, `hud_theme.h` and all eighteen font files are **byte-identical
+from 1.33 to 2.3**. Not one pixel of drawing has changed since the first build
+you ever flashed.
+
+Then I measured where the line is, using the tacho as a ruler -- its segments
+are exactly 25 px deep, which fixes the scale at 5.28 photo pixels per screen
+pixel. On that scale the solid line lands at **y = 62.1**, and `DASH_RULE_Y` is
+62. The mapping is exact. The dotted one lands at **y = 66.3**.
+
+And row 66 is painted by exactly one thing in this firmware: a black clear.
+Nothing draws there. I proved that rather than asserting it -- see the new test
+below. So a *bright* line at row 66 cannot come from our drawing, and the two
+candidates left are the panel itself or one corrupted SPI burst during the
+single full-screen clear at boot. That second one is worth understanding: the
+theme only repaints widgets that changed, so a band of wrong pixels written
+once is never painted over again. It looks permanent because nothing disagrees
+with it.
+
+**A new `wipe` command tells you which, in twenty seconds.** Type it on the
+serial line. It floods the panel red, green, blue and black straight at the
+driver -- no theme, no geometry, no fonts, every addressable pixel written with
+one solid colour -- then repaints.
+
+    the mark vanishes under all three  -> the panel can address it, so
+                                          something drew it. Ours, and findable.
+    it survives a solid red screen     -> the panel is not showing that pixel.
+                                          Bad pixel, bad ribbon, or a corrupt
+                                          burst. No clock change will fix it.
+
+If it turns out to be the bus, `SPI_FREQUENCY` in User_Setup.h is the knob and
+the file now lists the exact 80 MHz dividers to step down through. I did not
+lower it on a guess -- 13.33 MHz is inside the ST7796S's own 15.2 MHz limit and
+dropping to 10 costs you a third of the repaint speed for nothing if the fault
+is the panel.
+
+**A bug in the test harness, which is the part that should not have happened.**
+`MR_DATUM` was missing from the stub's datum switch. It fell through to the
+default and was measured as top-left, so every middle-right field -- volts, PS,
+peak, and the E60's whole right-hand column -- has been checked at coordinates
+the panel never uses, silently, in every release. The layout tests were passing
+on the wrong numbers.
+
+**And the gap that let it hide: the car half had never been rendered with the
+bus talking.** A default `CarState` has `tTorque = 0`, `carStale()` says yes,
+and `dashPower_` draws a single space. So the widest string those fields can
+ever show, and the opaque background box that comes with it, had never once
+been drawn on the host in eleven releases. `test_layout.cpp` is built around
+the E60 theme's zone functions and will not compile against the dash theme at
+all, which is why nobody noticed.
+
+New `carhalf` suite, 13 of them now: 600 ticks with live values across the
+whole declared range -- PS from -500 to 500, revs past the limiter, volts 9 to
+15 -- asserting no car field is drawn off the panel, none spills past the
+band-1 floor, and nothing but the rule is ever drawn in rows 61..65. Those six
+rows matter because nothing owns them: band 1 stops above, band 2's clear
+starts below, and anything that lands there stays for the rest of the drive.
+All clean, which is how I know the drawing is not what you are looking at.
+
+Nothing else changed. 13/13 suites green, compiles clean.
+
+## 2.3 — a second opinion on the bus
+
+You pointed me at r00li/CarCluster. It is worth more than a forum post: it is a
+transmitter that drives real E-series clusters on simulator rigs, so it has to
+get the encode exactly right, and an encode there pins a decode here. If the
+cluster shows 100 km/h for the bytes it sends, those bytes mean 100 km/h --
+whoever put them on the wire.
+
+Three of the four decodes came back clean.
+
+    0x0AA rpm        uint16_t value = rpm * 4 at bytes 4/5.
+                     Ours is (d[5]<<8 | d[4]) >> 2. Exact match, no change.
+    0x130 ignition   0x45 on, 0x00 off. Inside our "> 0x41". No change.
+    0x1D0 coolant    engineTempFrame[0] = coolantTemperature + 48.
+                     Which is your own note for that frame, word for word.
+
+**The speed constant was wrong, and by a lot.** Their sendSpeed():
+
+    uint16_t speed_value = speed + previousSpeedValue;
+
+so bytes 0-1 are an accumulator that gains `speed` every send. Three lines of
+their source fix the scale:
+
+  * `int speed = 0;  // Car speed in km/h`            GameSimulation.h:109
+  * `speedCorrectionFactor = 1.00`                    GameSimulation.h:13
+  * `dashboardUpdateTimeShort = 100`                  BMWESeriesCluster.h:42
+
+One count per 100 ms is one km/h. So **CAR_SPEED_K is 100, not 80.4672** --
+and the old number is worth a second look, because 80.4672 is 50 x 1.609344
+to seven digits. That is fifty miles per hour written in km/h: the fingerprint
+of a unit conversion somebody did in mph-land, not of anything measured.
+
+The HUD would have read about **20 % low**. Worse, it could never have
+corrected itself: the app learns a scale factor against GPS but refuses
+anything outside 0.90 .. 1.10, so it would have sat pinned at the clamp for
+ever, quietly wrong and never complaining.
+
+**A measurement window, for a reason the same source made obvious.** If the
+counter advances in whole km/h once per frame, then a frame-to-frame
+difference carries one full count of quantisation plus the error of two
+timestamps taken in a loop that also repaints a display. At 100 km/h that is
+100 counts over a nominal 100 ms -- a 5 ms timestamp wobble alone is 5 km/h,
+ten times a second, and the number would shiver on the glass.
+
+So the single previous sample is now a 12-entry ring and the difference is
+taken against a sample about 300 ms old: a sliding window, not a slower update
+rate -- still a fresh number on every frame, with at most 150 ms of lag. The
+test measures it on a jittered 97.4 km/h stream:
+
+    jitter: worst error 2.59 km/h windowed, 11.49 km/h frame-to-frame
+
+Two smaller things fell out of writing it. A fast bus can no longer fill the
+ring with samples all too young to difference against (CAR_SPEED_SPACING_MS),
+and an impossible delta now throws the history away and re-acquires on the
+next frame instead of poisoning every reading until it aged out.
+
+**Coolant is decoded and reported, not drawn.** You said keep it in mind and
+do not touch the interface yet, so that is exactly where it is: an eighth
+field on `$CAR` and a line in `status`. Nothing on the glass, nothing in the
+app. It is on the wire so one drive can confirm the decode before anything
+depends on it. It gets a 3 s stale window of its own, because CarCluster sends
+0x1D0 on the 500 ms timer and the 800 ms used for speed would blank it on a
+single dropped frame.
+
+**What I did NOT take.** CarCluster writes the same value into bytes 2-3 and
+4-5 of 0x1A6, because a simulator has one speed to give. A real car probably
+does not -- three counters in one frame on a four-wheeled car reads like
+per-wheel counts, which differ in every corner and differ a lot with one soft
+tyre. Averaging them might well be better. It would also be a guess, and one
+logging drive in a car park settles it, so they are written down and unused.
+Bytes 6-7 turn out to be a time counter (`+= deltaTime * M_PI`), not the
+message sequence number I had assumed -- also written down, also unused.
+
+One thing to check on the first drive that works: hold an indicated 100 km/h.
+If the HUD shows about 80, the old constant was right after all and it is one
+line in hud_config.h to put back.
+
+Two small things fixed on the way past, both found by the compiler rather
+than by me. `spin stop`'s "not enough yet" message was being cut off
+mid-sentence -- it overran its 128-byte buffer -- and is now two lines. And
+`arduino/config/User_Setup.h` in the repo was still the old ESP32 / ILI9341
+one: the right ST7796S file was only ever in the zips. Anyone who had trusted
+the one in the repo would have got a dead panel. They are now the same file.
+
+Everything else is untouched. 12/12 host suites green, and the only warnings
+left at -Wall -Wextra are the drawing helpers the other theme uses.
+
+## 2.2 — the compass works
+
+Two findings from your capture, both from reading QST doc 13-52-19 properly.
+
+**1. The write order. 0BH first, 0AH last.** Section 7's own examples:
+
+    7.2 Continuous Mode Setup Example
+      Write Register 29H by 0x06   (sign for X Y and Z axis)
+      Write Register 0BH by 0x08   (Set/Reset On, Field Range 8 Gauss)
+      Write Register 0AH by 0xC3   (set continuous mode)
+
+Writing 0AH is what STARTS the chip -- suspend is the default state after
+power-on *and* after a soft reset (6.2.4). Adafruit's library writes
+mode/ODR/OSR/DSR into 0AH and only afterwards puts range and set/reset into
+0BH: it starts the sensor and then reconfigures it while it runs. That is
+`status = 0x08` with DRDY never setting -- present, addressable, configured,
+and not measuring.
+
+**2. The range write does not stick on this part.** Your readback:
+
+    readback: 0AH=CB  0BH=00
+
+0BH reads 0x00 after being written 0x08, so RNG stays 00 and the chip sits at
++-30 G = 1000 LSB/G. Scaling for the 8 G it was asked for gave 13.5 uT where
+Belgium is 49. Scaling for the 30 G it reports: `-86, -258, -428` counts ->
+`-8.6, -25.8, -42.8 uT` -> **50.7 uT total.** Exactly right.
+
+So the scale is read back from CTRL2 at bring-up and never assumed. Ask, then
+believe the answer.
+
+The Adafruit library is gone -- the driver is direct register access again,
+matching the MagId sketch that worked on your bench line for line. `begin()`
+also refuses to report success until a real sample lands, and the boot banner
+prints CTRL1, CTRL2 and the reported range, so the gap between "asked for" and
+"got" can never be invisible again.
+
+## 2.1.2 — MODE 01 does not measure
+
+Your capture: `no data ready -- status 0x09 = 0x8`, forever. Chip on the bus,
+right ID, configured, addressable — and never finishing a measurement. DRDY
+(status bit 0) never sets.
+
+`QMC5883P_MODE_NORMAL` is **0x01**. `QMC5883P_MODE_CONTINUOUS` is **0x03**. The
+hand-written driver that worked here for weeks wrote `CTRL1 = 0xCB`, and the
+bottom two bits of 0xCB are **11** — continuous. When I moved to the library I
+copied its example's `setMode(QMC5883P_MODE_NORMAL)` and silently changed the
+mode from 11 to 01. On this part that means "configured, not measuring".
+
+Now `QMC5883P_MODE_CONTINUOUS`, and `begin()` refuses to report success until a
+sample actually arrives — it waits 400 ms, and if nothing comes it walks the
+other modes and reports which one worked. A sensor that answers every question
+except the one that matters is not going to pass as healthy again.
+
+## 2.1.1 — the compass init the library does not do
+
+2.1 handed the whole QMC5883P to Adafruit's driver. That driver does no soft
+reset and never writes register 0x29 — and those two writes are exactly the
+difference between the build that worked on your bench and the one that went
+quiet. "It worked before" is evidence; I threw the evidence away.
+
+Both are restored, ahead of the library:
+
+- **Soft reset (CTRL2 = 0x80).** The chip keeps its configuration across a warm
+  ESP reset, so without this it comes up in whatever state the last run left it
+  in — including suspend, which looks exactly like a dead sensor.
+- **Register 0x29 = 0x06.** Undocumented. "Write Register 29H by 0x06 (Define
+  the sign for X Y and Z axis)" appears three times in QST's own application
+  section and 0x29 appears nowhere in the register map. Adafruit never writes
+  it; ArduPilot, Betaflight and the build that worked here all do.
+
+The library still does the reading and the scaling, which is what it is here
+for — `getGaussField()` reads the range register back on every conversion, so
+the 13.3 uT bug cannot come back.
+
+### Boot now says what the chip actually is
+
+"no compass found" covered three different faults. It does not any more:
+
+    compass : QMC5883P at 0x2C
+              CTRL1 0xC9  CTRL2 0x08  range +-8 G  producing data
+
+or, when it is not there:
+
+    compass : no QMC5883P found at 0x2C
+              0x2C did NOT ack, chip id 0x00 (want 80). Type `scan`.
+
+The bus is asked directly, before the driver gets a vote, so "nothing on the
+wire" and "something answered with the wrong ID" stop looking the same. And
+bring-up now waits up to 400 ms for a real sample and says **NO DATA --
+configured but silent** if none arrives, instead of reporting a healthy compass
+that never sends a reading.
+
+## 2.1 firmware + app 1.8.2 — libraries, and the reason the arrow froze
+
+### The app bug. This is the one that was actually stopping the arrow.
+
+`HeadingFusion.onExternalCompass(headingDeg, nowMs)` — the parameter `nowMs`
+**shadows a field of the same name**, and the field is the fusion's internal
+clock, which only `setClock()` moves. So the function stamped `lastCompassMs`
+with real time, then called `onCompass()`, which stamped it again from the
+*field*.
+
+`setClock()` was called from exactly two places and both can be absent on your
+hardware: the phone's own sensor callback (a head unit has no sensors) and the
+GPS fix handler (no fix indoors or in a garage). With neither, the field stayed
+**0 for ever** — so `onCompass()` wrote `lastCompassMs = 0`, and `usingCompass`
+reads zero as "this compass has never reported" and returns false. `onCompass()`
+then returned *before writing the heading*.
+
+The result was the worst possible combination: `hudCompassLive` went true, which
+correctly locked the phone's compass out, while the board's own reading could
+never be applied. **The arrow froze and looked like it was ignoring the HUD.**
+
+Fixed in two places: `onExternalCompass` calls `setClock` first, and the frame
+loop advances the clock every frame instead of only inside the GPS branch.
+New test in `CompassPriorityTest` reproduces exactly that configuration — no
+GPS, no phone sensors — and it fails on the old code and passes on the new.
+461 app tests green.
+
+### Both sensor drivers are now libraries
+
+**Compass: Adafruit_QMC5883P.** My hand-written driver is deleted. Its
+`getGaussField()` reads the range register back on every single conversion and
+picks the divisor from what the chip actually reports — which is exactly the
+bug that made the field read 13.3 uT instead of 49, and it now cannot happen at
+all. Configured the way the library's own example does it: normal mode, 100 Hz,
+OSR 8, 8 G, set-and-reset on.
+
+**CAN: the MCP2515 library, and my pre-flight can no longer veto it.** The SPI
+probe used to `return false` before the library was ever called if it did not
+like what it saw on MISO. That meant one of my own diagnostics could stop a
+controller the library might have brought up perfectly well. It is now purely
+informational — it records what it saw, and the library always gets its turn.
+
+Still `MCP_LISTENONLY`, not the example's `MCP_NORMAL`: this taps K-CAN on a car
+that gets driven, sharing a bus with the cluster and the body modules, and in
+listen-only the chip physically cannot put a dominant level on the wire — not
+even acknowledge bits.
+
+## 2.0.2 — the compass reads the right field strength, and field 6 stops lying
+
+Your serial capture had both bugs in it, and both were mine.
+
+```
+$MAG,282.6,0,0,13.3,0,0
+        ^headings perfect  ^13.3 uT   ^0 = app ignores it
+```
+
+**Bug 1 — the scale factor.** The driver wrote "range = 8 G" to CTRL2 and then
+hard-coded 3750 LSB/G from the datasheet table. The chip ignored the write and
+stayed in its 30 G default, which is 1000 LSB/G — so every reading came out
+**3.75x too small**, and Belgium's 49 uT field reported as 13.3. Exactly
+3750/1000.
+
+Fixed properly rather than by changing a constant: CTRL1 is written before
+CTRL2 (QST's own order, the reverse of what I had), and then **CTRL2 is read
+back and the scale derived from the range the chip says it is in**. If a write
+does not stick — wrong order, too soon after a soft reset, a clone that ignores
+it — the readings stay correct anyway.
+
+**Bug 2 — field 6, again.** 2.0.1 tied it to the field magnitude being
+plausible. That looked reasonable and was wrong: the magnitude was 3.75x off,
+the check correctly said "not the Earth's field", and the app threw away
+headings that were **perfectly correct**. Correct because a heading is atan2 of
+two components scaled by the same factor, and atan2 does not care about scale.
+A magnitude error cannot move a heading by one degree.
+
+Field 6 now answers only what the app asks it: is this a car heading. Whether
+the magnitude looks like the Earth's is field 4's job, and belongs in a
+warning, never in a silent switch that disables the only absolute heading in
+the system.
+
+`status` now prints the range the chip reports, so a scale problem is visible
+instead of arriving as a wrong number.
+
+**Tests:** compass group 7 simulates a chip that refuses the range write and
+reports 30 G; the driver must still produce 49 uT and still read north as
+north. And `make magrate` runs the real firmware and measures what goes up the
+cable — 42 `$MAG` lines per 10 s, field 6 = 1, heading tracking a turn — which
+is what settled firmware-versus-app here instead of another round of guessing.
+
+## 2.0.1 — the app was ignoring the HUD compass
+
+My regression, introduced in 2.0. Field 6 of `$MAG` tells the app whether the
+number in field 1 is a heading for the **car** or just for the **chip**, and
+anything other than `1` makes it drop the HUD compass completely and fall back
+to the phone's sensors. Silently — the only symptom is that the arrow follows
+the phone.
+
+2.0 reported `compass.calibrated()` there, so a board that had never been told
+`spin` sent `0` for ever. Wrong question: hard-iron calibration is about how
+*accurate* the heading is, not whether it is a car heading at all.
+
+It now reports 1 when the chip is answering and the field it measures is
+plausible to navigate by. Alignment to the car is the `north` offset, which
+defaults to zero — "the chip points forwards" — and one command fixes it if
+that is wrong. A sensor sitting in a 300 uT field because something magnetic is
+next to it still reports 0 and is still ignored, which is the case this field
+actually earns its place on.
+
+Host test group 20 now parses the `$MAG` line and asserts field 6. Checked both
+ways: it fails on the 2.0 code and passes on this one.
+
+## 2.0 — the hardware layer, rewritten
+
+Everything below the drawing is new. Themes, fonts, canvas, geometry and the
+wire protocol are untouched; every module that talks to a pin, a bus or a chip
+was thrown away and rebuilt. 1279 lines of sensor code deleted, RAM down from
+49% to 46%.
+
+### The MCP2515: it was almost certainly the display holding MISO
+
+The panel and the CAN controller share SCK, MOSI and MISO. ST7796S *silicon*
+tri-states SDO properly — the datasheet gives an output disable time of
+15–50 ns. The *modules* often do not, and TFT_eSPI's author keeps a standing
+warning for exactly these boards: "The SDO/MISO pin may not go tristate when
+the TFT chip select is high." Many of them fit a series diode in the CS line so
+the controller is never cleanly deselected.
+
+A display holding MISO high means the MCP2515 can drive its SO all day and the
+ESP never sees it — which reads as `CANSTAT FF FF FF FF`, on wiring that is
+perfect, with GPIO16 switching correctly and I²C working. Which is your log,
+exactly.
+
+**Unwire the panel's SDO from D6.** `TFT_MISO` is now `-1` and nothing in the
+firmware ever reads from the display.
+
+### hud_pins.h — the compiler checks the wiring now
+
+Every pin is declared once, with the datasheet citation for why it is that pin,
+and `static_assert`s refuse to build if two things claim one. Tested by
+deliberately breaking it: putting SCL on D1 alongside the display's DC — the
+conflict in the pinout you were sent — now fails the build with
+
+    error: static assertion failed: pin conflict: I2C SCL is claimed by something else too
+
+rather than silently corrupting both buses.
+
+### Other things the research turned up
+
+- **SPI dropped from 20 MHz to 13.33 MHz.** The ST7796S datasheet gives the
+  minimum write clock cycle as 66 ns — 15.2 MHz. 20 MHz was 32% over spec. It
+  is also an exact divider of 80 MHz, where 20 MHz was not; a full repaint goes
+  from ~123 ms to ~185 ms.
+- **I²C bus recovery at boot.** SDA is GPIO0, a boot strap. A slave left holding
+  it low does not just break the compass — it stops the board booting at all.
+  The bus is now clocked free before `Wire.begin()`.
+- **100 kHz I²C**, because `analogWrite` on this chip drives its waveform from a
+  **non-maskable** interrupt that `noInterrupts()` cannot hold off, and `Wire`
+  is bit-banged.
+- **Chip selects parked high before anything initialises.**
+- The probe never runs at boot. It is `scan`, and only `scan`.
+
+### The compass: 1279 lines out, 287 in
+
+`hud_imu.h`, `hud_mag.h` and `hud_mount.h` are deleted. The TRIAD mount
+discovery in them was correct and could never run, because it needs an
+accelerometer and there is not one on this board. What replaced it is what you
+actually asked for: axis remap, hard-iron removal, soft-iron equalisation, the
+heading, and one stored offset you set with `north <deg>`.
+
+It does not tilt-compensate, and `status` says so out loud. Dip here is ~65°, so
+1° of tilt is 2.1° of heading error. **Mount it flat.**
+
+### Three bugs the new tests caught before you did
+
+1. **The stored calibration never came back.** The checksum byte was written on
+   top of the last byte of the north offset, so every calibration failed its own
+   checksum on reload and the board came up uncalibrated after every reboot.
+2. **No calibration was EVER accepted.** The sample counter only counted samples
+   that pushed a bound outward — a full circle does that for its first quarter
+   and then stops, scoring ~30 against a gate of 120.
+3. **The panel booted lit on a healthy car.** `backlightAtBoot()` asked
+   "is the controller dead?" before anything had tried to start it.
+
+### Tests
+
+`test_compass.cpp` is new: the heading at four cardinals (the check that catches
+a stray minus sign, which reads correctly at north and south and mirrored at
+east and west), the calibration gates, hard-iron removal against a simulated
+magnet, and the flash round trip including erased and corrupted blobs. The
+MCP2515 register tests are gone — that is the library's job now — and the E60
+decoder tests stay. The I²C stub is a real two-device bus instead of one that
+acknowledged all 119 addresses.
+
+12 test binaries, all green.
+
+## 1.35 — undo the damage
+
+My fault. Two things, both mine.
+
+**The display blanking a second after boot.** `probeAll()` was running
+automatically at boot whenever anything was missing, and in 1.33 I had added a
+probe that reads the ST7796's ID register. TFT_eSPI's `readcommand8()` prefixes
+an ILI9341-specific `0xD9` that an ST7796S does not define. That probe is
+**deleted**, and `probeAll()` no longer runs at boot at all -- it is `scan` and
+only `scan`. A tool for finding a fault must never be able to cause one, and I
+put one in the boot path of a display that was working.
+
+**The backlight staying on with bench mode off.** That one is deliberate and it
+is not new -- a dead MCP2515 must not be able to disguise itself as a dead
+display, which is the black screen you had two versions ago. What was missing is
+that the board never said so. It does now:
+
+    backlight: ON and staying on -- no CAN controller, so no key signal.
+               This is deliberate; see CAN_DEAD_MEANS_DARK.
+
+Define `CAN_DEAD_MEANS_DARK` in `hud_config.h` if you want the other trade.
+
+Kept from 1.34: I2C at 100 kHz, three compass attempts at boot, and the retry
+every three seconds. None of those touch the display.
+
+## 1.34 — the compass disappearing in bench mode
+
+Not reproducible in software: on the host, `HUD_BENCH` prints
+`compass : QMC5883P at 0x2C` exactly like the normal build, and bench mode
+never touches I2C, the compass, or `diag()`. So this is electrical, and bench
+mode makes exactly one electrical difference — **it is the only setting that
+lights the backlight at boot.** Those LEDs pull upwards of 100 mA out of the
+same 3V3 the QMC5883P and the bus pull-ups sit on.
+
+Three changes, all edits, no new files:
+
+- **I2C dropped from 400 kHz to 100 kHz** (`HUD_I2C_HZ`). The ESP8266's `Wire`
+  is a bit-banged master whose timing comes from software loops; a sagging rail
+  and an interrupt-sensitive bus at 400 kHz is a bad combination, and at 100 kHz
+  every margin is four times wider. Costs 500 us per compass read, and the loop
+  comments already budget for the 100 kHz figure because that is what they were
+  written against.
+- **Three attempts at boot instead of one.** The first I2C transaction of a
+  board's life happens while the rail is still settling.
+- **It keeps looking.** Two address probes every three seconds while no compass
+  is present, so one browned out during bring-up is no longer written off for
+  the rest of the run. It says so when it turns up, and reloads its calibration.
+
+## 1.33 — tidied, and a compass that was never being read
+
+### The thing you did not ask about, which mattered more
+
+With `HUD_IMU` off, **the compass was detected at boot and then never read
+again.** Not once. The board printed `compass : QMC5883P at 0x2C`, answered the
+`mag` command, and in normal running never asked the chip a single question.
+
+The whole compass half of `loop()` was nested inside `#ifdef HUD_IMU`. That was
+invisible while the gyroscope was always compiled in — and stopped being
+invisible the moment the MPU-9250 in the box turned out to be an MPU-6500 and
+`HUD_IMU` went off by default. Same mistake as the one in `hud_imu.h:161` that
+stopped the compass from ever starting, one layer further down: the compass was
+still treated as an accessory of a chip it has nothing to do with.
+
+`loadMagCal()` was in there too, so `spin` wrote the hard-iron calibration to
+flash and nothing ever read it back. Silently, and only after a reboot — which
+is the opposite of what you asked for when you said a reboot must not affect it.
+
+Both are out of that block now. There is a host regression test (group 20) that
+fails on the old code and passes on the new, so it cannot come back quietly.
+
+With no accelerometer the code now assumes the sensor is level and says so in
+the comment where the assumption is made. Dip here is about 65°, so every degree
+the chip is actually tilted costs 2.1° of heading — but reading the compass
+badly beats not reading it at all, which is what this build did before.
+
+### Tidied, as asked
+
+- `imu : NOT FOUND, WHO_AM_I 0x00` is gone. The IMU line is only printed when
+  `HUD_IMU` is switched on, i.e. when one is expected, and says "nothing
+  answered at 0x68 or 0x69" rather than quoting a register that was never read.
+- `status` gained a NOTE when there is no accelerometer: the heading is not
+  tilt-compensated and that is worth saying once, in the place you go to look.
+- `HUD_IMU` is commented out in `hud_config.h` with the reasoning next to it.
+
+### Two more probes for the MCP2515
+
+**Is MISO shorted to MOSI?** D7 and D6 are adjacent on the header. Clock out
+0x55 and 0xAA with CS **high**, when nothing should be driving the line. If they
+come back, the two are shorted — and every register read would return its own
+transmitted byte, which reads as "stuck low" and sends you hunting a power fault
+that is not there.
+
+**Does the chip respond to CS at all?** Compare the idle level with CS high
+against CS low. A selected MCP2515 drives SO; a deselected one leaves it
+high-impedance. Identical means nothing is listening to chip select.
+
+**Does the DISPLAY answer over the same MISO?** This is the decisive one. The
+panel is on the same SCK, the same MOSI and the same MISO as the CAN module —
+only the chip select differs. If the ST7796 answers a register read, then SPI,
+the clock wire, the MISO wire and the ESP's own pins are all proven good, and
+the fault is on the far side of the MCP2515's chip select or its power, and
+nowhere else. That turns "check everything" into one wire and one rail.
+
+(Read a *non*-answer as inconclusive: plenty of cheap ST7796 boards bring MISO
+out to the header and never connect it to the panel's SDO.)
+
+The display's chip select is now explicitly parked high before every raw-SPI
+probe, so a panel left selected cannot answer for the MCP2515.
+
+### Host test harness
+
+- The I2C stub was answering **every** address, so the bus sweep reported 119
+  devices on a bus with two and `hud_qmc.h`'s detection was never exercised at
+  all. It is now a two-device bus: an MPU-6050 at 0x68 and a QMC5883P at 0x2C
+  holding a real central-European field, and nothing else acknowledges.
+- `Wire` is defined unconditionally, as the Arduino core defines it. Guarding it
+  on `HUD_IMU` broke the link the moment the compass and the I2C sweep existed.
+
 ## 1.32 — stop guessing, measure the wires
 
 Your log settled the software question: **"Entering Configuration Mode
