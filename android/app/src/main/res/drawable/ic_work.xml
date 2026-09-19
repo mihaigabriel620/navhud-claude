@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Work.
+
+  Material's solid `work` briefcase was 57.5% ink sitting next to `home` at
+  31.6%, in identical 44dp plates, so Work looked selected and Home looked
+  disabled. Same briefcase, outlined, at the weight of its neighbour.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/text_primary">
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9.4,2.6h5.2a2,2 0,0 1,2 2v1.9h-1.9V4.8a0.3,0.3 0,0 0,-0.3 -0.3h-4.8a0.3,0.3 0,0 0,-0.3 0.3v1.7H7.4V4.6a2,2 0,0 1,2 -2z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M3.4,7.4h17.2a1.4,1.4 0,0 1,1.4 1.4v10.2a1.4,1.4 0,0 1,-1.4 1.4H3.4a1.4,1.4 0,0 1,-1.4 -1.4V8.8a1.4,1.4 0,0 1,1.4 -1.4zM3.9,9.3v9.2h16.2V9.3z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M2.4,12.4h19.2v1.8H2.4z" />
+</vector>

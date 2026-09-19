@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NavHUD app layout</title>
+<style>
+  body { margin:0; background:#0b0d10; font-family:"Roboto Condensed","Arial Narrow",system-ui,sans-serif; }
+  .wrap { width:1024px; height:600px; position:relative; overflow:hidden; background:#07070A; }
+
+  /* fake tilted map */
+  .map { position:absolute; inset:0; background:
+      radial-gradient(120% 80% at 50% 100%, #0d1016 0%, #07070A 70%); }
+  .roads { position:absolute; inset:0; }
+  .road { position:absolute; background:#4A3410; border-radius:2px; }
+  .road.big { background:#96681A; }
+  .route { position:absolute; background:#FF9D00; border-radius:6px;
+           box-shadow:0 0 22px rgba(255,157,0,.45); }
+
+  .puck { position:absolute; left:50%; top:72%; transform:translate(-50%,-50%); }
+  .puck .ring { width:74px; height:74px; border-radius:50%;
+                background:radial-gradient(circle, rgba(255,157,0,.20) 40%, rgba(255,157,0,0) 70%); }
+  .puck svg { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+
+  /* chrome */
+  .card { position:absolute; background:rgba(16,19,23,.92); border:1px solid #2E333B;
+          border-radius:16px; backdrop-filter:blur(6px); }
+  .instr { left:10px; top:10px; display:flex; align-items:center; padding:8px 16px 8px 10px; gap:10px; }
+  .instr .num { color:#FF9D00; font-size:25px; font-weight:300; line-height:1; }
+  .instr .st { color:#BFA070; font-size:14px; margin-top:2px; }
+  .exit { background:#FFB84D; border-radius:6px; padding:3px 8px; text-align:center; margin-left:6px; }
+  .exit b { color:#0C0C0E; font-size:15px; display:block; line-height:1.1; }
+  .exit i { color:#241A00; font-size:10px; font-style:normal; }
+
+  .lanes { display:flex; border-top:1px solid #23272E; }
+  .lane { width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+          border-right:1px solid #23272E; }
+  .lane:last-child { border-right:0; }
+
+  .alert { right:10px; top:10px; display:flex; align-items:center; gap:8px;
+           padding:6px 12px 6px 8px; border-color:#FF3B20; background:rgba(22,11,8,.94); }
+  .alert .ico { width:30px; height:30px; border-radius:50%; border:3px solid #FF3B20;
+                display:flex; align-items:center; justify-content:center;
+                color:#FF3B20; font-size:11px; font-weight:700; }
+  .alert .lab { color:#FF3B20; font-size:12px; font-weight:700; }
+  .alert .d { color:#FFB84D; font-size:11px; }
+
+  .cluster { position:absolute; left:12px; bottom:44px; }
+  .spd { position:absolute; left:19px; bottom:0; background:rgba(16,19,23,.94);
+         border:1px solid #2A2F38; border-radius:16px; min-width:62px;
+         padding:3px 12px 3px 24px; color:#fff; font-size:19px; text-align:center; }
+  .lim { position:relative; width:46px; height:46px; border-radius:50%; background:#E23A2E;
+         display:flex; align-items:center; justify-content:center; }
+  .lim span { width:34px; height:34px; border-radius:50%; background:#F5F5F7; color:#111214;
+              display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; }
+
+  .roadpill { position:absolute; left:50%; transform:translateX(-50%); bottom:46px;
+              background:rgba(20,22,27,.88); border:1px solid #2A2F38; border-radius:18px;
+              padding:5px 14px; color:#E6E9EE; font-size:14px; }
+
+  .ctl { position:absolute; right:10px; bottom:42px; display:flex; align-items:center; gap:6px; }
+  .chip { height:36px; min-width:36px; border-radius:18px; background:rgba(20,22,27,.88);
+          border:1px solid #33383F; color:#FF9D00; display:flex; align-items:center;
+          justify-content:center; font-size:15px; padding:0 12px; }
+  .chip.dim { color:#9AA3AE; }
+  .chip.go { background:#FF9D00; border:0; color:#0C0C0E; font-weight:700; font-size:13px; padding:0 16px; }
+
+  .strip { position:absolute; left:0; right:0; bottom:0; height:34px; background:rgba(7,7,9,.85);
+           display:flex; align-items:center; padding:0 12px; gap:12px; }
+  .strip .eta { color:#FF9D00; font-size:14px; }
+  .strip .stat { color:#5E6670; font-size:10px; flex:1; white-space:nowrap; overflow:hidden; }
+  .strip .stop { color:#FF3B20; font-size:12px; }
+
+  .caption { color:#79838f; font-size:13px; padding:10px 4px 18px; width:1024px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="map">
+    <div class="roads">
+      <div class="road" style="left:0;top:300px;width:1024px;height:5px;transform:rotate(-6deg)"></div>
+      <div class="road big" style="left:120px;top:120px;width:6px;height:480px;transform:rotate(8deg)"></div>
+      <div class="road" style="left:640px;top:180px;width:5px;height:420px;transform:rotate(-11deg)"></div>
+      <div class="road" style="left:300px;top:430px;width:520px;height:4px;transform:rotate(4deg)"></div>
+      <div class="road" style="left:760px;top:250px;width:260px;height:4px;transform:rotate(22deg)"></div>
+    </div>
+    <!-- the route, narrowing towards the horizon like a tilted view -->
+    <div class="route" style="left:497px;top:432px;width:16px;height:120px;"></div>
+    <div class="route" style="left:499px;top:330px;width:12px;height:110px;"></div>
+    <div class="route" style="left:494px;top:250px;width:9px;height:90px;transform:rotate(9deg)"></div>
+    <div class="route" style="left:470px;top:190px;width:7px;height:70px;transform:rotate(20deg)"></div>
+    <div class="puck">
+      <div class="ring"></div>
+      <svg width="34" height="38" viewBox="0 0 34 38">
+        <path d="M17 2 L31 34 L17 27 L3 34 Z" fill="#FF9D00" stroke="#1A0E00" stroke-width="2"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="card instr">
+    <svg width="46" height="46" viewBox="0 0 46 46">
+      <path d="M23 42 L23 24" stroke="#FF9D00" stroke-width="7" stroke-linecap="butt"/>
+      <path d="M23 24 L33 14" stroke="#FF9D00" stroke-width="7"/>
+      <path d="M40 7 L38 22 L26 12 Z" fill="#FF9D00"/>
+    </svg>
+    <div>
+      <div class="num">450 m</div>
+      <div class="st">Chaussée de Louvain</div>
+    </div>
+    <div class="exit"><b>22</b><i>Liège / Namur</i></div>
+  </div>
+
+  <div class="card alert">
+    <div class="ico">CAM</div>
+    <div>
+      <div class="lab">Speed camera</div>
+      <div class="d">380 m · 70</div>
+    </div>
+  </div>
+
+  <div class="cluster">
+    <div class="spd">72</div>
+    <div class="lim"><span>50</span></div>
+  </div>
+
+  <div class="roadpill">Avenue de Tervueren</div>
+
+  <div class="ctl">
+    <div class="chip">Routes 3</div>
+    <div class="chip">♫</div>
+    <div class="chip">▲</div>
+    <div class="chip dim">⚙</div>
+    <div class="chip go">Go</div>
+  </div>
+
+  <div class="strip">
+    <div class="eta">12 min · 8.4 km</div>
+    <div class="stat">route: 8.4 km, 12 min via E40 · BE · 14 cameras, just now</div>
+    <div class="stop">Stop</div>
+  </div>
+</div>
+<div class="caption">
+  Everything floats over the map, nothing spans the width, and the bottom strip is
+  34 dp so the car marker sits clear above it.
+</div>
+</body>
+</html>

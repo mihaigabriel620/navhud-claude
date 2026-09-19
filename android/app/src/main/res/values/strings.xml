@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NavHUD</string>
+    <string name="setup_title">NavHUD setup</string>
+    <string name="subtitle">Turn-by-turn navigation with speed limits, streamed to an Arduino head-up display over USB.</string>
+
+    <string name="token_label">Mapbox access token</string>
+    <string name="token_help">Free, no card needed. Sign in at https://account.mapbox.com/access-tokens/ and copy the default public token. It covers routing, search and map tiles.</string>
+    <string name="token_hint">pk.eyJ1Ijoi…</string>
+    <string name="save_token">Save token</string>
+
+    <string name="dest_hint">Search here</string>
+    <string name="where_to">Where to?</string>
+    <string name="bt_label">Use Bluetooth instead of USB</string>
+    <string name="voice_label">Spoken guidance</string>
+    <string name="open_map">Open map</string>
+    <string name="wire_label">Last frame sent to the display</string>
+
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="go">Go</string>
+    <string name="following">Following</string>
+    <string name="voice_on">Voice on</string>
+    <string name="settings">Setup</string>
+    <string name="search">Search</string>
+    <string name="cancel">Cancel</string>
+    <string name="routes">Routes</string>
+    <!-- Route picker cards. -->
+    <string name="route_arrive">arrive %1$s · %2$s</string>
+    <string name="route_via">via %1$s</string>
+    <string name="route_delay">+%1$d min traffic</string>
+    <string name="route_current">Current route</string>
+    <string name="warn_lez">Low-emission zone: %1$s</string>
+    <string name="warn_lez_plain">Low-emission zone on this route</string>
+    <string name="warn_toll">Toll road</string>
+    <string name="warn_ferry">Ferry crossing</string>
+    <string name="warn_closure">Roadworks or closure on this route</string>
+    <string name="warn_unpaved">Unpaved road</string>
+    <string name="warn_restricted">Restricted access</string>
+    <string name="closure_ahead">Closed road in %1$s</string>
+    <string name="feat_crossing">Level crossing</string>
+    <string name="feat_bump">Speed bump</string>
+    <string name="feat_toll">Toll booth</string>
+    <string name="kmh">km/h</string>
+    <string name="lang_label">Voice language</string>
+    <string name="cameras_label">Speed camera alerts</string>
+    <string name="home_country_label">Home country</string>
+    <string name="google_label">Google key (optional, search only)</string>
+    <string name="google_help">Improves address search. Used only for geocoding, so the map stays ours. That is what Google\u2019s terms require. Leave empty to search with OpenStreetMap, which is free and needs no key.</string>
+    <string name="google_hint">AIza…</string>
+    <string name="save_google">Save key</string>
+    <string name="recenter">Recenter</string>
+    <string name="voice_off">Voice off</string>
+    <string name="press_go">Driving, no destination set</string>
+    <string name="danger_zone">Danger zone</string>
+    <string name="zone_hint">enforcement likely</string>
+    <string name="cam_fixed">Speed camera</string>
+    <string name="cam_average">Average speed check</string>
+    <string name="cam_light">Traffic light camera</string>
+    <string name="cams_fresh">cameras %1$s</string>
+    <string name="cams_never">cameras not loaded</string>
+
+    <!-- Search screen. The icons are vector drawables in res/drawable; text
+         glyphs were a shortcut and they looked like one, most obviously the
+         colour-emoji magnifier sitting in an amber-on-black car interface. -->
+    <string name="back">Back</string>
+    <string name="clear">Clear</string>
+    <string name="speak">Speak the address</string>
+    <string name="home">Home</string>
+    <string name="work">Work</string>
+    <string name="set_location">Set location</string>
+    <string name="set_home_hint">Search for your home address</string>
+    <string name="set_work_hint">Search for your work address</string>
+    <string name="home_saved">Home saved</string>
+    <string name="work_saved">Work saved</string>
+    <string name="recent">Recent</string>
+    <string name="results">Results</string>
+    <string name="type_an_address">Type an address or a place</string>
+    <string name="nothing_found">Nothing found for \"%1$s\"</string>
+    <string name="show_perf">Show frame timings in the quick menu</string>
+    <string name="search_unavailable">Search is unavailable. Check the connection.</string>
+    <string name="no_speech">No speech recognition on this device</string>
+    <string name="free_drive">Driving</string>
+    <string name="end_route">Cancel route</string>
+    <string name="crash_title">NavHUD closed last time</string>
+    <string name="crash_body">It restarted cleanly, so there is nothing you need to do. If it keeps happening, the details below say why.</string>
+    <string name="crash_show_details">Show details</string>
+    <string name="crash_hide_details">Hide details</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_dismiss">OK</string>
+    <string name="crash_copied">Report copied to the clipboard</string>
+    <string name="need_location">NavHUD needs location permission to navigate</string>
+    <string name="now">Now</string>
+    <string name="recentre">Re-centre on the car</string>
+    <string name="waiting_for_gps">Waiting for GPS</string>
+    <string name="cameras_off_here">Camera alerts off here (local law)</string>
+    <string name="danger_zones_only">Danger zones only (local law)</string>
+    <string name="road_closed_in">Road closed in %1$d m</string>
+    <string name="via">via %1$s</string>
+    <string name="hud_disconnected">HUD disconnected</string>
+    <string name="quick_actions">Quick actions</string>
+    <string name="quick_settings">Settings</string>
+    <string name="sound_on">On</string>
+    <string name="sound_off">Off</string>
+    <string name="calib_title">Arrow direction</string>
+    <string name="calib_help">Turn the phone slowly through a full circle, or turn the whole car. The ring fills as you go. That is what calibrates a compass: the sensor watches the magnetic field sweep past and works out how much the car\'s bodywork is bending it.\n\nWhen the ring is full, check the arrow against a road you can see on the map. If it is off, nudge it, then press Done.</string>
+    <string name="calib_nudge">Turn the arrow</string>
+    <string name="calib_l90">90° left</string>
+    <string name="calib_l5">5° left</string>
+    <string name="calib_r5">5° right</string>
+    <string name="calib_r90">90° right</string>
+    <string name="calib_flip">Turn it right round (180°)</string>
+    <string name="calib_save">Save</string>
+    <string name="calib_reset">Forget</string>
+    <string name="calib_note">Standing still the arrow is a compass, so you know which way you are facing before you set off. As soon as the car is moving it switches to GPS, which measures the direction of travel from orbit and cannot be bent by the car\'s bodywork; the compass comes back a few seconds after you stop. Readings taken in a distorted magnetic field are thrown away rather than shown.</string>
+    <string name="calib_button">Calibrate arrow direction</string>
+    <string name="calib_no_sensor">This device has no compass, so the arrow can only get its direction from GPS once you start driving.</string>
+    <string name="calib_learned">Learned automatically while driving: offset %1$d°</string>
+    <string name="calib_manual">Set by hand: offset %1$d°</string>
+    <string name="calib_none">Not calibrated yet. Drive above 25 km/h and it sorts itself out.</string>
+    <string name="calib_readout_sub">phone compass %1$d° · using the %2$s</string>
+    <string name="calib_axis_top">top edge of the phone</string>
+    <string name="calib_axis_screen">way the screen faces</string>
+    <string name="calib_progress">%1$d%% of the circle covered</string>
+    <string name="calib_turn_more">Keep turning. The ring fills as the compass sees each direction.</string>
+    <string name="calib_turned_enough">Full circle covered. Offset %1$d°. Check the arrow against the road, then press Done.</string>
+    <string name="calib_ready">Compass reports itself accurate. Offset %1$d°. Press Done.</string>
+    <string name="calib_done">Done</string>
+    <string name="bg_title">Keeping the HUD alive in the background</string>
+    <string name="bg_fix">Stop the phone putting NavHUD to sleep</string>
+    <string name="bg_all_ok">All clear. The phone is not standing in the way.</string>
+    <string name="bg_steps_title">Only you can do these, in the phone\'s settings:</string>
+    <string name="boot_start">Start with the car (run when the device boots)</string>
+    <string name="sec_driving">Driving</string>
+    <string name="sec_display">Head-up display</string>
+    <string name="sec_keys">Map and search keys</string>
+    <string name="calib_open">Calibrate the compass</string>
+    <string name="diag_show">Diagnostics</string>
+    <string name="diag_hide">Hide diagnostics</string>
+    <string name="link_idle">Not running. Open the map to start.</string>
+    <string name="link_up">Connected to %1$s</string>
+    <string name="link_lost">Connected earlier, nothing there now. Check the cable.</string>
+    <string name="link_waiting">Looking for the display…</string>
+    <string name="empty_search_title">Where are you going?</string>
+    <string name="empty_search_body">Type a street, a town or a place. Places you have been to lately show up here.</string>
+    <string name="empty_none_title">Nothing found</string>
+    <string name="empty_none_body">No match for “%1$s”. Try the street without the number, or add the town.</string>
+    <string name="empty_offline_title">Can\'t reach search</string>
+    <string name="empty_offline_body">There is no connection right now. Search needs one; the map and the speed limit do not.</string>
+    <string name="empty_token_title">Search needs a Mapbox key</string>
+    <string name="empty_token_body">Address search runs on Mapbox, and no key has been entered yet. It is free and takes a minute.</string>
+    <string name="empty_token_action">Open setup</string>
+    <string name="finding_you">Finding you…</string>
+
+    <!-- ==== keystone / screen alignment ================================== -->
+
+    <string name="keystone_title">Screen alignment</string>
+    <string name="keystone_intro">The display is showing a test grid. Match the shape below to what you see reflected in the windscreen.</string>
+
+    <string name="keystone_mirror_heading">Which way round</string>
+    <string name="keystone_mirror_help">Lying flat on the dash and read as a reflection, the picture comes out back-to-front, so the display flips it. If the corner labels on the glass read TL, TR, BR, BL the same way round as they do here, this is right.</string>
+    <string name="keystone_mirror_x">Mirror left to right</string>
+    <string name="keystone_mirror_y">Mirror top to bottom</string>
+
+    <string name="keystone_shape_heading">Keystone</string>
+    <string name="keystone_shape_help">A dash that is not level with the screen turns the reflection into a trapezoid. These shorten one edge to match the other. Both only ever pull inwards, so nothing can end up off the panel.</string>
+    <string name="keystone_vertical">Vertical — dash tilted forwards or back</string>
+    <string name="keystone_horizontal">Horizontal — screen sitting off to one side</string>
+
+    <string name="keystone_corner_heading">Corners</string>
+    <string name="keystone_corner_help">For a windscreen that is not flat. Drag a corner on the preview, or pick one and nudge it. Moving a slider above rebuilds all four.</string>
+
+    <string name="keystone_none">no correction</string>
+    <string name="keystone_narrow">%1$s edge in by %2$d px</string>
+    <string name="keystone_area">%1$d%% of the panel in use</string>
+    <string name="keystone_custom">corners adjusted by hand</string>
+
+    <string name="keystone_live">Previewing on the display — not saved yet</string>
+    <string name="keystone_reading">Reading the current settings from the display…</string>
+    <string name="keystone_no_link">No display connected — check the cable</string>
+    <string name="keystone_crossed">Corners crossed. The display would ignore this shape.</string>
+    <string name="keystone_saving">Saving to the display…</string>
+    <string name="keystone_saved">Saved to the display</string>
+    <string name="keystone_saved_same">Already saved — nothing changed</string>
+    <string name="keystone_save_failed">The display could not save it: %1$s</string>
+    <string name="keystone_reset">Reset</string>
+    <string name="keystone_save">Save to display</string>
+    <string name="keystone_done">Done</string>
+    <string name="keystone_open">Align the screen</string>
+    <string name="keystone_view_crossed">Corners crossed \u2014 the display would ignore this</string>
+    <string name="keystone_view_clipped">Part of the picture is off the panel and will not be drawn</string>
+    <string name="keystone_summary_none">No correction — the picture fills the panel</string>
+    <string name="keystone_summary">%1$d%% of the panel in use%2$s</string>
+    <string name="keystone_summary_mirror">, mirrored</string>
+
+    <string name="corner_tl">Top left</string>
+    <string name="corner_tr">Top right</string>
+    <string name="corner_br">Btm right</string>
+    <string name="corner_bl">Btm left</string>
+    <string name="nudge_up">\u25B2</string>
+    <string name="nudge_down">\u25BC</string>
+    <string name="nudge_left">\u25C0</string>
+    <string name="nudge_right">\u25B6</string>
+</resources>

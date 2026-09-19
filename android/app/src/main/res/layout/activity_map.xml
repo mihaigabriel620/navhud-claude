@@ -1,0 +1,644 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Full-screen map, floating cards, touch targets sized for a moving car. The
+  car marker is anchored 60% down the screen by the camera padding in
+  MapActivity, so nothing here may grow tall enough to reach it.
+
+  Every control is a vector icon rather than a text glyph. The glyphs were a
+  shortcut and they looked like one: a colour emoji magnifier, a musical note
+  standing in for the speaker, a triangle for re-centre.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface">
+
+    <org.maplibre.android.maps.MapView
+        android:id="@+id/map"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- next turn, top left. Hidden whole when there is no route: an arrow
+         pointing straight on reads as guidance, and there is none. -->
+    <LinearLayout
+        android:id="@+id/instructionCard"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_margin="@dimen/space"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card"
+        android:visibility="gone"
+        android:elevation="6dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="@dimen/space_wide"
+            android:paddingEnd="@dimen/space_page"
+            android:paddingTop="@dimen/space"
+            android:paddingBottom="@dimen/space">
+
+            <com.mihai.navhud.ui.ManeuverView
+                android:id="@+id/maneuver"
+                android:layout_width="62dp"
+                android:layout_height="62dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="@dimen/space_wide">
+
+                <TextView
+                    android:id="@+id/dist"
+                    style="@style/NavHUD.Numeric"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/amber"
+                    android:textSize="@dimen/text_display"
+                    android:includeFontPadding="false" />
+
+                <TextView
+                    android:id="@+id/street"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:maxWidth="280dp"
+                    android:maxLines="1"
+                    android:paddingTop="2dp"
+                    android:ellipsize="end"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="@dimen/text_body" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <com.mihai.navhud.ui.LaneView
+            android:id="@+id/lanes"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:visibility="gone" />
+
+        <!--
+          The motorway junction view, attached to the bottom of the instruction
+          card rather than floating on its own. It was a free-standing panel at
+          the bottom right, and every size that made the road readable also put
+          it through either the camera alert above or the speed gauge below.
+          Hanging it off the card it belongs to is what HERE and Sygic do, and
+          it cannot collide with anything because the card grows to fit it.
+        -->
+        <com.mihai.navhud.ui.JunctionView
+            android:id="@+id/junctionView"
+            android:layout_width="match_parent"
+            android:layout_height="132dp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- top right: motorway exit board, then the camera alert -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="@dimen/space"
+        android:orientation="vertical"
+        android:gravity="end">
+
+        <LinearLayout
+            android:id="@+id/junction"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="gone"
+            android:background="@drawable/bg_exit_sign"
+            android:elevation="6dp"
+            android:paddingStart="@dimen/space_wide"
+            android:paddingEnd="@dimen/space_wide"
+            android:paddingTop="@dimen/space_tight"
+            android:paddingBottom="@dimen/space_tight">
+
+            <TextView
+                android:id="@+id/exitNumber"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/surface"
+                android:textSize="@dimen/text_title"
+                android:includeFontPadding="false"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/exitDest"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="200dp"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:textColor="@color/amber_wash"
+                android:textSize="@dimen/text_label" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/cameraAlert"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_tight"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            android:background="@drawable/bg_alert"
+            android:elevation="6dp"
+            android:paddingStart="@dimen/space"
+            android:paddingEnd="@dimen/space_wide"
+            android:paddingTop="@dimen/space"
+            android:paddingBottom="@dimen/space">
+
+            <ImageView
+                android:id="@+id/cameraIcon"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:src="@drawable/ic_camera_warn"
+                android:contentDescription="@string/cam_fixed" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="@dimen/space">
+
+                <TextView
+                    android:id="@+id/cameraLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/danger"
+                    android:textSize="@dimen/text_body"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/cameraDist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/amber_bright"
+                    android:textSize="@dimen/text_label" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Anything actually wrong: no GPS yet, the HUD cable gone, cameras
+             suppressed by local law. Only ever visible when there is something
+             to say : the permanent grey status line it replaces was, being permanent, read
+             as chrome and ignored. -->
+        <TextView
+            android:id="@+id/statusChip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_tight"
+            android:background="@drawable/bg_warn_chip"
+            android:elevation="6dp"
+            android:maxWidth="360dp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:paddingStart="@dimen/space"
+            android:paddingEnd="@dimen/space_wide"
+            android:paddingTop="@dimen/space_tight"
+            android:paddingBottom="@dimen/space_tight"
+            android:textColor="@color/amber_bright"
+            android:textSize="@dimen/text_label"
+            android:visibility="gone" />
+
+        <!-- Roadworks and closures. The route line already paints a closed
+             stretch dark red, which is invisible if you are looking at the
+             road rather than the screen. -->
+        <TextView
+            android:id="@+id/roadworks"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_tight"
+            android:background="@drawable/bg_warn_chip"
+            android:drawablePadding="8dp"
+            android:elevation="6dp"
+            android:paddingStart="@dimen/space"
+            android:paddingEnd="@dimen/space_wide"
+            android:paddingTop="@dimen/space_tight"
+            android:paddingBottom="@dimen/space_tight"
+            android:textColor="@color/amber_bright"
+            android:textSize="@dimen/text_label"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!--
+      Sygic's bottom-left slab. Search, the trip figures and the menu live in
+      one rounded black shape anchored to the corner, and the rest of the
+      screen is map.
+
+      What this replaces: a full-width weighted row of five separate chips plus
+      a 44dp strip glued along the very bottom edge. That was tidy in a layout
+      inspector and wrong in a car. A strip across the whole width steals a
+      band of map for two numbers; five chips in a row means five things to
+      distinguish at a glance while driving. One corner slab plus one dial is
+      the entire interface, and everything else moved into a sheet you open
+      deliberately.
+    -->
+    <LinearLayout
+        android:id="@+id/tripPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="@dimen/space_wide"
+        android:background="@drawable/bg_trip_pill"
+        android:elevation="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_tight"
+        android:paddingEnd="@dimen/space_tight">
+
+        <!--
+          Search plus the trip figures, as one tappable block when there is
+          nowhere to go yet.
+
+          The search button used to be a 26dp grey magnifier at the left end of
+          this pill, with the current road name beside it. On the road that is
+          invisible: the icon reads as a decoration belonging to the text, the
+          text is a road name rather than an invitation, and there is nothing
+          anywhere on the screen that says "type an address here". Now, with no
+          destination, the magnifier is amber on an amber wash and the line
+          beside it says "Where to?" : and the whole thing is one target, so
+          you cannot miss it with a thumb in a moving car.
+        -->
+        <LinearLayout
+            android:id="@+id/searchBlock"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/go"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/bg_search_cta"
+                android:contentDescription="@string/where_to"
+                android:padding="@dimen/space"
+                android:src="@drawable/ic_search" />
+
+            <LinearLayout
+                android:id="@+id/tripText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/space"
+                android:layout_marginEnd="@dimen/space_tight"
+                android:minWidth="96dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tripMain"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:maxWidth="300dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_title"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tripSub"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:maxWidth="300dp"
+                    android:paddingTop="1dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="@dimen/text_body"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/quickActions"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/quick_actions"
+            android:padding="@dimen/space_wide"
+            android:src="@drawable/ic_grid" />
+    </LinearLayout>
+
+    <!-- The right-hand instruments: the speed dial, and re-centre under it. -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="@dimen/space_wide"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
+
+        <com.mihai.navhud.ui.SpeedGauge
+            android:id="@+id/speedGauge"
+            android:layout_width="wrap_content"
+            android:layout_height="94dp" />
+
+        <ImageView
+            android:id="@+id/follow"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginTop="@dimen/space"
+            android:background="@drawable/bg_circle_btn"
+            android:contentDescription="@string/recentre"
+            android:elevation="10dp"
+            android:padding="@dimen/space_wide"
+            android:src="@drawable/ic_recenter" />
+    </LinearLayout>
+
+    <!--
+      The route picker. A sheet over the bottom of the map rather than a modal
+      dialog: the alternatives are drawn on the map behind it, so you can see
+      what "via E40" actually means before you choose it. A list of three
+      durations in an AlertDialog, which is what this replaces, told you the
+      numbers and nothing else.
+    -->
+    <LinearLayout
+        android:id="@+id/routePicker"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@drawable/bg_sheet"
+        android:elevation="14dp"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true"
+        android:paddingStart="@dimen/space_wide"
+        android:paddingEnd="@dimen/space_wide"
+        android:paddingTop="@dimen/space"
+        android:paddingBottom="@dimen/space_wide">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/routes"
+                android:textColor="@color/text_primary"
+                android:textSize="@dimen/text_heading"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/routePickerClose"
+                android:layout_width="@dimen/touch_min"
+                android:layout_height="@dimen/touch_min"
+                android:padding="@dimen/space_tight"
+                android:src="@drawable/ic_close_grey"
+                android:contentDescription="@string/cancel" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/routeCards"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_tight"
+            android:orientation="horizontal"
+            android:baselineAligned="false" />
+    </LinearLayout>
+
+    <!--
+      Quick actions. Everything that used to be a permanent chip on the map now
+      lives behind the four-dot button: you press it at a standstill, not at
+      70 km/h, so it can afford to be a list of large labelled squares rather
+      than a row of unlabelled icons.
+
+      Last child of the frame *and* elevated, and both matter. Elevation only
+      orders siblings within one parent, so the sheet's own 18dp said nothing
+      about the scrim against the trip pill outside it : the pill (10dp) and
+      the instruction card (6dp) both painted over the dimmed scrim and, worse,
+      took the touches. Pressing the bottom-left of "Cancel route" landed on
+      the search button underneath and opened the search screen instead.
+    -->
+    <FrameLayout
+        android:id="@+id/quickScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/scrim"
+        android:elevation="24dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/quickSheet"
+            android:layout_width="@dimen/sheet_width"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:background="@drawable/bg_sheet"
+            android:elevation="18dp"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/space_page"
+            android:paddingEnd="@dimen/space_page"
+            android:paddingTop="@dimen/space_wide"
+            android:paddingBottom="@dimen/space_page">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/quick_actions"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_title"
+                    android:textStyle="bold" />
+
+                <ImageView
+                    android:id="@+id/quickClose"
+                    android:layout_width="@dimen/touch_min"
+                    android:layout_height="@dimen/touch_min"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/cancel"
+                    android:padding="@dimen/space_tight"
+                    android:src="@drawable/ic_close_grey" />
+            </LinearLayout>
+
+            <!--
+              Capped and scrollable.
+
+              The rows replaced one 92dp tile row with four 56dp ones, and with
+              a route running plus alternatives the sheet wants 422dp. A
+              landscape phone with the system bars hidden has 360dp, and a bare
+              LinearLayout inside a FrameLayout does not scroll: it clamps to
+              the viewport and clips the overflow off the bottom, silently.
+              That put the status line off-screen and, with diagnostics on,
+              "End route" with it.
+            -->
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                <!--
+                  Rows, not a row of icon boxes.
+
+                  Four 96x80 tiles with a glyph and a caption underneath is the
+                  shape every generated interface reaches for, and it is a poor
+                  shape for a car: same-sized squares carry no hierarchy, so you
+                  have to read all four labels to find one, and the label is the
+                  only thing distinguishing them.
+
+                  A list gives each action a full-width target, puts the name where
+                  the eye already is, and has room on the right for what the
+                  setting currently is, which is the question you actually open
+                  this sheet to answer.
+                -->
+                <LinearLayout
+                    android:id="@+id/tileSearch"
+                    style="@style/QuickRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space">
+
+                    <ImageView
+                        style="@style/QuickRowIcon"
+                        android:layout_width="@dimen/icon"
+                        android:layout_height="@dimen/icon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_search" />
+
+                    <TextView
+                        style="@style/QuickRowLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:text="@string/where_to" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/tileVoice"
+                    style="@style/QuickRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <ImageView
+                        android:id="@+id/voiceButton"
+                        style="@style/QuickRowIcon"
+                        android:layout_width="@dimen/icon"
+                        android:layout_height="@dimen/icon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_volume_on" />
+
+                    <TextView
+                        style="@style/QuickRowLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:text="@string/voice_label" />
+
+                    <TextView
+                        android:id="@+id/voiceState"
+                        style="@style/QuickRowValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/tileRoutes"
+                    style="@style/QuickRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone">
+
+                    <ImageView
+                        style="@style/QuickRowIcon"
+                        android:layout_width="@dimen/icon"
+                        android:layout_height="@dimen/icon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_routes" />
+
+                    <TextView
+                        style="@style/QuickRowLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:text="@string/routes" />
+
+                    <TextView
+                        android:id="@+id/routesLabel"
+                        style="@style/QuickRowValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/tileSettings"
+                    style="@style/QuickRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <ImageView
+                        style="@style/QuickRowIcon"
+                        android:layout_width="@dimen/icon"
+                        android:layout_height="@dimen/icon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_settings" />
+
+                    <TextView
+                        style="@style/QuickRowLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:text="@string/quick_settings" />
+                </LinearLayout>
+
+                <!-- Turned on from Setup. A number beats a guess: this is what
+                     gets screenshotted when something feels slow. -->
+                <TextView
+                    android:id="@+id/perfOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ok"
+                    android:textSize="@dimen/text_caption"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/cancelRoute"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_wide"
+                    android:background="@drawable/bg_danger"
+                    android:gravity="center"
+                    android:paddingTop="@dimen/space_wide"
+                    android:paddingBottom="@dimen/space_wide"
+                    android:text="@string/end_route"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_heading"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/mapStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="@dimen/space_wide"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="@dimen/text_caption" />
+
+                </LinearLayout>
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+</FrameLayout>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A picker, with its arrow back.
+
+  NavHUD.Spinner replaces the background, and on Material that background is
+  what draws the dropdown triangle. So the three pickers on Setup lost both
+  their well and any sign that they could be opened, and read as plain text.
+  This puts the well and an explicit chevron back together.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/bg_field" />
+    <item
+        android:drawable="@drawable/ic_chevron_down"
+        android:gravity="center_vertical|end"
+        android:end="@dimen/space" />
+</layer-list>

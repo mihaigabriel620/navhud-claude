@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Re-centre on the car.
+
+  Was Material's `gps_fixed`: a filled dot inside a ring with four full-bleed
+  ticks, 47% ink — the loudest icon on the driving screen, for its least-used
+  control. Same idea, drawn light: a thin ring, four short ticks clear of it,
+  and the app's own chevron in the middle so the button says *what* it centres
+  on rather than just "location".
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/amber">
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M12,12m-6.6,0a6.6,6.6 0,1 0,13.2 0a6.6,6.6 0,1 0,-13.2 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M11.25,1.9h1.5v2.7h-1.5zM11.25,19.4h1.5v2.7h-1.5zM1.9,11.25h2.7v1.5H1.9zM19.4,11.25h2.7v1.5h-2.7z" />
+    <!-- The same chevron as the marker on the map and the launcher. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,7.9l3.3,7.4 -3.3,-1.9 -3.3,1.9z" />
+</vector>

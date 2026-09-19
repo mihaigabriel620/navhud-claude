@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Alternative routes: one road forking into two, an arrowhead on each. The
+  previous attempt at this was four disconnected fragments that read as noise.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/amber">
+    <path
+        android:strokeColor="@color/text_primary"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,22 L12,15 M12,15 L17.4,10.2 M12,15 L6.6,10.2" />
+    <path android:fillColor="@color/text_primary" android:pathData="M6.5,4.6 L9.9,10.6 L3.1,10.6 Z" />
+    <path android:fillColor="@color/text_primary" android:pathData="M17.5,4.6 L20.9,10.6 L14.1,10.6 Z" />
+</vector>

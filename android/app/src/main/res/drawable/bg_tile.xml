@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One of the big square buttons in the Quick actions sheet. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FF232A35" />
+    <corners android:radius="@dimen/radius_card" />
+</shape>

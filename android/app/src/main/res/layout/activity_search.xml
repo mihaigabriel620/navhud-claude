@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Destination search, laid out the way Google Maps and Waze do it: a rounded
+  field at the top with a back arrow and a microphone, two shortcut chips, and
+  then a list that starts as your recent destinations and becomes results as
+  you type. There is no Search button, because there is nothing to press:
+  matches appear while you type.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/surface">
+
+    <!-- the search field -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_search_field"
+        android:layout_marginStart="@dimen/space_wide"
+        android:layout_marginEnd="@dimen/space_wide"
+        android:layout_marginTop="@dimen/space_page"
+        android:minWidth="420dp"
+        android:paddingStart="@dimen/space_tight"
+        android:paddingEnd="@dimen/space_tight">
+
+        <ImageView
+            android:id="@+id/back"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:padding="@dimen/space_wide"
+            android:src="@drawable/ic_arrow_back"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/back" />
+
+        <EditText
+            android:id="@+id/query"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@null"
+            android:textStyle="bold"
+            android:hint="@string/dest_hint"
+            android:textColorHint="@color/text_secondary"
+            android:textColor="@color/text_primary"
+            android:imeOptions="actionSearch|flagNoExtractUi"
+            android:inputType="text|textNoSuggestions"
+            android:maxLines="1"
+            android:textSize="@dimen/text_heading"
+            android:autofillHints="postalAddress" />
+
+        <ImageView
+            android:id="@+id/clear"
+            android:layout_width="@dimen/touch_min"
+            android:layout_height="@dimen/touch_min"
+            android:padding="@dimen/space_wide"
+            android:src="@drawable/ic_close_grey"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/clear"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/mic"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:padding="@dimen/space_wide"
+            android:src="@drawable/ic_mic"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/speak" />
+    </LinearLayout>
+
+    <!-- Home and Work -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="@dimen/space_wide"
+        android:paddingEnd="@dimen/space_wide"
+        android:paddingTop="@dimen/space_wide"
+        android:paddingBottom="@dimen/space_wide">
+
+        <LinearLayout
+            android:id="@+id/homeChip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingTop="@dimen/space_tight"
+            android:paddingBottom="@dimen/space_tight">
+
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:padding="@dimen/space"
+                android:background="@drawable/circle_dark"
+                android:src="@drawable/ic_home"
+                android:contentDescription="@string/home" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="@dimen/space"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/home"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_heading" />
+
+                <TextView
+                    android:id="@+id/homeSub"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textColor="@color/amber"
+                    android:textSize="@dimen/text_label" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="@dimen/space_tight"
+            android:layout_marginEnd="@dimen/space_tight"
+            android:background="@color/line" />
+
+        <LinearLayout
+            android:id="@+id/workChip"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingTop="@dimen/space_tight"
+            android:paddingBottom="@dimen/space_tight">
+
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:padding="@dimen/space"
+                android:background="@drawable/circle_dark"
+                android:src="@drawable/ic_work"
+                android:contentDescription="@string/work" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="@dimen/space"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/work"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_heading" />
+
+                <TextView
+                    android:id="@+id/workSub"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="@dimen/text_label" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:background="#000000" />
+
+    <!-- header and list -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="@dimen/space_page"
+        android:paddingEnd="@dimen/space_page"
+        android:paddingTop="@dimen/space_wide"
+        android:paddingBottom="@dimen/space_tight">
+
+        <TextView
+            android:id="@+id/hint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:textSize="@dimen/text_heading" />
+
+        <ProgressBar
+            android:id="@+id/spinner"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/results"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="@color/line"
+            android:dividerHeight="1dp"
+            android:scrollbarStyle="outsideOverlay" />
+
+        <!--
+          What fills the void.
+
+          With no query and no history, the list was an empty black rectangle
+          over roughly sixty per cent of the screen, and "nothing found" and
+          "the lookup failed" looked exactly the same: one line of text above
+          the same void. An empty state is a screen too.
+        -->
+        <LinearLayout
+            android:id="@+id/emptyState"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/space_section"
+            android:paddingEnd="@dimen/space_section"
+            android:paddingBottom="@dimen/space_section"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/emptyIcon"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:alpha="0.5"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_search" />
+
+            <TextView
+                android:id="@+id/emptyTitle"
+                style="@style/NavHUD.Heading"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_wide"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/emptyBody"
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:gravity="center"
+                android:lineSpacingMultiplier="1.3"
+                android:textColor="@color/text_secondary" />
+
+            <Button
+                android:id="@+id/emptyAction"
+                style="@style/NavHUD.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_wide"
+                android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

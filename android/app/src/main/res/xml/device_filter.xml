@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Makes Android offer to launch NavHUD when you plug the board in, and grants
+  USB permission for that device without a dialog every single time.
+
+  Add your own board here if it is not listed. Find the numbers with `lsusb` on
+  a PC, or in the app's status line after the first successful connection.
+-->
+<resources>
+    <!-- CH340 / CH341 (most Uno / Nano clones, many ESP32 boards) -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    <!-- CP2102 / CP210x (NodeMCU, many ESP32 dev boards) -->
+    <usb-device vendor-id="4292" product-id="60000" />
+    <!-- FTDI FT232R -->
+    <usb-device vendor-id="1027" product-id="24577" />
+    <!-- Arduino Uno (ATmega16U2 CDC) -->
+    <usb-device vendor-id="9025" product-id="67" />
+    <!-- Arduino Leonardo / Micro (ATmega32U4 CDC) -->
+    <usb-device vendor-id="9025" product-id="32822" />
+    <!-- Espressif ESP32-S2 / S3 native USB CDC -->
+    <usb-device vendor-id="12346" product-id="4097" />
+</resources>

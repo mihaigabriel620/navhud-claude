@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Type, spacing and radius, as three short scales.
+
+  There were fourteen text sizes (seven consecutive integers between 12 and
+  19), eighteen spacing values of which twelve were off any grid, and ten
+  corner radii of which four rendered as the same capsule. A scale is not
+  decoration: it is what makes a screen look drawn rather than assembled.
+-->
+<resources>
+
+    <!-- ==== type ======================================================== -->
+    <!-- Six sizes. If something needs a seventh, it wants a different role. -->
+
+    <dimen name="text_display">34sp</dimen>   <!-- distance to the maneuver -->
+    <dimen name="text_title">22sp</dimen>     <!-- screen title -->
+    <dimen name="text_heading">17sp</dimen>   <!-- section heading -->
+    <dimen name="text_body">15sp</dimen>      <!-- the default -->
+    <dimen name="text_label">13sp</dimen>     <!-- second lines, chips -->
+    <dimen name="text_caption">12sp</dimen>   <!-- help text -->
+
+    <!-- ==== spacing ===================================================== -->
+    <!-- A 4dp grid, named by intent so the intent survives an edit. -->
+
+    <dimen name="space_hair">4dp</dimen>
+    <dimen name="space_tight">8dp</dimen>
+    <dimen name="space">12dp</dimen>
+    <dimen name="space_wide">16dp</dimen>
+    <dimen name="space_section">24dp</dimen>
+    <dimen name="space_page">20dp</dimen>     <!-- page gutter, every screen -->
+
+    <!-- ==== radius ====================================================== -->
+
+    <dimen name="radius_chip">10dp</dimen>
+    <dimen name="radius_card">16dp</dimen>
+    <dimen name="radius_capsule">100dp</dimen> <!-- always fully round -->
+
+    <!-- ==== panels ====================================================== -->
+
+    <!--
+      The quick-actions sheet.
+
+      It used to be wrap_content with a 360dp minimum, which never bound: its
+      rows use layout_weight, so under an AT_MOST measure they take the full
+      width and the sheet became the whole screen. On a 640dp landscape screen
+      that put the value column half a metre from its label, and a full-width
+      sheet also covers the scrim, so tapping outside stopped dismissing it.
+    -->
+    <dimen name="sheet_width">380dp</dimen>
+
+    <!-- ==== touch ======================================================= -->
+    <!-- Nothing tappable in a moving car is smaller than this. -->
+
+    <dimen name="touch_min">48dp</dimen>
+    <dimen name="icon">24dp</dimen>
+</resources>

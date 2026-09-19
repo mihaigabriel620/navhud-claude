@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One route, as a card: how long, when you arrive, how far, which roads, and
+  what is wrong with it. That last line is the reason the card exists at all -
+  a list of three durations tells you nothing about why the fastest one is
+  fastest, or that it goes through a low-emission zone.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/card"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_weight="1"
+    android:orientation="vertical"
+    android:background="@drawable/bg_route_card"
+    android:paddingStart="@dimen/space_wide"
+    android:paddingEnd="@dimen/space_wide"
+    android:paddingTop="@dimen/space"
+    android:paddingBottom="@dimen/space"
+    android:minHeight="112dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:baselineAligned="false"
+        android:gravity="bottom">
+
+        <TextView
+            android:id="@+id/cardDuration"
+            style="@style/NavHUD.Numeric"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:textColor="@color/amber"
+            android:textSize="@dimen/text_display"
+            />
+
+        <TextView
+            android:id="@+id/cardDelay"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/space"
+            android:paddingBottom="@dimen/space_hair"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/danger"
+            android:textSize="@dimen/text_label" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/cardWhen"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="2dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_primary"
+        android:textSize="@dimen/text_body" />
+
+    <TextView
+        android:id="@+id/cardVia"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="@dimen/space_hair"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_secondary"
+        android:textSize="@dimen/text_label" />
+
+    <TextView
+        android:id="@+id/cardWarn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_tight"
+        android:background="@drawable/bg_warn_chip"
+        android:paddingStart="@dimen/space"
+        android:paddingEnd="@dimen/space"
+        android:paddingTop="@dimen/space_hair"
+        android:paddingBottom="@dimen/space_hair"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textColor="@color/amber_bright"
+        android:textSize="@dimen/text_label"
+        android:visibility="gone" />
+</LinearLayout>

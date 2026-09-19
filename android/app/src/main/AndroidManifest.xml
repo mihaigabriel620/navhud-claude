@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Only ever claimed as a last resort, so the service can satisfy the
+         startForegroundService contract and shut down cleanly when it is not
+         entitled to any of the types it actually wants. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Normal protection level, granted at install: no prompt. Asking for it
+         is what lets the app offer the one-tap exemption dialog, which is what
+         keeps the wake lock working once the phone decides it is idle. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Required from Android 14 to create a location-typed foreground service
+         while the app is in the background, which is exactly what a start on
+         BOOT_COMPLETED is. Without it startForeground throws SecurityException,
+         the type-narrowing loop ends at NONE and the service stops itself, so
+         the HUD is silently dead after every boot. Android 10, the head unit
+         this mostly runs on, does not need it: there a location-typed
+         foreground service already counts as foreground location access.
+         https://developer.android.com/develop/background-work/services/fgs/service-types -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- only needed if you use the Bluetooth fallback -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+
+    <!-- Android 11+ hides other packages by default, and a text-to-speech
+         engine is another package. Without this the engine is simply not
+         found and the voice never speaks: no error, just silence. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+    <!--
+      android:persistent has no effect on a normally-installed app beyond
+      having its process started at boot: the framework's PERSISTENT_MASK is
+      FLAG_SYSTEM and FLAG_PERSISTENT together, so a side-loaded APK gets
+      neither the protected oom_adj nor the restart-on-death.
+
+      Copy the same APK into /system/app on a rooted head unit and both switch
+      on: the process is started by startPersistentApps before BOOT_COMPLETED
+      is even broadcast, sits at oom_adj -800 where the low-memory killer will
+      not touch it, and is restarted by the framework itself if it ever dies.
+      That is a watchdog nobody has to write. tools/headunit-setup.sh does the
+      copy; docs/HEADUNIT.md explains it.
+    -->
+    <application
+        android:persistent="true"
+        android:name=".NavHudApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.NavHUD">
+
+        <!-- The driving screen. Landscape, because that is what a head unit is. -->
+        <activity
+            android:name=".MapActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Launch when the HUD board is plugged in. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
+        </activity>
+
+        <activity
+            android:name=".CalibrateActivity"
+            android:exported="false"
+            android:label="@string/calib_title"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
+            android:name=".KeystoneActivity"
+            android:exported="false"
+            android:label="@string/keystone_title"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <activity
+            android:name=".SearchActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- Setup, diagnostics and the raw protocol view. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".HudService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="location|connectedDevice|specialUse" />
+        <!-- stopWithTask is false by default, and is written out anyway. This
+             is the attribute that decides whether swiping the app out of
+             recents takes the head-up display with it, and a default nobody
+             can see in the manifest is a poor place to keep that. -->
+        <!-- specialUse is claimed on one path only: when the app is not
+             entitled to the location type, so the service can satisfy the
+             startForegroundService contract and then stop tidily.
+
+             Google Play would want a PROPERTY_SPECIAL_USE_FGS_SUBTYPE
+             declaration alongside it. That element was added in API 31 and
+             this app is sideloaded onto head units running Android 10, whose
+             manifest parser has no idea what it is, so the justification
+             lives in this comment instead of in a tag those devices would have
+             to skip. -->
+    </application>
+</manifest>

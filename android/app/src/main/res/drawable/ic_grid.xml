@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The menu.
+
+  Four 2.3-radius dots, 11.5% ink — the faintest mark in the app, and the way
+  into every control on the driving screen. Six larger dots, at the weight of
+  the rest of the set, so it can be found at a glance and hit at speed.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/text_primary">
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,6.2m-2.3,0a2.3,2.3 0,1 0,4.6 0a2.3,2.3 0,1 0,-4.6 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,6.2m-2.3,0a2.3,2.3 0,1 0,4.6 0a2.3,2.3 0,1 0,-4.6 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,12m-2.3,0a2.3,2.3 0,1 0,4.6 0a2.3,2.3 0,1 0,-4.6 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,12m-2.3,0a2.3,2.3 0,1 0,4.6 0a2.3,2.3 0,1 0,-4.6 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,17.8m-2.3,0a2.3,2.3 0,1 0,4.6 0a2.3,2.3 0,1 0,-4.6 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M17,17.8m-2.3,0a2.3,2.3 0,1 0,4.6 0a2.3,2.3 0,1 0,-4.6 0" />
+</vector>

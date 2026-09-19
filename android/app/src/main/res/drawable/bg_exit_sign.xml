@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Motorway sign: amber plate, dark text. The E60 palette's version of the
+     green/blue exit boards Sygic renders photographically. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/amber_bright" />
+    <corners android:radius="@dimen/radius_chip" />
+</shape>

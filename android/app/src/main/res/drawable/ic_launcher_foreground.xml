@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app's mark: the chevron.
+
+  What shipped before was a raster PNG at five densities whose ink sat 6.6% off
+  centre in both axes — visible in a circular mask — with no monochrome layer,
+  so Android 13+ had no themed icon. And the arrow it drew appeared nowhere
+  else: the notification used a double chevron, the map marker was a third
+  shape drawn in code, and re-centre was a Material crosshair. Four marks for
+  one app.
+
+  One shape now, vector, centred: the same chevron the marker draws on the map
+  and the re-centre button carries, over the road it is travelling.
+
+  An adaptive icon is 108dp with the middle 72dp always visible, so everything
+  that matters stays inside the centre 66%.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- The road, running away to a vanishing point: wide at the bottom,
+         narrow at the top. The first draft had it the other way round. -->
+    <path
+        android:fillColor="#2E2A22"
+        android:pathData="M41,80.5h26L61.5,27.5h-15z" />
+    <!-- Centre line, tapering with it. -->
+    <path
+        android:fillColor="#4A4133"
+        android:pathData="M51.4,74h5.2l-0.6,-11h-4zM52.3,57h3.4l-0.5,-9h-2.4z" />
+    <!-- The chevron. -->
+    <path
+        android:fillColor="#FF9D00"
+        android:pathData="M54,34.5L70.5,72 54,63.8 37.5,72z" />
+</vector>

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One row of the search list, laid out the way Sygic lays one out: a red pin,
+  the name on the first line, and then the distance and the address together
+  on the second - distance in white because it is the number you scan the list
+  for, address in grey because it is what confirms you picked the right one.
+
+  It used to put the distance in amber at the far right, level with the name.
+  That put the two things you compare between rows at opposite ends of the
+  row, so choosing between two "Avenue de la Couronne" meant reading left,
+  then right, then left again.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="?android:attr/selectableItemBackground"
+    android:paddingStart="@dimen/space_page"
+    android:paddingEnd="@dimen/space_page"
+    android:paddingTop="@dimen/space_wide"
+    android:paddingBottom="@dimen/space_wide">
+
+    <ImageView
+        android:id="@+id/rowIcon"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:src="@drawable/ic_place_pin"
+        android:contentDescription="@string/recent" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="@dimen/space_wide"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/rowTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/text_heading"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingTop="2dp">
+
+            <TextView
+                android:id="@+id/rowDistance"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_primary"
+                android:textSize="@dimen/text_body"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/rowSubtitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="@color/text_secondary"
+                android:textSize="@dimen/text_body" />
+        </LinearLayout>
+    </LinearLayout>
+    <!--
+      Removed: an arrow here implied a second, separate tap target, and the
+      whole row has always had the one listener. An affordance that does
+      nothing is worse than no affordance.
+    -->
+</LinearLayout>

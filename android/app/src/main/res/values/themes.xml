@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      Pinned dark, not DayNight.
+
+      The parent was Theme.AppCompat.DayNight with no values-night directory
+      and no setDefaultNightMode call anywhere. Every colour in every layout is
+      hard-coded dark, but the *widget* theme followed the device — so on a
+      phone or head unit in light mode, which is the default, every Button,
+      CheckBox, Spinner, EditText, Toast and AlertDialog rendered light grey on
+      white against a black screen. That one attribute was doing more damage to
+      how finished the app looked than every layout in it.
+
+      Theme.AppCompat (no .Light, no .DayNight) is the dark one.
+    -->
+    <style name="Theme.NavHUD" parent="Theme.AppCompat.NoActionBar">
+        <!-- No action bar anywhere: every screen draws its own header, and a
+             nav app showing its own name in a system bar is wasted height. -->
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+
+        <!-- Text, so a widget that draws its own label gets the right ink. -->
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:textColorTertiary">@color/text_tertiary</item>
+        <item name="android:textColorHint">@color/text_tertiary</item>
+        <item name="android:textColorLink">@color/amber</item>
+
+        <!-- Controls. colorAccent alone left checkboxes and spinner arrows
+             on the platform default, which is a different amber to ours. -->
+        <item name="colorAccent">@color/amber</item>
+        <item name="colorControlNormal">@color/text_secondary</item>
+        <item name="colorControlActivated">@color/amber</item>
+        <item name="colorControlHighlight">#33FF9D00</item>
+
+        <item name="android:colorBackground">@color/surface</item>
+        <item name="colorPrimary">@color/amber</item>
+        <item name="colorPrimaryDark">@android:color/black</item>
+
+        <!-- Popups and dropdowns, which otherwise open as a white sheet. -->
+        <item name="android:popupBackground">@color/surface_raised</item>
+        <item name="android:dropDownListViewStyle">@style/NavHUD.DropDown</item>
+
+        <item name="alertDialogTheme">@style/Theme.NavHUD.Dialog</item>
+        <item name="android:alertDialogTheme">@style/Theme.NavHUD.Dialog</item>
+
+        <item name="buttonStyle">@style/NavHUD.Button</item>
+        <!-- The android: twins as well. AppCompat never maps these, and
+             CalibrateActivity is a plain Activity, so without them its seven
+             buttons inflate as platform Material: grey slab, ALL CAPS, a
+             different corner radius from every other screen. -->
+        <item name="android:buttonStyle">@style/NavHUD.Button</item>
+        <item name="android:editTextStyle">@style/NavHUD.EditText</item>
+        <item name="android:spinnerStyle">@style/NavHUD.Spinner</item>
+        <item name="checkboxStyle">@style/NavHUD.CheckBox</item>
+        <item name="editTextStyle">@style/NavHUD.EditText</item>
+        <item name="spinnerStyle">@style/NavHUD.Spinner</item>
+    </style>
+
+    <!-- Dialogs, so the crash report stops arriving in system grey. -->
+    <style name="Theme.NavHUD.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="colorAccent">@color/amber</item>
+        <item name="android:windowTitleStyle">@style/NavHUD.DialogTitle</item>
+        <item name="buttonBarButtonStyle">@style/NavHUD.Button.Text</item>
+    </style>
+
+    <style name="NavHUD.DialogTitle" parent="@android:style/TextAppearance.DialogWindowTitle">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_heading</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="NavHUD.DropDown" parent="Widget.AppCompat.ListView.DropDown">
+        <item name="android:background">@color/surface_raised</item>
+        <item name="android:divider">@color/line</item>
+        <item name="android:dividerHeight">1dp</item>
+    </style>
+
+    <!-- ==== controls ====================================================== -->
+
+    <!--
+      One button shape. There were six unstyled AppCompat buttons on Setup and
+      seven on Calibrate, two widths, and on Calibrate not even the accent,
+      because that activity extends Activity rather than AppCompatActivity.
+    -->
+    <style name="NavHUD.Button" parent="Widget.AppCompat.Button.Borderless">
+        <item name="android:background">@drawable/bg_button</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_body</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0.01</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+        <item name="android:paddingStart">@dimen/space_wide</item>
+        <item name="android:paddingEnd">@dimen/space_wide</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <!-- The one that means "do the thing this screen is for". -->
+    <style name="NavHUD.Button.Primary" parent="NavHUD.Button">
+        <item name="android:background">@drawable/bg_button_primary</item>
+        <item name="android:textColor">@color/text_on_accent</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!--
+      The four corner selectors on the keystone screen. They are a radio group
+      in everything but name, so the selected one has to be visibly different
+      from the other three, and by more than a shade: this gets used at arm's
+      length in daylight.
+    -->
+    <style name="NavHUD.Button.Corner" parent="NavHUD.Button">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginEnd">@dimen/space_hair</item>
+        <item name="android:background">@drawable/bg_button_toggle</item>
+        <item name="android:paddingStart">@dimen/space_hair</item>
+        <item name="android:paddingEnd">@dimen/space_hair</item>
+        <item name="android:textSize">@dimen/text_label</item>
+    </style>
+
+    <!-- A square arrow key. Wide enough for a thumb in a moving car. -->
+    <style name="NavHUD.Button.Nudge" parent="NavHUD.Button">
+        <item name="android:layout_width">64dp</item>
+        <item name="android:layout_height">@dimen/touch_min</item>
+        <item name="android:paddingStart">0dp</item>
+        <item name="android:paddingEnd">0dp</item>
+        <item name="android:textSize">@dimen/text_heading</item>
+    </style>
+
+    <style name="NavHUD.Button.Text" parent="Widget.AppCompat.Button.Borderless">
+        <item name="android:textColor">@color/amber</item>
+        <item name="android:textSize">@dimen/text_body</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+    </style>
+
+    <style name="NavHUD.CheckBox" parent="Widget.AppCompat.CompoundButton.CheckBox">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_body</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+        <item name="android:paddingStart">@dimen/space_tight</item>
+    </style>
+
+    <style name="NavHUD.EditText" parent="Widget.AppCompat.EditText">
+        <item name="android:background">@drawable/bg_field</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColorHint">@color/text_tertiary</item>
+        <item name="android:textSize">@dimen/text_body</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+        <item name="android:paddingStart">@dimen/space</item>
+        <item name="android:paddingEnd">@dimen/space</item>
+    </style>
+
+    <style name="NavHUD.Spinner" parent="Widget.AppCompat.Spinner">
+        <item name="android:background">@drawable/bg_spinner</item>
+        <item name="android:paddingEnd">44dp</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+        <item name="android:popupBackground">@color/surface_raised</item>
+    </style>
+
+    <!-- ==== structure ===================================================== -->
+
+    <!-- A titled group of settings. -->
+    <style name="Section">
+        <item name="android:orientation">vertical</item>
+        <item name="android:background">@drawable/bg_section</item>
+        <item name="android:padding">@dimen/space_wide</item>
+        <item name="android:layout_marginTop">@dimen/space_tight</item>
+    </style>
+
+    <!-- A divider inside a Section. -->
+    <style name="Rule">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/line</item>
+        <item name="android:layout_marginTop">@dimen/space_wide</item>
+        <item name="android:layout_marginBottom">@dimen/space_wide</item>
+    </style>
+
+    <!-- A row in the quick-actions sheet: target, icon, name, current value. -->
+    <style name="QuickRow">
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:minHeight">56dp</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:paddingStart">@dimen/space_hair</item>
+        <item name="android:paddingEnd">@dimen/space_hair</item>
+    </style>
+
+    <style name="QuickRowIcon">
+        <item name="android:layout_marginEnd">@dimen/space_wide</item>
+    </style>
+
+    <style name="QuickRowLabel">
+        <item name="android:layout_weight">1</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_heading</item>
+    </style>
+
+    <style name="QuickRowValue">
+        <item name="android:textColor">@color/amber</item>
+        <item name="android:textSize">@dimen/text_body</item>
+    </style>
+
+    <!-- ==== text ========================================================== -->
+
+    <!-- The implicit parent of the dotted text styles below. -->
+    <style name="NavHUD" />
+
+    <!--
+      Two families, and a rule for which goes where.
+
+      There were four on the driving screen alone: Roboto, sans-serif-condensed,
+      sans-serif-condensed-light and monospace, plus Typeface.DEFAULT_BOLD and a
+      Typeface.create in the hand-drawn views. Nobody picked four; they
+      accumulated, which is the same thing that makes every generated interface
+      reach for one default font and use it for everything.
+
+      The decision: condensed for numbers you read at a glance (distances,
+      speeds, the countdown), because that is what an instrument cluster does
+      and because condensed digits fit more into a fixed width without
+      shrinking. Regular for everything you read as language. Monospace only
+      where column alignment is the whole point, which is the diagnostics dump
+      and nowhere else.
+    -->
+    <style name="NavHUD.Numeric">
+        <item name="android:fontFamily">sans-serif-condensed</item>
+        <item name="android:textColor">@color/text_primary</item>
+    </style>
+
+    <style name="NavHUD.Title">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_title</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="NavHUD.Heading">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_heading</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="NavHUD.Body">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">@dimen/text_body</item>
+    </style>
+
+    <style name="NavHUD.Caption">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">@dimen/text_caption</item>
+        <item name="android:lineSpacingMultiplier">1.25</item>
+    </style>
+</resources>

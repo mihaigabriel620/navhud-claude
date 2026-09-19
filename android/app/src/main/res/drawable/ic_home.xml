@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Home.
+
+  Outlined, not filled. The set had been assembled from both Material Filled
+  and Material Outlined, which is why ink coverage ranged from 10% to 34%
+  across icons that sit next to each other: the outlined ones looked disabled
+  beside the filled ones. Outlined wins because the four glyphs that carry the
+  driving screen are already outlined and those are the ones that must not
+  shout.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/text_primary">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,2.9L2.4,11.1l1.2,1.5 1.1,-0.95V21h14.6v-9.35l1.1,0.95 1.2,-1.5zM6.6,10.1L12,5.5l5.4,4.6V19.1h-3.5v-6h-3.8v6H6.6z" />
+</vector>

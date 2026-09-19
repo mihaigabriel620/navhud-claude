@@ -1,0 +1,8 @@
+# Copy this file to local.properties (which is git-ignored) and fill it in.
+#
+# Free Mapbox token: https://account.mapbox.com/access-tokens/
+# A default public token (pk.eyJ...) is all you need.
+MAPBOX_TOKEN=pk.replace_me
+
+# Android Studio writes this line itself; shown here so you know it belongs here.
+#sdk.dir=/home/you/Android/Sdk

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The whole palette, in one place.
+
+  Before this there were 107 distinct hex literals across 20 files and not one
+  of them referenced this file. "The brightest text on the screen" was spelled
+  five different ways; there were fourteen near-blacks between #07070A and
+  #15171C, eleven divider greys, nine reds meaning danger and twenty-three
+  ambers. None of those differences were visible — they were just five values
+  to keep in step, and they had already drifted.
+
+  The rule from here: a colour that is not in this file does not go in a
+  layout, a drawable or a view. Anything the map style itself needs lives in
+  res/raw/style_e60.json, which is a separate document with its own vocabulary.
+-->
+<resources>
+
+    <!-- ==== surfaces ==================================================== -->
+
+    <!-- The screen. One value, every activity. -->
+    <color name="surface">#07070A</color>
+    <!-- Cards, sheets, fields: one step up out of the dark. -->
+    <color name="surface_raised">#0E1014</color>
+    <!-- The one above that: a selected route card, a pressed tile. -->
+    <color name="surface_high">#161A20</color>
+    <!-- Behind a modal sheet. -->
+    <color name="scrim">#A6000000</color>
+
+    <!-- ==== lines ======================================================= -->
+
+    <color name="line">#262A31</color>
+    <color name="line_strong">#3A3F47</color>
+
+    <!-- ==== text ======================================================== -->
+
+    <!-- Values, names, anything you read at a glance while driving. -->
+    <color name="text_primary">#F2F4F7</color>
+    <!-- Labels and second lines. -->
+    <color name="text_secondary">#A6AEB9</color>
+    <!--
+      Help text and small print.
+
+      #6A727C measured 4.13:1 on the page and 3.58:1 on a raised card — under
+      the 4.5:1 floor, on exactly the text that explains what to do. Dark mode
+      that reads as "atmospheric" is usually just dark mode that is too dim to
+      read, and this is a thing people hold at arm's length in a moving car.
+      #828A95 is 5.77 / 5.46 / 5.00 across the three surfaces.
+    -->
+    <color name="text_tertiary">#828A95</color>
+    <!-- On an amber or red fill. -->
+    <color name="text_on_accent">#140D00</color>
+
+    <!-- ==== accent ====================================================== -->
+
+    <!-- BMW E60 amber. The one accent this app has. -->
+    <color name="amber">#FF9D00</color>
+    <!-- A highlight on top of amber: the near maneuver, a live warning. -->
+    <color name="amber_bright">#FFC46B</color>
+    <!--
+      Amber that is present but not shouting: an inactive lane arrow.
+
+      3.86:1 was below the floor as well, and this one labels lanes you read at
+      seventy. #C07200 is 5.41:1 and still clearly the quieter of the two.
+    -->
+    <color name="amber_dim">#C07200</color>
+    <!-- A wash to sit amber text on. -->
+    <color name="amber_wash">#241906</color>
+
+    <!-- ==== status ====================================================== -->
+
+    <color name="danger">#FF3B20</color>
+    <!-- A red you can put white text on: 5.97:1. -->
+    <color name="danger_fill">#B81A0F</color>
+    <color name="danger_wash">#2A0F0A</color>
+    <color name="ok">#6FBF73</color>
+
+    <!-- ==== launcher ==================================================== -->
+
+    <color name="ic_launcher_background">#07070A</color>
+</resources>

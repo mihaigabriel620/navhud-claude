@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Setup.
+
+  What this replaced was a single vertical column of thirty-four widgets with
+  two hairlines standing in for eight sections, stock platform buttons at two
+  different widths, and the raw serial sentence being sent to the display
+  printed at the bottom in monospace. It worked, and it read as somebody's
+  workbench.
+
+  Now: a header, five titled cards in the order you actually need them, one
+  primary action, and everything a driver never needs folded away behind
+  "Diagnostics".
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:clipToPadding="false"
+    android:paddingStart="@dimen/space_page"
+    android:paddingEnd="@dimen/space_page"
+    android:paddingTop="@dimen/space_section"
+    android:paddingBottom="@dimen/space_section">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- ==== header ================================================== -->
+
+        <TextView
+            style="@style/NavHUD.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/setup_title" />
+
+        <TextView
+            style="@style/NavHUD.Caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_hair"
+            android:text="@string/subtitle" />
+
+        <!-- The thing this screen exists to lead to. -->
+        <Button
+            android:id="@+id/openMap"
+            style="@style/NavHUD.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_wide"
+            android:text="@string/open_map" />
+
+        <!-- ==== driving ================================================= -->
+
+        <TextView
+            style="@style/NavHUD.Heading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_section"
+            android:text="@string/sec_driving" />
+
+        <LinearLayout
+            style="@style/Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <CheckBox
+                android:id="@+id/voice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_label" />
+
+            <TextView
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space"
+                android:text="@string/lang_label"
+                android:textColor="@color/text_secondary" />
+
+            <Spinner
+                android:id="@+id/language"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair" />
+
+            <TextView
+                android:id="@+id/voiceInfo"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight" />
+
+            <View style="@style/Rule" />
+
+            <TextView
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/calib_button"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                android:id="@+id/calibInfo"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair" />
+
+            <Button
+                android:id="@+id/calibrate"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:text="@string/calib_open" />
+
+            <View style="@style/Rule" />
+
+            <TextView
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/keystone_title"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                android:id="@+id/keystoneInfo"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair" />
+
+            <Button
+                android:id="@+id/keystone"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:text="@string/keystone_open" />
+        </LinearLayout>
+
+        <!-- ==== cameras ================================================= -->
+
+        <TextView
+            style="@style/NavHUD.Heading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_section"
+            android:text="@string/cameras_label" />
+
+        <LinearLayout
+            style="@style/Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/cameraExplain"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <Spinner
+                android:id="@+id/cameraMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight" />
+
+            <TextView
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space"
+                android:text="@string/home_country_label"
+                android:textColor="@color/text_secondary" />
+
+            <Spinner
+                android:id="@+id/homeCountry"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair" />
+        </LinearLayout>
+
+        <!-- ==== the display ============================================= -->
+
+        <TextView
+            style="@style/NavHUD.Heading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_section"
+            android:text="@string/sec_display" />
+
+        <LinearLayout
+            style="@style/Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <CheckBox
+                android:id="@+id/bluetooth"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_label" />
+
+            <TextView
+                android:id="@+id/linkState"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair" />
+        </LinearLayout>
+
+        <!-- ==== staying alive =========================================== -->
+
+        <TextView
+            style="@style/NavHUD.Heading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_section"
+            android:text="@string/bg_title" />
+
+        <LinearLayout
+            style="@style/Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/bgHealth"
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <Button
+                android:id="@+id/bgFix"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space"
+                android:text="@string/bg_fix" />
+
+            <TextView
+                android:id="@+id/bgSteps"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight" />
+
+            <View style="@style/Rule" />
+
+            <CheckBox
+                android:id="@+id/bootStart"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/boot_start" />
+        </LinearLayout>
+
+        <!-- ==== keys ==================================================== -->
+
+        <TextView
+            style="@style/NavHUD.Heading"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_section"
+            android:text="@string/sec_keys" />
+
+        <LinearLayout
+            style="@style/Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/token_label"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair"
+                android:autoLink="web"
+                android:text="@string/token_help" />
+
+            <EditText
+                android:id="@+id/token"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:autofillHints="password"
+                android:hint="@string/token_hint"
+                android:inputType="textNoSuggestions"
+                android:textSize="@dimen/text_label" />
+
+            <Button
+                android:id="@+id/saveToken"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:text="@string/save_token" />
+
+            <View style="@style/Rule" />
+
+            <TextView
+                style="@style/NavHUD.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/google_label"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair"
+                android:text="@string/google_help" />
+
+            <EditText
+                android:id="@+id/googleKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:autofillHints="password"
+                android:hint="@string/google_hint"
+                android:inputType="textNoSuggestions"
+                android:textSize="@dimen/text_label" />
+
+            <Button
+                android:id="@+id/saveGoogle"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:text="@string/save_google" />
+        </LinearLayout>
+
+        <!-- ==== diagnostics, folded away ================================ -->
+
+        <TextView
+            android:id="@+id/diagToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_section"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/touch_min"
+            android:text="@string/diag_show"
+            android:textColor="@color/amber"
+            android:textSize="@dimen/text_body" />
+
+        <LinearLayout
+            android:id="@+id/diagBlock"
+            style="@style/Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/status"
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_secondary" />
+
+            <View style="@style/Rule" />
+
+            <CheckBox
+                android:id="@+id/showPerf"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/show_perf" />
+
+            <TextView
+                style="@style/NavHUD.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_tight"
+                android:text="@string/wire_label"
+                android:textColor="@color/text_tertiary" />
+
+            <TextView
+                android:id="@+id/frame"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_hair"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_tertiary"
+                android:textSize="@dimen/text_caption" />
+
+            <View style="@style/Rule" />
+
+            <Button
+                android:id="@+id/stop"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/stop" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
