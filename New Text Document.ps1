@@ -141,7 +141,8 @@ if ((Test-Path "$root\android\gradlew.bat") -and $sdk) {
     if (Test-Path $xmlDir) {
         $t = 0; $f = 0
         Get-ChildItem $xmlDir -Filter *.xml | ForEach-Object {
-            $h = Get-Content $_.FullName -TotalCount 5 -Raw
+            # -TotalCount and -Raw are mutually exclusive; join the lines instead.
+            $h = (Get-Content $_.FullName -TotalCount 5) -join "`n"
             if ($h -match 'tests="(\d+)"')    { $t += [int]$Matches[1] }
             if ($h -match 'failures="(\d+)"') { $f += [int]$Matches[1] }
             if ($h -match 'errors="(\d+)"')   { $f += [int]$Matches[1] }
