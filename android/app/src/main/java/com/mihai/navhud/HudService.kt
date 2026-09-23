@@ -1702,12 +1702,16 @@ class HudService : Service(), LocationListener {
         pushLanes(t, l, frame.speedKph)
         pushCameras(t, l, frame, bearing)
 
-        // Arrived: the trip is over, so the stored destination must go too.
-        // Left behind, a sticky restart while parked at the destination would
-        // route the driver to where the car is already standing.
+        // Arrived: the trip is over. The frame above has already gone to the
+        // HUD and to the voice, so "you have arrived" is queued; clearRoute()
+        // only resets the voice's bookkeeping, it does not stop the speech.
+        // It used to clear just the stored destination and leave the tracker
+        // running, so the car parked a few metres off the line was declared
+        // off route and rerouted straight back to where it was standing.
         if (frame.flags and HudFrame.FLAG_ARRIVED != 0) {
-            resumeLabel = null
-            Prefs.clearActiveDestination(this)
+            clearRoute()
+            setStatus("arrived · free drive")
+            return
         }
 
         maybeReroute(t)

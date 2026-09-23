@@ -45,6 +45,17 @@ class RouteTracker(val route: Route) {
         const val ARRIVED_M = 25.0
 
         /**
+         * Parked beside the pin counts as arrived too. A route's last metres
+         * often run round the block or along the far side of a car park, so
+         * the remaining distance can sit above [ARRIVED_M] with the car
+         * already standing next to the destination -- and the route never
+         * ended. Capped by [ARRIVED_NEAR_REMAINING_M] so a route that passes
+         * the pin once before coming back to it is not cut short.
+         */
+        const val ARRIVED_NEAR_M = 30.0
+        const val ARRIVED_NEAR_REMAINING_M = 60.0
+
+        /**
          * Close enough to the line that drawing the car *on* the road is the
          * honest thing to do. Beyond this the fix is telling us something the
          * route does not know about -- a slip road, a car park, a wrong turn --
@@ -219,7 +230,10 @@ class RouteTracker(val route: Route) {
             ?.name?.takeIf { it.isNotBlank() }
 
         val remaining = max(0.0, route.totalDistanceM - snap.along)
-        val arrived = remaining < ARRIVED_M
+        val arrived = remaining < ARRIVED_M ||
+            (remaining < ARRIVED_NEAR_REMAINING_M && route.destination.let {
+                Geo.haversine(lat, lon, it.lat, it.lon) < ARRIVED_NEAR_M
+            })
 
         val etaS = if (route.totalDistanceM > 1.0) {
             (route.totalDurationS * (remaining / route.totalDistanceM)).roundToInt()
