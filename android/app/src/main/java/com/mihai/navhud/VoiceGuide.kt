@@ -5,6 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.util.Log
@@ -103,6 +105,9 @@ class VoiceGuide(
          */
         internal const val EARCON_WARN = "[navhud_warn]"
         internal const val EARCON_CAMERA = "[navhud_camera]"
+
+        /** How long after the last line the music is given back. */
+        private const val FOCUS_RELEASE_MS = 300L
 
         /** The voice actually in use, so the Setup screen can show it. */
         @Volatile var lastVoiceInfo: String = "not started"
@@ -455,12 +460,13 @@ class VoiceGuide(
     fun stopNow() {
         runCatching { tts?.stop() }
         pending.set(0)
-        abandonFocus()
+        dropFocus()
     }
 
     fun shutdown() {
         runCatching { tts?.stop(); tts?.shutdown() }
-        abandonFocus()
+        pending.set(0)
+        dropFocus()
         tts = null
     }
 
@@ -504,7 +510,7 @@ class VoiceGuide(
         // any) is done by the chime and must not be repeated by the line.
         if (earcon != null) {
             pending.incrementAndGet()
-            requestFocus()
+            holdFocus()
             val r = tts?.playEarcon(earcon, mode, null, "navhud-${utteranceSeq.incrementAndGet()}")
             if (r != TextToSpeech.SUCCESS) onUtteranceFinished()
             mode = TextToSpeech.QUEUE_ADD
@@ -515,7 +521,7 @@ class VoiceGuide(
         // pending to zero and abandoning focus -- and this one would then be
         // spoken with no focus held, so the radio never ducked for it.
         pending.incrementAndGet()
-        requestFocus()
+        holdFocus()
         lastSpokeMs = System.currentTimeMillis()
         val r = tts?.speak(text, mode, null, "navhud-${utteranceSeq.incrementAndGet()}")
         // If the engine refused it there will be no callback to balance the
@@ -533,20 +539,50 @@ class VoiceGuide(
      * a minute. Android's own guidance is to abandon focus as soon as there is
      * nothing left to play.
      * https://developer.android.com/media/optimize/audio-focus
+     *
+     * Not *at once*, though: abandoning between a chime and its line, or
+     * between two queued lines, un-ducks and re-ducks the music in a fraction
+     * of a second, and some head units answer an abandon by resuming playback
+     * they then do not pause again. One hold for the whole burst, released a
+     * moment after the last item.
      */
     private fun onUtteranceFinished() {
         if (pending.decrementAndGet() <= 0) {
             pending.set(0)
-            abandonFocus()
+            main.removeCallbacks(releaseFocus)
+            main.postDelayed(releaseFocus, FOCUS_RELEASE_MS)
         }
     }
 
     private val pending = java.util.concurrent.atomic.AtomicInteger(0)
     private val utteranceSeq = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /**
+     * Focus state is touched from the tick thread (announcements), the main
+     * thread (settings, stop) and the TTS binder thread (completion), so every
+     * change to it happens under this lock.
+     */
+    private val focusLock = Any()
+    private val main = Handler(Looper.getMainLooper())
+    private val releaseFocus = Runnable {
+        synchronized(focusLock) { if (pending.get() <= 0) abandonFocus() }
+    }
+
+    /** Take focus if we do not have it, and cancel any release in flight. */
+    private fun holdFocus() = synchronized(focusLock) {
+        main.removeCallbacks(releaseFocus)
+        requestFocus()
+    }
+
+    /** Give focus back now, cancelling the delayed release. */
+    private fun dropFocus() = synchronized(focusLock) {
+        main.removeCallbacks(releaseFocus)
+        abandonFocus()
+    }
+
     private fun requestFocus() {
         if (focusHeld) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val attrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -555,15 +591,22 @@ class VoiceGuide(
                 .setAudioAttributes(attrs)
                 .build()
             focusRequest = req
-            runCatching { audio.requestAudioFocus(req) }
+            runCatching { audio.requestAudioFocus(req) }.getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
         } else {
             @Suppress("DEPRECATION")
             runCatching {
                 audio.requestAudioFocus(legacyFocusListener, AudioManager.STREAM_MUSIC,
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-            }
+            }.getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
         }
-        focusHeld = true
+        // Refused (a phone call, typically): the line still plays -- a missed
+        // turn is worse than a line spoken over a ring -- but nothing is marked
+        // held, so there is nothing to abandon and the next line asks again.
+        focusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (!focusHeld) {
+            focusRequest = null
+            Log.w(TAG, "audio focus refused: $result")
+        }
     }
 
     private fun abandonFocus() {
