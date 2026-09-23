@@ -15,16 +15,26 @@ class StutterAndReactionTest {
 
     // ---- rerouting ----------------------------------------------------------
 
-    @Test fun `a wrong turn is caught as soon as the car is pointing elsewhere`() {
+    @Test fun `a wrong turn is caught as soon as the car has pointed elsewhere for two seconds`() {
         // Distance is slow evidence at a junction: turn right where the route
         // went straight on and you are still only fifteen metres from the line
-        // for the first couple of seconds. Direction is fast evidence.
+        // for the first couple of seconds. Direction is fast evidence -- held
+        // for two seconds, so a single multipath fix cannot fire it.
         val t0 = 100_000L
         assertTrue(
-            "turned ninety degrees off the route: no confirmation needed",
+            "turned ninety degrees off the route for two seconds: no distance confirmation",
             RerouteRule.shouldReroute(
                 offRoute = true, crossM = 50.0, offRouteSinceMs = t0,
-                lastRequestMs = 0L, nowMs = t0, headingOffDeg = 90.0
+                lastRequestMs = 0L, nowMs = t0, headingOffDeg = 90.0,
+                turnedOffSinceMs = t0 - RerouteRule.TURNED_OFF_MS
+            )
+        )
+        assertFalse(
+            "not on the first fix any more",
+            RerouteRule.shouldReroute(
+                offRoute = true, crossM = 50.0, offRouteSinceMs = t0,
+                lastRequestMs = 0L, nowMs = t0, headingOffDeg = 90.0,
+                turnedOffSinceMs = t0
             )
         )
     }
@@ -82,29 +92,35 @@ class StutterAndReactionTest {
         assertEquals(600L, RouteTracker.OFF_ROUTE_MS)
     }
 
-    @Test fun `turning off the route reroutes on the very first fix`() {
-        // No debounce at all on this path: off the line *now* and pointing
-        // sixty degrees away from where the route runs means the turn already
-        // happened. This is the difference between "instant" and "it takes a
-        // second to realise".
+    @Test fun `turning off the route reroutes before the car is even off the line`() {
+        // Twenty metres out is still "on the line" at OFF_ROUTE_M = 30, so the
+        // distance path has nothing to say yet. Pointing forty-five degrees
+        // away for two seconds means the turn already happened.
         val t0 = 100_000L
+        val cross = 20.0
+        assertTrue(cross < RouteTracker.OFF_ROUTE_M)
         assertTrue(RerouteRule.shouldReroute(
             offRoute = false,              // the debounce has not agreed yet
-            offLine = true,                // ...but this fix is off the line
-            crossM = 50.0,
+            crossM = cross,
             offRouteSinceMs = 0L,
             lastRequestMs = 0L,
-            nowMs = t0,
-            headingOffDeg = 85.0
+            nowMs = t0 + RerouteRule.TURNED_OFF_MS,
+            headingOffDeg = 50.0,
+            turnedOffSinceMs = t0
+        ))
+        assertFalse("one tick short of two seconds", RerouteRule.shouldReroute(
+            offRoute = false, crossM = cross, offRouteSinceMs = 0L, lastRequestMs = 0L,
+            nowMs = t0 + RerouteRule.TURNED_OFF_MS - 1, headingOffDeg = 50.0,
+            turnedOffSinceMs = t0
         ))
     }
 
     @Test fun `but not while the previous request is still in its cooldown`() {
         val t0 = 100_000L
         assertFalse(RerouteRule.shouldReroute(
-            offRoute = false, offLine = true, crossM = 50.0,
+            offRoute = false, crossM = 50.0,
             offRouteSinceMs = 0L, lastRequestMs = t0, nowMs = t0 + 500L,
-            headingOffDeg = 85.0
+            headingOffDeg = 85.0, turnedOffSinceMs = t0 - 5000L
         ))
     }
 
@@ -112,8 +128,9 @@ class StutterAndReactionTest {
         // Off the line but still pointing along the route: a wide junction, a
         // service road, GPS drift. This is what the debounce is for.
         val t0 = 100_000L
+        assertFalse(RerouteRule.turnedOff(50.0, 10.0))
         assertFalse(RerouteRule.shouldReroute(
-            offRoute = false, offLine = true, crossM = 50.0,
+            offRoute = false, crossM = 50.0,
             offRouteSinceMs = 0L, lastRequestMs = 0L, nowMs = t0,
             headingOffDeg = 10.0
         ))

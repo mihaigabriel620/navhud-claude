@@ -101,6 +101,9 @@ class HudService : Service(), LocationListener {
 
         private const val TICK_MS = 250L
 
+        /** Older than this, a fix is no evidence for or against a reroute. */
+        private const val REROUTE_FIX_MAX_AGE_MS = 2000L
+
         /**
 
          * How long the last usable fix may be before the driver is told.
@@ -629,6 +632,8 @@ class HudService : Service(), LocationListener {
     private val carLink = CarLink()
     private var parkedRestoreTried = false
     private var offRouteSinceMs = 0L
+    /** Start of the current unbroken run of RerouteRule.turnedOff, 0 if none. */
+    private var turnedOffSinceMs = 0L
     private var lastRerouteMs = 0L
     private var lastCountryCheck: LatLon? = null
     private var lastCameraFetchMs = 0L
@@ -935,6 +940,7 @@ class HudService : Service(), LocationListener {
             handler.post {
                 lastCameraFetchMs = 0L
                 offRouteSinceMs = 0L
+                turnedOffSinceMs = 0L
                 lastRerouteMs = 0L
                 routeAttempt = 0
                 requestRoute(reason = "initial")
@@ -1524,6 +1530,7 @@ class HudService : Service(), LocationListener {
         alongM = 0.0
         routeAttempt = 0
         offRouteSinceMs = 0L
+        turnedOffSinceMs = 0L
         free.resetAnnouncements()
         // Force a fresh area fetch: the route's camera list is not the same as
         // the one free drive wants, which is everything around us.
@@ -1559,6 +1566,7 @@ class HudService : Service(), LocationListener {
         // fifteen seconds of rerouting, which is exactly when you are most
         // likely to miss the first turn.
         offRouteSinceMs = 0L
+        turnedOffSinceMs = 0L
         lastLanesSent = null
         // The cached "is this camera on our road" answers were computed against
         // the previous route's geometry. Keep them and a camera correctly
@@ -1975,29 +1983,37 @@ class HudService : Service(), LocationListener {
 
     private fun maybeReroute(t: RouteTracker) {
         val now = SystemClock.elapsedRealtime()
-        // Not gated on the debounced verdict any more: the instant path in
-        // RerouteRule needs to see a fix that is off the line *now*, and
-        // returning here would have thrown that fix away 600 ms before the
-        // debounce agreed.
-        if (!t.offLine) { offRouteSinceMs = 0L; return }
-        if (t.offRoute && offRouteSinceMs == 0L) offRouteSinceMs = now
+        if (!t.offRoute) offRouteSinceMs = 0L
+        else if (offRouteSinceMs == 0L) offRouteSinceMs = now
+        // Only a fresh fix is evidence. The tick leads an older fix along its
+        // bearing for up to eight seconds, and on a bend that invented point
+        // drifts off the line and away from the road's direction on its own.
+        val fix = lastFix
+        if (fix == null || now - lastFixAtMs > REROUTE_FIX_MAX_AGE_MS) {
+            turnedOffSinceMs = 0L
+            return
+        }
         // How far the car is pointing from the way the route runs here. Only
         // once the car is genuinely moving: below walking pace a GPS bearing
         // is noise, and a noisy bearing would fire the shortcut at every stop.
-        val fix = lastFix
-        val carBrg = if (fix != null && fix.hasBearing() && fix.hasSpeed() && fix.speed > 2.5f)
+        val carBrg = if (fix.hasBearing() && fix.hasSpeed() && fix.speed > 2.5f)
             fix.bearing.toDouble() else null
         val routeBrg = t.roadBearing
         val headingOff = if (carBrg != null && routeBrg != null)
             Geo.bearingDelta(routeBrg, carBrg) else null
+        // Timed here rather than in the rule, which is stateless: the heading
+        // test has to hold for two seconds without a break.
+        if (!RerouteRule.turnedOff(t.lastCrossM, headingOff)) turnedOffSinceMs = 0L
+        else if (turnedOffSinceMs == 0L) turnedOffSinceMs = now
+        if (!t.offLine && turnedOffSinceMs == 0L) return
         if (!RerouteRule.shouldReroute(
-                offRoute = true,
+                offRoute = t.offRoute,
                 crossM = t.lastCrossM,
                 offRouteSinceMs = offRouteSinceMs,
                 lastRequestMs = lastRerouteMs,
                 nowMs = now,
                 headingOffDeg = headingOff,
-                offLine = t.offLine
+                turnedOffSinceMs = turnedOffSinceMs
             )
         ) return
         lastRerouteMs = now

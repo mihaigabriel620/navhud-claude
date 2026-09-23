@@ -1,5 +1,6 @@
 package com.mihai.navhud
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +53,49 @@ class RerouteRuleTest {
         assertFalse(RerouteRule.shouldReroute(false, 200.0, 0L, 0L, 50_000L))
         assertFalse("off-route but not yet timed",
             RerouteRule.shouldReroute(true, 200.0, 0L, 0L, 50_000L))
+    }
+
+    // ---- the direction shortcut ---------------------------------------------
+
+    @Test fun `the heading test needs both the angle and the distance`() {
+        assertTrue(RerouteRule.turnedOff(16.0, 46.0))
+        assertFalse("45 degrees is a bend the polyline cut", RerouteRule.turnedOff(16.0, 45.0))
+        assertFalse("15 m out is still the road", RerouteRule.turnedOff(15.0, 90.0))
+        assertFalse("no heading, no shortcut", RerouteRule.turnedOff(50.0, null))
+    }
+
+    @Test fun `pointing away for two seconds reroutes at twenty metres`() {
+        val t0 = 40_000L
+        assertFalse(RerouteRule.shouldReroute(false, 20.0, 0L, 0L, t0 + 1999, 60.0, t0))
+        assertTrue(RerouteRule.shouldReroute(false, 20.0, 0L, 0L, t0 + 2000, 60.0, t0))
+    }
+
+    @Test fun `a broken run does not count`() {
+        // The caller zeroes the start when the test fails; a stale start with
+        // a failing test now must not fire either.
+        val t0 = 40_000L
+        assertFalse(RerouteRule.shouldReroute(false, 20.0, 0L, 0L, t0 + 5000, 30.0, t0))
+        assertFalse(RerouteRule.shouldReroute(false, 20.0, 0L, 0L, t0 + 5000, 60.0, 0L))
+    }
+
+    @Test fun `the direction shortcut still respects the cooldown`() {
+        val t0 = 40_000L
+        assertFalse(RerouteRule.shouldReroute(false, 20.0, 0L, t0, t0 + 3000, 90.0, t0 - 3000))
+        assertTrue(RerouteRule.shouldReroute(false, 20.0, 0L, t0, t0 + 6000, 90.0, t0 - 3000))
+    }
+
+    @Test fun `thirty metres off the line is off route`() {
+        assertEquals(30.0, RouteTracker.OFF_ROUTE_M, 0.0)
+        val r = DemoDrive.buildRoute()
+        val t = RouteTracker(r)
+        val p = Geo.pointAlong(r.pts, r.cum, 400.0)
+        val brg = Geo.bearingAlong(r.pts, r.cum, 400.0) ?: 0.0
+        val near = Geo.destination(p[0], p[1], (brg + 90.0) % 360.0, 25.0)
+        t.update(near[0], near[1], 14f, brg.toFloat(), hasFix = true, nowMs = 1_000L)
+        assertFalse("25 m is still on the line", t.offLine)
+        val out = Geo.destination(p[0], p[1], (brg + 90.0) % 360.0, 35.0)
+        t.update(out[0], out[1], 14f, brg.toFloat(), hasFix = true, nowMs = 1_250L)
+        assertTrue("35 m is off it", t.offLine)
     }
 
     @Test fun `the cooldown is short enough to retry a genuine second wrong turn`() {

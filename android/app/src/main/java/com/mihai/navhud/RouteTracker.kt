@@ -12,8 +12,15 @@ import kotlin.math.roundToInt
 class RouteTracker(val route: Route) {
 
     companion object {
-        /** Perpendicular distance that counts as having left the route. */
-        const val OFF_ROUTE_M = 45.0
+        /**
+         * Perpendicular distance that counts as having left the route.
+         *
+         * 30, not the 45 it was: a side street is often only 30-40 m from the
+         * line when you realise you missed the turn, and every metre here is
+         * a second of waiting at town speed. The tracker stays within 8 m of
+         * its own route on the demo drive, so there is still plenty of margin.
+         */
+        const val OFF_ROUTE_M = 30.0
 
         /**
          * How long the car has to be off the line before we believe it, ms.
@@ -28,8 +35,8 @@ class RouteTracker(val route: Route) {
          * which matters because this is driven from the 4 Hz tick rather than
          * from the GPS callback, so a fix-count streak was really a tick-count
          * streak and told you nothing about elapsed time either. The direction
-         * test in RerouteRule is what actually makes a wrong turn instant;
-         * this is only the debounce for the cases where direction cannot tell.
+         * test in RerouteRule is what actually makes a wrong turn fast; this
+         * is only the debounce for the cases where direction cannot tell.
          */
         const val OFF_ROUTE_MS = 600L
 
@@ -66,11 +73,8 @@ class RouteTracker(val route: Route) {
 
     private var lastSegIdx = 0
     /**
-     * Off the line on *this* fix, with no debounce at all.
-     *
-     * RerouteRule pairs it with the direction test: off the line and pointing
-     * sixty degrees away from where the route runs means the turn has already
-     * happened, and there is nothing to wait for.
+     * Off the line on *this* fix, with no debounce at all. The service uses
+     * it as the cheap "is there anything to decide" test before RerouteRule.
      */
     var offLine = false
         private set
