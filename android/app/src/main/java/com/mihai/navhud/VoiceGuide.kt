@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
@@ -94,6 +93,17 @@ class VoiceGuide(
         /** How long the arrival flag must stay clear before "arrived" re-arms. */
         private const val ARRIVAL_RELATCH_MS = 10_000L
 
+        /**
+         * The two chimes, played *by the TTS engine* as earcons rather than by
+         * a ToneGenerator. A ToneGenerator on STREAM_MUSIC took no audio focus
+         * and looked to a head unit like a new media source starting, so the
+         * radio paused for a 150 ms beep and often never came back. As
+         * earcons they carry the same navigation-guidance attributes as the
+         * speech, sit in the same queue, and are covered by the same focus.
+         */
+        internal const val EARCON_WARN = "[navhud_warn]"
+        internal const val EARCON_CAMERA = "[navhud_camera]"
+
         /** The voice actually in use, so the Setup screen can show it. */
         @Volatile var lastVoiceInfo: String = "not started"
             internal set
@@ -162,7 +172,6 @@ class VoiceGuide(
     private var ready = false
     private val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var focusRequest: AudioFocusRequest? = null
-    private var tone: ToneGenerator? = null
 
     private val spoken = HashMap<Long, Int>()
     private var lastChimeMs = 0L
@@ -222,11 +231,14 @@ class VoiceGuide(
                         )
                     }
                 }
+                runCatching {
+                    tts?.addEarcon(EARCON_WARN, ctx.packageName, R.raw.beep_warn)
+                    tts?.addEarcon(EARCON_CAMERA, ctx.packageName, R.raw.beep_camera)
+                }
             } else {
                 Log.w(TAG, "TTS init failed: $status")
             }
         }
-        runCatching { tone = ToneGenerator(AudioManager.STREAM_MUSIC, 80) }
     }
 
     /** Which voice ended up being used, for the Setup screen. */
@@ -385,8 +397,7 @@ class VoiceGuide(
         val text = if (alert.zoneMode) phrases.dangerZone()
                    else phrases.cameraAhead(phrases.distance(alert.distanceM),
                                             alert.camera.limitKph)
-        runCatching { tone?.startTone(ToneGenerator.TONE_PROP_BEEP2, 120) }
-        speak(text, urgent = true)
+        speak(text, urgent = true, earcon = EARCON_CAMERA)
     }
 
     fun announceReroute() {
@@ -449,10 +460,8 @@ class VoiceGuide(
 
     fun shutdown() {
         runCatching { tts?.stop(); tts?.shutdown() }
-        runCatching { tone?.release() }
         abandonFocus()
         tts = null
-        tone = null
     }
 
     // -----------------------------------------------------------------------
@@ -470,10 +479,10 @@ class VoiceGuide(
             if (chimeCount < LIMIT_CHIME_MAX && now - lastChimeMs >= LIMIT_CHIME_REPEAT_MS) {
                 lastChimeMs = now
                 chimeCount++
-                runCatching { tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 150) }
                 // On the first one, say the limit out loud too -- a bare beep
                 // does not tell you what you are supposed to be doing.
-                if (chimeCount == 1) speak(phrases.overLimit(f.limitKph), urgent = true)
+                if (chimeCount == 1) speak(phrases.overLimit(f.limitKph), urgent = true, earcon = EARCON_WARN)
+                else speak("", earcon = EARCON_WARN)
             }
             wasOver = true
         } else {
@@ -489,7 +498,18 @@ class VoiceGuide(
         }
     }
 
-    private fun speak(text: String, urgent: Boolean = false) {
+    private fun speak(text: String, urgent: Boolean = false, earcon: String? = null) {
+        var mode = if (urgent) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        // The chime goes first and the line queues behind it, so the flush (if
+        // any) is done by the chime and must not be repeated by the line.
+        if (earcon != null) {
+            pending.incrementAndGet()
+            requestFocus()
+            val r = tts?.playEarcon(earcon, mode, null, "navhud-${utteranceSeq.incrementAndGet()}")
+            if (r != TextToSpeech.SUCCESS) onUtteranceFinished()
+            mode = TextToSpeech.QUEUE_ADD
+        }
+        if (text.isEmpty()) return
         // Count first, then take focus. The other way round, the TTS callback
         // thread could finish the previous utterance in between -- dropping
         // pending to zero and abandoning focus -- and this one would then be
@@ -497,12 +517,7 @@ class VoiceGuide(
         pending.incrementAndGet()
         requestFocus()
         lastSpokeMs = System.currentTimeMillis()
-        val r = tts?.speak(
-            text,
-            if (urgent) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
-            null,
-            "navhud-${utteranceSeq.incrementAndGet()}"
-        )
+        val r = tts?.speak(text, mode, null, "navhud-${utteranceSeq.incrementAndGet()}")
         // If the engine refused it there will be no callback to balance the
         // counter, and audio focus would be held for ever on the strength of
         // an utterance that never played.
