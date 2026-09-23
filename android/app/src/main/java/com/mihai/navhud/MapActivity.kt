@@ -124,8 +124,7 @@ class MapActivity : AppCompatActivity() {
          * uneven skip, which reads worse than either a flat 30 or a flat 60
          * would have. Moving to Choreographer was meant to stop beating
          * against the display clock; this gate was still doing it, one layer
-         * up. A frame that overruns its budget is now dealt with by skipping
-         * the next one deliberately -- see [skipNextFrame].
+         * up.
          */
         const val FRAME_MIN_NS = 8_000_000L
 
@@ -563,10 +562,20 @@ class MapActivity : AppCompatActivity() {
         updateFollowButton()
         updateVoiceButton()
 
-        // Cap the render thread rather than letting a weak head-unit GPU try to
-        // draw as fast as it can and cook itself. MapRenderer implements this
-        // by sleeping after each native render, so it costs nothing.
-        runCatching { mapView.setMaximumFps(30) }
+        // Cap the render thread at the panel's own rate, and never above 60.
+        //
+        // It was a flat 30. MapRenderer implements the cap by sleeping after
+        // each render until 1/fps has passed, and the camera moves every
+        // vsync -- so on a 60 Hz head unit the renderer took every other
+        // update, and which one depended on how long the sleep ran: the map
+        // advanced two frames, then one, then two. That beat is the stutter.
+        // Matching the panel leaves vsync as the only clock; capping at 60
+        // still stops a 90/120 Hz phone rendering twice as often as it needs.
+        val panelHz = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display?.refreshRate
+            else @Suppress("DEPRECATION") windowManager.defaultDisplay.refreshRate
+        }.getOrNull() ?: 60f
+        runCatching { mapView.setMaximumFps(Math.round(panelHz).coerceIn(30, 60)) }
         mapView.getMapAsync { m ->
             map = m
             // The OpenFreeMap source is capped at zoom 14 and navigation sits
@@ -1853,19 +1862,14 @@ class MapActivity : AppCompatActivity() {
      * which is main-thread work the fastest device has the least reason to
      * spend. Vsync still decides *when*; this only decides how often.
      */
+    // There used to be a skipNextFrame here, dropping the frame after any that
+    // overran its vsync interval so the loop could "catch up". Choreographer
+    // has no backlog to catch up on: a callback that overruns just misses the
+    // vsyncs it overlapped, and the next one arrives at the first vsync after
+    // it returns. The renderer coalesces camera updates the same way. So the
+    // skip bought nothing and cost a second dropped frame after every slow
+    // one -- a hitch doubled -- and it is gone.
     private var lastFrameNanos = 0L
-
-    /**
-     * Give the renderer a whole vsync back after a frame that overran.
-     *
-     * Without it, a frame that takes longer than its vsync interval pushes the
-     * next one late, which pushes the one after that later still: the loop
-     * falls behind and stays behind, because it never stops asking. Skipping
-     * one deliberately is the difference between dropping a frame and dropping
-     * a second's worth. The camera's own smoothing is time-based, so a skipped
-     * frame costs nothing but the frame -- the next one catches up by dt.
-     */
-    private var skipNextFrame = false
 
     private val frameCallback = object : android.view.Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -1885,29 +1889,13 @@ class MapActivity : AppCompatActivity() {
                 frameWindowStartNs = frameTimeNanos
             }
             if (lastFrameNanos != 0L && frameTimeNanos - lastFrameNanos < FRAME_MIN_NS) return
-            if (skipNextFrame) {
-                skipNextFrame = false
-                // Still count this vsync as the last one acted on, or the gate
-                // above measures the skipped frame's time into the next one.
-                lastFrameNanos = frameTimeNanos
-                return
-            }
-            // The budget is the interval we were actually given, not a nominal
-            // 60 Hz: on a 120 Hz panel 8 ms is an overrun and on a 48 Hz one it
-            // is not. The fallback is a single 60 Hz vsync, for the first frame
-            // of a run, where there is no previous one to measure against.
-            val budgetNs = if (lastFrameNanos != 0L) frameTimeNanos - lastFrameNanos
-                           else 16_666_666L
             lastFrameNanos = frameTimeNanos
             val workStart = System.nanoTime()
-            // Logged, and only once. This runs thirty times a second; an
-            // unguarded throw here freezes the marker and the camera for the
-            // rest of the drive, and swallowing it silently means there is
-            // nothing to find afterwards. Once is enough to know.
+            // Logged, and only once. This runs every vsync; an unguarded throw
+            // here freezes the marker and the camera for the rest of the
+            // drive, and swallowing it silently means there is nothing to find
+            // afterwards. Once is enough to know.
             val outcome = runCatching { cameraFrame() }
-            // Measured before the logging below, so the one frame that fails is
-            // judged on the work it did rather than on writing the log line.
-            skipNextFrame = System.nanoTime() - workStart > budgetNs
             outcome.onFailure {
                 if (!cameraLoopFailed) {
                     cameraLoopFailed = true

@@ -103,6 +103,36 @@ class GeoTest {
         assertEquals(50.005, Geo.pointAlong(pts, cum, cum.last() / 2)[0], 1e-5)
     }
 
+    @Test fun `pointAlong's binary search lands on the same segment as a scan`() {
+        // A long, irregular polyline with repeated vertices (zero-length
+        // segments), which is where an off-by-one in a search would show.
+        val rnd = java.util.Random(7)
+        val pts = ArrayList<DoubleArray>()
+        var lat = 50.0; var lon = 4.0
+        for (k in 0 until 5000) {
+            if (k % 97 != 0) { lat += rnd.nextDouble() * 1e-4; lon += (rnd.nextDouble() - 0.5) * 1e-4 }
+            pts.add(doubleArrayOf(lat, lon))
+        }
+        val arr = pts.toTypedArray()
+        val cum = Geo.cumulative(arr)
+        fun scan(alongM: Double): DoubleArray {
+            var i = 0
+            while (i < cum.size - 2 && cum[i + 1] < alongM) i++
+            val seg = cum[i + 1] - cum[i]
+            val t = if (seg > 1e-6) (alongM - cum[i]) / seg else 0.0
+            return doubleArrayOf(arr[i][0] + (arr[i + 1][0] - arr[i][0]) * t,
+                                 arr[i][1] + (arr[i + 1][1] - arr[i][1]) * t)
+        }
+        val probes = (0 until 2000).map { rnd.nextDouble() * cum.last() } +
+            cum.toList().drop(1).dropLast(1)          // exactly on vertices too
+        for (a in probes) {
+            val want = scan(a)
+            val got = Geo.pointAlong(arr, cum, a)
+            assertEquals("lat at $a", want[0], got[0], 1e-12)
+            assertEquals("lon at $a", want[1], got[1], 1e-12)
+        }
+    }
+
     @Test fun `bearing and bearingDelta behave at the wraparound`() {
         assertEquals(0.0, Geo.bearing(50.0, 4.0, 50.01, 4.0), 0.5)
         assertEquals(90.0, Geo.bearing(50.0, 4.0, 50.0, 4.01), 0.5)
