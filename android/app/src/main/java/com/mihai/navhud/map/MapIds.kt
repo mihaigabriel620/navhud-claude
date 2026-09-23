@@ -19,7 +19,6 @@ object MapIds {
     // sources
     const val ROUTE_SOURCE = "navhud-route"
     const val ALT_SOURCE = "navhud-alts"
-    const val PUCK_SOURCE = "navhud-puck"
     const val CAM_SOURCE = "navhud-cams"
 
     // layers, in the order they are stacked
@@ -30,6 +29,7 @@ object MapIds {
     const val ROUTE_DONE_SOURCE = "navhud-route-done"
     const val ROUTE_DONE_LAYER = "navhud-route-done-line"
     const val CAM_LAYER = "navhud-cams-layer"
+    // A LocationIndicatorLayer: it has no source, its position is a property.
     const val PUCK_LAYER = "navhud-puck-layer"
 
     // images
@@ -37,7 +37,7 @@ object MapIds {
     const val PUCK_DOT_ICON = "navhud-puck-dot"
     const val CAM_ICON = "navhud-cam-icon"
 
-    val sources = listOf(ROUTE_SOURCE, ALT_SOURCE, PUCK_SOURCE, CAM_SOURCE, ROUTE_DONE_SOURCE)
+    val sources = listOf(ROUTE_SOURCE, ALT_SOURCE, CAM_SOURCE, ROUTE_DONE_SOURCE)
 
     val layers = listOf(
         ALT_LAYER, ROUTE_CASING, ROUTE_LAYER, ROUTE_DONE_LAYER, CAM_LAYER, PUCK_LAYER

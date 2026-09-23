@@ -52,8 +52,11 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.offline.OfflineManager
+import org.maplibre.android.style.layers.LayoutPropertyValue
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.PaintPropertyValue
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.TransitionOptions
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -190,7 +193,6 @@ class MapActivity : AppCompatActivity() {
         private const val ROUTE_LAYER = MapIds.ROUTE_LAYER
         private const val ROUTE_DONE_SOURCE = MapIds.ROUTE_DONE_SOURCE
         private const val ROUTE_DONE_LAYER = MapIds.ROUTE_DONE_LAYER
-        private const val PUCK_SOURCE = MapIds.PUCK_SOURCE
         private const val PUCK_LAYER = MapIds.PUCK_LAYER
         private const val PUCK_ICON = MapIds.PUCK_ICON
         private const val PUCK_DOT_ICON = MapIds.PUCK_DOT_ICON
@@ -605,7 +607,7 @@ class MapActivity : AppCompatActivity() {
             m.setStyle(Style.Builder().fromJson(json)) { s ->
                 style = s
                 installLayers(s)
-                // A reloaded style has a brand new puck source with nothing in
+                // A reloaded style has a brand new puck layer with nothing in
                 // it, so what we think is drawn is not drawn.
                 forgetDrawnCamera()
                 drawnRoute = null
@@ -1023,38 +1025,56 @@ class MapActivity : AppCompatActivity() {
 
         runCatching { s.addImage(PUCK_DOT_ICON, scaledToDp(puckDotBitmap(), 34)) }
         runCatching { s.addImage(PUCK_ICON, scaledToDp(puckBitmap(), 54)) }
-        addSourceSafely(s, GeoJsonSource(PUCK_SOURCE))
-        addLayerSafely(s,
-            SymbolLayer(PUCK_LAYER, PUCK_SOURCE).withProperties(
-                PropertyFactory.iconImage(
-                    org.maplibre.android.style.expressions.Expression.get("icon")),
-                PropertyFactory.iconAllowOverlap(true),
-                PropertyFactory.iconIgnorePlacement(true),
-                // Rotation follows the map, so the arrow points along the road.
-                PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
-                // ...and so does *pitch*, so the marker lies on the road
-                // surface rather than standing up to the camera.
-                //
-                // It used to be a viewport-pitched billboard, and on a tilted
-                // map that is subtly wrong in a way that is hard to name until
-                // you see it beside Waze: the marker is painted in screen
-                // space, so as the pitch changes it appears to swing, and it
-                // never looks like it is *on* the road -- it looks like a
-                // sticker on the windscreen that happens to be over the road.
-                // Waze, Google Maps and every built-in car navigation lay the
-                // arrow flat on the ground plane, and that is what makes it
-                // read as part of the map.
-                //
-                // The cost of doing it this way is foreshortening, which the
-                // bitmap compensates for: see puckBitmap().
-                PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-                PropertyFactory.iconRotate(org.maplibre.android.style.expressions.Expression.get("bearing")),
-                PropertyFactory.iconSize(1.0f)
+        // Added last, so it stays on top of everything above.
+        //
+        // The indicator layer draws its image flat on the ground plane, the way
+        // Waze and every built-in car navigation lay the arrow, which is what
+        // the old map-pitched symbol did too -- so the pre-stretched bitmap
+        // (see puckBitmap) still comes out the right shape. 0.9 is the
+        // perspective compensation MapLibre's own LocationComponent uses.
+        puckLayer = newPuckLayer()?.also { layer ->
+            layer.setProperties(
+                LayoutPropertyValue("bearing-image", PUCK_DOT_ICON),
+                PaintPropertyValue("perspective-compensation", 0.9f),
+                PaintPropertyValue("image-tilt-displacement", 0f),
+                PaintPropertyValue("bearing-image-size", 1f),
+                PaintPropertyValue("accuracy-radius", 0f)
             )
-        )
+            addLayerSafely(s, layer)
+        }
+        puckShownDot = null
 
         verifyStyle(s)
     }
+
+    /**
+     * The car marker, as a LocationIndicatorLayer.
+     *
+     * Its position is a layer property, which MapLibre applies in the same
+     * render as the moveCamera beside it. The old puck was a GeoJSON source
+     * updated every frame, and a GeoJSON update is parsed on a worker thread
+     * and lands a frame or more later -- so the arrow trailed the map and
+     * shimmered against it.
+     *
+     * The class is package-private in MapLibre 11.8 (LocationComponent is its
+     * only intended user), hence the reflection; minify is off, so the name
+     * survives into the APK. Null, logged, if that ever stops being true.
+     */
+    private fun newPuckLayer(): org.maplibre.android.style.layers.Layer? = runCatching {
+        val cls = Class.forName("org.maplibre.android.location.LocationIndicatorLayer")
+        val layer = cls.getDeclaredConstructor(String::class.java)
+            .apply { isAccessible = true }
+            .newInstance(PUCK_LAYER) as org.maplibre.android.style.layers.Layer
+        // No easing: the frame loop already smooths, and the style's default
+        // transition would put the arrow 300 ms behind the camera.
+        val none = TransitionOptions(0, 0)
+        for (setter in listOf("setLocationTransition", "setBearingTransition")) {
+            cls.getDeclaredMethod(setter, TransitionOptions::class.java)
+                .apply { isAccessible = true }
+                .invoke(layer, none)
+        }
+        layer
+    }.onFailure { android.util.Log.e(TAG, "could not create the puck layer", it) }.getOrNull()
 
     /** MapLibre treats bitmaps as raw pixels, so scale by screen density. */
     private fun scaledToDp(src: android.graphics.Bitmap, dp: Int): android.graphics.Bitmap {
@@ -2215,7 +2235,7 @@ class MapActivity : AppCompatActivity() {
             }
         }
 
-        updatePuck(style, lat, lon, puckBearing)
+        updatePuck(lat, lon, puckBearing)
         HudService.headingSource = fusion.describe()
         if (!following) return
 
@@ -2514,18 +2534,21 @@ class MapActivity : AppCompatActivity() {
     private var puckShownLat = Double.NaN
     private var puckShownLon = Double.NaN
     private var puckShownBrg = Double.NaN
+    /** Which image the puck layer holds; null = not set since the style loaded. */
+    private var puckShownDot: Boolean? = null
+    /** The puck layer of the current style. See newPuckLayer. */
+    private var puckLayer: org.maplibre.android.style.layers.Layer? = null
 
     /** Distance along the route the travelled line was last built for; -1 = none drawn. */
     private var travelledDrawnM = -1.0
 
-    private fun updatePuck(s: Style?, lat: Double, lon: Double, bearing: Double) {
-        val src = s?.getSourceAs<GeoJsonSource>(PUCK_SOURCE) ?: return
-        // Setting a GeoJSON source marks the map dirty, and MapLibre renders
-        // when dirty -- so re-setting this thirty times a second was, by
-        // itself, enough to keep the GPU redrawing the whole map while the car
-        // was parked at a red light. Both smoothing filters here are
-        // exponential, so they approach their target and never reach it: the
-        // position kept "changing" by nanometres for ever.
+    private fun updatePuck(lat: Double, lon: Double, bearing: Double) {
+        val layer = puckLayer ?: return
+        // Setting a layer property marks the map dirty, and MapLibre renders
+        // when dirty -- so re-setting this every frame was, by itself, enough
+        // to keep the GPU redrawing the whole map while the car was parked at
+        // a red light. Both smoothing filters here approach their target and
+        // never reach it: the position kept "changing" by nanometres for ever.
         val samePlace = !puckShownLat.isNaN() &&
             Geo.haversine(puckShownLat, puckShownLon, lat, lon) < PUCK_EPSILON_M &&
             (bearing.isNaN() == puckShownBrg.isNaN()) &&
@@ -2534,23 +2557,24 @@ class MapActivity : AppCompatActivity() {
         if (samePlace) return
         puckShownLat = lat; puckShownLon = lon; puckShownBrg = bearing
 
-        val f = Feature.fromGeometry(Point.fromLngLat(lon, lat))
         // An arrow is a claim about which way you are facing. Before the first
         // fix there is nothing to base that claim on, and the map used to draw
         // the arrow at zero -- which does not read as "unknown", it reads as
         // "pointing north", stated with complete confidence. A plain dot says
         // the true thing: here you are, direction not known yet. Google Maps
         // does the same, and switches to a chevron the moment it can.
-        f.addStringProperty("icon", if (bearing.isNaN()) PUCK_DOT_ICON else PUCK_ICON)
-        // ICON_ROTATION_ALIGNMENT_MAP means icon-rotate is measured from *map*
-        // north, and the map itself is already turned by the camera bearing --
-        // so what lands on screen is (icon-rotate - camera bearing). Feeding it
-        // "heading - camera bearing" subtracted the rotation twice, which is
-        // why the arrow sat pointing the wrong way and barely moved through a
-        // turn: the two errors very nearly cancelled while driving straight.
-        // The value wanted here is simply the absolute heading.
-        f.addNumberProperty("bearing", if (bearing.isNaN()) 0.0 else Geo.normalizeDeg(bearing))
-        src.setGeoJson(f)
+        val dot = bearing.isNaN()
+        if (dot != puckShownDot) {
+            puckShownDot = dot
+            layer.setProperties(
+                LayoutPropertyValue("bearing-image", if (dot) PUCK_DOT_ICON else PUCK_ICON))
+        }
+        // The bearing is the absolute heading, clockwise from true north; the
+        // layer applies the camera's own rotation itself.
+        layer.setProperties(
+            PaintPropertyValue("location", arrayOf(lat, lon, 0.0)),
+            PaintPropertyValue("bearing", if (dot) 0.0 else Geo.normalizeDeg(bearing))
+        )
     }
 
     /**
