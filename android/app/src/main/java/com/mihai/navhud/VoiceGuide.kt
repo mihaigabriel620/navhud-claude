@@ -12,6 +12,8 @@ import android.speech.tts.Voice
 import android.util.Log
 import com.mihai.navhud.alerts.CameraAlert
 import com.mihai.navhud.voice.Phrases
+import com.mihai.navhud.voice.VoiceQueue
+import com.mihai.navhud.voice.VoiceQueue.Priority
 import com.mihai.navhud.voice.VoiceRegions
 
 /**
@@ -32,11 +34,19 @@ import com.mihai.navhud.voice.VoiceRegions
  *    a "now" call is itself dropped when its own "in x metres" call has only
  *    just been spoken -- that pairing is what said "in two hundred metres,
  *    bear left" and then "bear left now" nine metres further on.
+ *  - **Nothing talks over anything.** Every line goes through [VoiceQueue]:
+ *    one at a time, most important first, stale ones dropped.
  */
-class VoiceGuide(
-    private val ctx: Context,
-    phrases: Phrases = Phrases.forDevice()
+class VoiceGuide internal constructor(
+    private val ctx: Context?,
+    phrases: Phrases,
+    /** Stands in for the TTS engine in unit tests; null on a device. */
+    testSpeaker: VoiceQueue.Speaker?,
+    private val clock: () -> Long
 ) {
+    constructor(ctx: Context, phrases: Phrases = Phrases.forDevice()) :
+        this(ctx, phrases, null, System::currentTimeMillis)
+
     companion object {
         private const val TAG = "VoiceGuide"
 
@@ -78,8 +88,24 @@ class VoiceGuide(
          * same maneuver a couple of seconds apart. Camera warnings ignore this
          * -- those always get through -- and so does the final "now" call,
          * except against its own prepare call: see [mayAnnounce].
+         *
+         * Measured from the *end* of the last line ([VoiceQueue.quietSinceMs]),
+         * not from when it was asked for: from the request, a five-second
+         * roundabout instruction left no gap at all behind it.
          */
         private const val MIN_GAP_MS = 4_000L
+
+        /**
+         * How long each kind of line may wait in the queue before it is not
+         * worth saying. A "now" call four seconds late is in the junction; a
+         * prepare call quotes a distance that stops being true.
+         */
+        private const val TTL_FINAL_MS = 4_000L
+        private const val TTL_PREPARE_MS = 6_000L
+        private const val TTL_ALERT_MS = 5_000L
+        private const val TTL_ARRIVAL_MS = 10_000L
+        private const val TTL_MINOR_MS = 3_000L
+        private const val TTL_SAMPLE_MS = 10_000L
 
         /**
          * How long a maneuver's "now" call keeps the *next* maneuver's prepare
@@ -108,6 +134,9 @@ class VoiceGuide(
 
         /** How long after the last line the music is given back. */
         private const val FOCUS_RELEASE_MS = 300L
+
+        /** Utterance id suffix for an item's chime; only the line's end counts. */
+        private const val CHIME_SUFFIX = ".chime"
 
         /** The voice actually in use, so the Setup screen can show it. */
         @Volatile var lastVoiceInfo: String = "not started"
@@ -174,14 +203,16 @@ class VoiceGuide(
     }
 
     private var tts: TextToSpeech? = null
-    private var ready = false
-    private val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var ready = testSpeaker != null
+    private val audio = ctx?.getSystemService(Context.AUDIO_SERVICE) as AudioManager?
     private var focusRequest: AudioFocusRequest? = null
+
+    private val main = Handler(Looper.getMainLooper())
+    private val queue = VoiceQueue(testSpeaker ?: TtsSpeaker(), clock)
 
     private val spoken = HashMap<Long, Int>()
     private var lastChimeMs = 0L
     private var chimeCount = 0
-    private var lastSpokeMs = 0L
     // What the two suppression rules are measured against: the maneuver of the
     // last announcement, and the maneuver and time of the last "now" call.
     private var lastSpokeKey: Long? = null
@@ -204,22 +235,26 @@ class VoiceGuide(
         }
 
     init {
-        tts = TextToSpeech(ctx) { status ->
+        val c = ctx
+        if (c != null && testSpeaker == null) tts = TextToSpeech(c) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 ready = true
                 applyLanguage()
                 tts?.setSpeechRate(1.05f)
+                // Called on a binder thread; the queue is synchronized. An
+                // error or a stop ends the item exactly as completion does, so
+                // the queue moves on and focus is always given back.
                 runCatching {
                     tts?.setOnUtteranceProgressListener(
                         object : android.speech.tts.UtteranceProgressListener() {
                             override fun onStart(utteranceId: String?) {}
-                            override fun onDone(utteranceId: String?) = onUtteranceFinished()
+                            override fun onDone(utteranceId: String?) = onUtteranceDone(utteranceId)
                             @Deprecated("required override")
-                            override fun onError(utteranceId: String?) = onUtteranceFinished()
+                            override fun onError(utteranceId: String?) = onUtteranceDone(utteranceId)
                             override fun onError(utteranceId: String?, errorCode: Int) =
-                                onUtteranceFinished()
+                                onUtteranceDone(utteranceId)
                             override fun onStop(utteranceId: String?, interrupted: Boolean) =
-                                onUtteranceFinished()
+                                onUtteranceDone(utteranceId)
                         }
                     )
                 }
@@ -237,8 +272,8 @@ class VoiceGuide(
                     }
                 }
                 runCatching {
-                    tts?.addEarcon(EARCON_WARN, ctx.packageName, R.raw.beep_warn)
-                    tts?.addEarcon(EARCON_CAMERA, ctx.packageName, R.raw.beep_camera)
+                    tts?.addEarcon(EARCON_WARN, c.packageName, R.raw.beep_warn)
+                    tts?.addEarcon(EARCON_CAMERA, c.packageName, R.raw.beep_camera)
                 }
             } else {
                 Log.w(TAG, "TTS init failed: $status")
@@ -325,7 +360,9 @@ class VoiceGuide(
      */
     fun sample() {
         if (!ready || !enabled) return
-        speak(phrases.overLimit(70), urgent = true)
+        // The driver asked for it, so it may cut off whatever was playing.
+        queue.flush()
+        say(phrases.overLimit(70), Priority.HIGH, TTL_SAMPLE_MS)
     }
 
     /**
@@ -336,7 +373,10 @@ class VoiceGuide(
         if (!enabled || !ready) return
 
         if (f.flags and HudFrame.FLAG_ARRIVED != 0) {
-            if (!arrivalSpoken) { arrivalSpoken = true; speak(phrases.arrived(), urgent = true) }
+            if (!arrivalSpoken) {
+                arrivalSpoken = true
+                say(phrases.arrived(), Priority.HIGH, TTL_ARRIVAL_MS)
+            }
             arrivalClearMs = 0L
             return
         }
@@ -344,7 +384,7 @@ class VoiceGuide(
         // destination on a marginal fix, the arrival test toggles across its
         // threshold on jitter, and every re-entry said "you have arrived"
         // again. Ten clear seconds means the car has actually driven off.
-        val nowMs = System.currentTimeMillis()
+        val nowMs = clock()
         if (arrivalSpoken) {
             if (arrivalClearMs == 0L) arrivalClearMs = nowMs
             if (nowMs - arrivalClearMs >= ARRIVAL_RELATCH_MS) {
@@ -375,9 +415,9 @@ class VoiceGuide(
         // announce a maneuver for it.
         if (f.maneuver == Man.ARRIVE && isFinal) return
 
-        val now = System.currentTimeMillis()
+        val now = clock()
         if (!mayAnnounce(isFinal, maneuverKey, now,
-                         lastSpokeKey, lastSpokeMs, lastFinalKey, lastFinalMs)) return
+                         lastSpokeKey, queue.quietSinceMs(), lastFinalKey, lastFinalMs)) return
 
         val instruction = if (f.maneuver == Man.ARRIVE) phrases.willArrive()
                           else phrases.instruction(f.maneuver, f.roundaboutExit, f.street)
@@ -390,24 +430,27 @@ class VoiceGuide(
         }
         lastSpokeKey = maneuverKey
         // The last call before the turn is time-critical -- that is why it is
-        // allowed to skip MIN_GAP_MS -- so it must also skip the queue. Queued
-        // behind a seven-second roundabout instruction and a level-crossing
-        // warning, "turn right now" arrived after the junction.
-        speak(text, urgent = isFinal)
+        // allowed to skip MIN_GAP_MS -- so it goes to the front of the queue.
+        // It no longer cuts off what is playing: flushing is what made a
+        // camera warning and a turn call chop each other in half. A waiting
+        // prepare call for the same turn is replaced by it.
+        say(text, if (isFinal) Priority.HIGH else Priority.NORMAL,
+            if (isFinal) TTL_FINAL_MS else TTL_PREPARE_MS, key = maneuverKey)
     }
 
-    /** Camera warnings jump the queue: they are time-critical by definition. */
+    /** Camera warnings go to the front of the queue: they are time-critical. */
     fun announceCamera(alert: CameraAlert) {
         if (!enabled || !ready) return
         val text = if (alert.zoneMode) phrases.dangerZone()
                    else phrases.cameraAhead(phrases.distance(alert.distanceM),
                                             alert.camera.limitKph)
-        speak(text, urgent = true, earcon = EARCON_CAMERA)
+        say(text, Priority.HIGH, TTL_ALERT_MS, earcon = EARCON_CAMERA)
     }
 
+    /** Only into silence: the new route's first instruction matters more. */
     fun announceReroute() {
         if (!enabled || !ready) return
-        speak(phrases.reroute(), urgent = true)
+        say(phrases.reroute(), Priority.LOW, TTL_MINOR_MS)
     }
 
     fun reset() {
@@ -415,7 +458,6 @@ class VoiceGuide(
         spoken.clear()
         arrivalSpoken = false
         wasOver = false
-        lastSpokeMs = 0L
     }
 
     /**
@@ -430,9 +472,11 @@ class VoiceGuide(
         if (!enabled || !ready) return
         if (metresAhead !in 1..CLOSURE_ANNOUNCE_M) return
         if (spokenClosures.contains(closureKey)) return
+        // Only marked said once the queue took it: a closure that arrived
+        // while something else was playing is tried again on the next tick.
+        if (!say(phrases.roadworks(phrases.distance(metresAhead)), Priority.LOW, TTL_MINOR_MS)) return
         if (spokenClosures.size > 64) spokenClosures.clear()
         spokenClosures.add(closureKey)
-        speak(phrases.roadworks(phrases.distance(metresAhead)))
     }
 
     /**
@@ -445,27 +489,27 @@ class VoiceGuide(
     fun onRoadFeature(kind: Int, id: Long) {
         if (!enabled || !ready) return
         if (spokenFeatures.contains(id)) return
-        if (spokenFeatures.size > 256) spokenFeatures.clear()
-        spokenFeatures.add(id)
         val text = when (kind) {
             com.mihai.navhud.nav.RoadFeature.LEVEL_CROSSING -> phrases.levelCrossing()
             com.mihai.navhud.nav.RoadFeature.SPEED_BUMP -> phrases.speedBump()
             com.mihai.navhud.nav.RoadFeature.TOLL_BOOTH -> phrases.tollBooth()
             else -> return
         }
-        speak(text)
+        // LOW: dropped if anything is playing, and then tried again next tick.
+        if (!say(text, Priority.LOW, TTL_MINOR_MS)) return
+        if (spokenFeatures.size > 256) spokenFeatures.clear()
+        spokenFeatures.add(id)
     }
 
     /** Cut off anything mid-sentence. Used when the app is swiped away. */
     fun stopNow() {
-        runCatching { tts?.stop() }
-        pending.set(0)
+        queue.flush()
         dropFocus()
     }
 
     fun shutdown() {
-        runCatching { tts?.stop(); tts?.shutdown() }
-        pending.set(0)
+        queue.flush()
+        runCatching { tts?.shutdown() }
         dropFocus()
         tts = null
     }
@@ -477,7 +521,7 @@ class VoiceGuide(
 
     private fun chimeIfSpeeding(f: HudFrame) {
         val over = f.limitKph > 0 && f.speedKph > f.limitKph + CHIME_MARGIN_KPH
-        val now = System.currentTimeMillis()
+        val now = clock()
 
         if (over) {
             // First chime immediately, then repeat on the interval.
@@ -487,8 +531,8 @@ class VoiceGuide(
                 chimeCount++
                 // On the first one, say the limit out loud too -- a bare beep
                 // does not tell you what you are supposed to be doing.
-                if (chimeCount == 1) speak(phrases.overLimit(f.limitKph), urgent = true, earcon = EARCON_WARN)
-                else speak("", earcon = EARCON_WARN)
+                val text = if (chimeCount == 1) phrases.overLimit(f.limitKph) else ""
+                say(text, Priority.HIGH, TTL_ALERT_MS, earcon = EARCON_WARN)
             }
             wasOver = true
         } else {
@@ -504,84 +548,85 @@ class VoiceGuide(
         }
     }
 
-    private fun speak(text: String, urgent: Boolean = false, earcon: String? = null) {
-        var mode = if (urgent) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        // The chime goes first and the line queues behind it, so the flush (if
-        // any) is done by the chime and must not be repeated by the line.
-        if (earcon != null) {
-            pending.incrementAndGet()
-            holdFocus()
-            val r = tts?.playEarcon(earcon, mode, null, "navhud-${utteranceSeq.incrementAndGet()}")
-            if (r != TextToSpeech.SUCCESS) onUtteranceFinished()
-            mode = TextToSpeech.QUEUE_ADD
-        }
-        if (text.isEmpty()) return
-        // Count first, then take focus. The other way round, the TTS callback
-        // thread could finish the previous utterance in between -- dropping
-        // pending to zero and abandoning focus -- and this one would then be
-        // spoken with no focus held, so the radio never ducked for it.
-        pending.incrementAndGet()
-        holdFocus()
-        lastSpokeMs = System.currentTimeMillis()
-        val r = tts?.speak(text, mode, null, "navhud-${utteranceSeq.incrementAndGet()}")
-        // If the engine refused it there will be no callback to balance the
-        // counter, and audio focus would be held for ever on the strength of
-        // an utterance that never played.
-        if (r != TextToSpeech.SUCCESS) onUtteranceFinished()
-    }
+    /** The engine finished, failed or stopped an utterance. Any thread. */
+    internal fun onUtteranceDone(utteranceId: String?) = queue.onDone(utteranceId)
+
+    /** Queue one line (and its chime); false if the queue dropped it. */
+    private fun say(
+        text: String, priority: Priority, ttlMs: Long,
+        earcon: String? = null, key: Long? = null
+    ): Boolean = queue.add(VoiceQueue.Item(text, priority, clock() + ttlMs, earcon, key))
 
     /**
-     * Give the radio back when we stop talking.
-     *
-     * Focus was requested before the first announcement and abandoned only in
-     * shutdown(), so a single "in two kilometres, turn right" ducked the music
-     * for the entire drive -- hours of quiet radio for three seconds of speech
-     * a minute. Android's own guidance is to abandon focus as soon as there is
-     * nothing left to play.
-     * https://developer.android.com/media/optimize/audio-focus
-     *
-     * Not *at once*, though: abandoning between a chime and its line, or
-     * between two queued lines, un-ducks and re-ducks the music in a fraction
-     * of a second, and some head units answer an abandon by resuming playback
-     * they then do not pause again. One hold for the whole burst, released a
-     * moment after the last item.
+     * The TTS engine as the queue sees it: one item at a time, always
+     * QUEUE_ADD. A chime and its line are two engine utterances; only the
+     * line's id is the item's, so the item ends when the line does.
      */
-    private fun onUtteranceFinished() {
-        if (pending.decrementAndGet() <= 0) {
-            pending.set(0)
+    private inner class TtsSpeaker : VoiceQueue.Speaker {
+        override fun start(item: VoiceQueue.Item, id: String): Boolean {
+            val t = tts ?: return false
+            holdFocus()
+            val earcon = item.earcon
+            if (earcon != null) {
+                val chimeId = if (item.text.isEmpty()) id else id + CHIME_SUFFIX
+                val r = runCatching { t.playEarcon(earcon, TextToSpeech.QUEUE_ADD, null, chimeId) }
+                    .getOrDefault(TextToSpeech.ERROR)
+                if (item.text.isEmpty()) return r == TextToSpeech.SUCCESS
+            }
+            return runCatching { t.speak(item.text, TextToSpeech.QUEUE_ADD, null, id) }
+                .getOrDefault(TextToSpeech.ERROR) == TextToSpeech.SUCCESS
+        }
+
+        override fun stop() {
+            runCatching { tts?.stop() }
+        }
+
+        /**
+         * Give the radio back when we stop talking.
+         *
+         * Focus was requested before the first announcement and abandoned only
+         * in shutdown(), so a single "in two kilometres, turn right" ducked the
+         * music for the entire drive -- hours of quiet radio for three seconds
+         * of speech a minute. Android's own guidance is to abandon focus as
+         * soon as there is nothing left to play.
+         * https://developer.android.com/media/optimize/audio-focus
+         *
+         * Not *at once*, though: abandoning between a chime and its line, or
+         * between two queued lines, un-ducks and re-ducks the music in a
+         * fraction of a second, and some head units answer an abandon by
+         * resuming playback they then do not pause again. One hold for the
+         * whole burst, released a moment after the last item.
+         */
+        override fun idle() {
             main.removeCallbacks(releaseFocus)
             main.postDelayed(releaseFocus, FOCUS_RELEASE_MS)
         }
     }
 
-    private val pending = java.util.concurrent.atomic.AtomicInteger(0)
-    private val utteranceSeq = java.util.concurrent.atomic.AtomicInteger(0)
-
-    /**
-     * Focus state is touched from the tick thread (announcements), the main
-     * thread (settings, stop) and the TTS binder thread (completion), so every
-     * change to it happens under this lock.
-     */
-    private val focusLock = Any()
-    private val main = Handler(Looper.getMainLooper())
+    // Focus state is touched from the tick thread (announcements), the main
+    // thread (settings, stop, the delayed release) and the TTS binder thread
+    // (completion), so every change to it happens under the queue's own lock
+    // -- the one the queue already holds when it starts an item. A second lock
+    // would have to be taken in the opposite order somewhere, and deadlock.
     private val releaseFocus = Runnable {
-        synchronized(focusLock) { if (pending.get() <= 0) abandonFocus() }
+        synchronized(queue) { if (!queue.busy) abandonFocus() }
     }
 
     /** Take focus if we do not have it, and cancel any release in flight. */
-    private fun holdFocus() = synchronized(focusLock) {
+    private fun holdFocus() = synchronized(queue) {
         main.removeCallbacks(releaseFocus)
         requestFocus()
     }
 
     /** Give focus back now, cancelling the delayed release. */
-    private fun dropFocus() = synchronized(focusLock) {
+    private fun dropFocus() = synchronized(queue) {
         main.removeCallbacks(releaseFocus)
         abandonFocus()
     }
 
     private fun requestFocus() {
         if (focusHeld) return
+        val audio = audio ?: return
         val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val attrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
@@ -612,6 +657,7 @@ class VoiceGuide(
     private fun abandonFocus() {
         if (!focusHeld) return
         focusHeld = false
+        val audio = audio ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             focusRequest?.let { runCatching { audio.abandonAudioFocusRequest(it) } }
         } else {
