@@ -41,7 +41,9 @@ object Prefs {
     private const val KEY_PARK_HEAD = "parked_heading"
     private const val KEY_PARK_AT = "parked_at"
     private const val KEY_DEST_AT = "dest_at"
-    private const val KEY_SNAP = "snap_to_road"
+    // v2: a new key so every install, including those that stored the old
+    // default of false, switches to snapping.
+    private const val KEY_SNAP = "snap_to_road_v2"
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -172,18 +174,15 @@ object Prefs {
     /**
      * Pull the marker onto the road, or draw it where the receiver says it is.
      *
-     * Off. The marker now shows the actual fix, the way Waze does -- if the
-     * receiver puts you in the field beside the road, that is what you see,
-     * and that is useful information rather than something to hide. Snapping
-     * looks tidier right up until it is confidently wrong: it will hold you on
-     * the main carriageway while you are on the service road beside it, and
-     * pin you to a junction while you drive into the side street.
+     * On (1.27). Unsnapped, the arrow sat at the raw fix pushed along the
+     * compass heading: 5-10 m off the road, biased to one side, and jerky,
+     * which on the road read as broken rather than as honest. Both snaps have
+     * their own trust gates (RouteTracker.SNAP_TRUST_M, FreeTracker's), so a
+     * slip road or a car park still falls back to the fix.
      *
-     * Kept as a setting rather than deleted because the snapping code is still
-     * there and still correct; this is a judgement about which failure is
-     * easier to live with, and judgements change.
+     * Kept as a setting so the unsnapped path can still be chosen.
      */
-    fun snapToRoad(ctx: Context) = sp(ctx).getBoolean(KEY_SNAP, false)
+    fun snapToRoad(ctx: Context) = sp(ctx).getBoolean(KEY_SNAP, true)
 
     fun setSnapToRoad(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean(KEY_SNAP, on).apply()

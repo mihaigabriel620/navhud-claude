@@ -353,7 +353,7 @@ class MapActivity : AppCompatActivity() {
     private var seededFromParked = false
 
     /** See Prefs.snapToRoad. Read on resume; this loop runs at 30 Hz. */
-    private var snapToRoad = false
+    private var snapToRoad = true
     private var sensors: SensorManager? = null
     /**
      * Gravity direction in device axes; Android reports it pointing up.
@@ -2014,10 +2014,9 @@ class MapActivity : AppCompatActivity() {
 
         val ageS = ((now - fixNs / 1_000_000L).coerceIn(0L, 1500L)) / 1000.0
         val route = HudService.currentRoute
-        // Both snaps are off by default now -- the marker goes where the fix
-        // says, not where the road is. See Prefs.snapToRoad.
+        // Both snaps are on by default again (1.27) -- see Prefs.snapToRoad.
         //
-        // And it only moves while there IS a fix. Drawing an unsnapped marker
+        // Unsnapped, the marker only moves while there IS a fix. Drawing an unsnapped marker
         // from a stale or absent position is the one case where snapping was
         // genuinely covering for something: the road line held the marker
         // still while the receiver wandered. Without it, the marker has to
