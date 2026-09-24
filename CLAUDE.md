@@ -9,7 +9,11 @@ Waze / Google Maps everywhere.
 ## How the owner wants the work done
 - **One repo, one branch.** `mihaigabriel620/navhud-claude`, commit and push
   straight to `main`. No feature branches, no other repos. If subagents use
-  worktrees, merge into main and delete the worktrees and their branches.
+  worktrees, merge into main and delete the worktrees and their branches. If a
+  cloud session is started on its own `claude/...` branch, fast-forward `main`
+  to it, push `main`, and delete that branch (local and remote) when done.
+- **Cloud sessions are preferred** (the owner has cloud-session credits):
+  at the start and end of a session, report remaining usage/credits if visible.
 - **Every new APK goes to GitHub Releases.** Bump `versionCode`/`versionName`
   in `android/app/build.gradle.kts`, add a `## App X.Y` section at the top of
   `CHANGELOG.md`, push, then push tag `vX.Y` — the Actions workflow builds the
