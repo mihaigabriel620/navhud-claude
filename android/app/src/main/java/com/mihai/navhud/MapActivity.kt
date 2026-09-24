@@ -2119,7 +2119,8 @@ class MapActivity : AppCompatActivity() {
         // the smoothed GPS course alone, and the road bearing wins whenever the
         // marker is snapped -- for the map and the arrow both.
         val moving = fusion.moving
-        val stopped = speed < HeadingFusion.STATIONARY_MPS
+        // The car's speed, as `moving` uses: parked, GPS wanders at 1-2 m/s.
+        val stopped = (HudService.carSpeedMps ?: speed) < HeadingFusion.STATIONARY_MPS
         val targetHeading = if (snapped && (moving || !stopped)) (roadBrg ?: fusion.heading ?: gpsBrg)
                             else (fusion.heading ?: roadBrg ?: gpsBrg)
 
