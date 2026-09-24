@@ -663,6 +663,7 @@ class MapActivity : AppCompatActivity() {
 
         requestPermissions()
         showLastCrash()
+        onBackPressedDispatcher.addCallback(this, backCallback)
     }
 
     /**
@@ -2914,15 +2915,21 @@ class MapActivity : AppCompatActivity() {
         drawAlternatives(alts, current)
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        // Back closes the sheet before it closes the map. Anything else and a
-        // driver who opened the picker to look, and pressed back to stop
-        // looking, loses the navigation screen instead.
-        if (quickScrim.visibility == View.VISIBLE) { hideQuickActions(); return }
-        if (routePicker.visibility == View.VISIBLE) { hideRoutePicker(); return }
-        @Suppress("DEPRECATION")
-        super.onBackPressed()
+    /**
+     * Back closes the sheet before it closes the map. Anything else and a
+     * driver who opened the picker to look, and pressed back to stop looking,
+     * loses the navigation screen instead. The dispatcher, not the deprecated
+     * onBackPressed override; with nothing open it steps aside and back does
+     * what it always did.
+     */
+    private val backCallback = object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            if (quickScrim.visibility == View.VISIBLE) { hideQuickActions(); return }
+            if (routePicker.visibility == View.VISIBLE) { hideRoutePicker(); return }
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            isEnabled = true
+        }
     }
 
     private fun hideRoutePicker() {

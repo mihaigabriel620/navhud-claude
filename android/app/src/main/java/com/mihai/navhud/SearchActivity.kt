@@ -120,6 +120,7 @@ class SearchActivity : AppCompatActivity() {
         list.adapter = adapter
         list.setOnItemClickListener { _, _, pos, _ -> if (pos < shown.size) choose(shown[pos]) }
 
+        onBackPressedDispatcher.addCallback(this, backCallback)
         findViewById<android.widget.ImageView>(R.id.back)
             .setOnClickListener { onBackPressedCompat() }
         clearBtn.setOnClickListener { input.setText(""); input.requestFocus() }
@@ -185,11 +186,14 @@ class SearchActivity : AppCompatActivity() {
         finish()
     }
 
-    @Deprecated("kept for API 24; the predictive-back API is 33+")
-    override fun onBackPressed() {
-        if (mode != Mode.NAVIGATE) { onBackPressedCompat(); return }
-        @Suppress("DEPRECATION")
-        super.onBackPressed()
+    /** The dispatcher (works from API 24) instead of the deprecated override. */
+    private val backCallback = object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            if (mode != Mode.NAVIGATE) { onBackPressedCompat(); return }
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            isEnabled = true
+        }
     }
 
     // ---- shortcuts ---------------------------------------------------------
