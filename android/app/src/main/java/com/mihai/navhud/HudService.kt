@@ -930,20 +930,33 @@ class HudService : Service(), LocationListener {
         // and unreachable; on Bluetooth the orphan still held the board's only
         // SPP slot, so the new connection could never succeed and the HUD went
         // dark for the rest of the drive.
-        link?.let { old -> linkExec.execute { runCatching { old.close() } } }
-        link = (if (useBt) BtSerialLink(this) else UsbSerialLink(this)).also { l ->
-            // The cable is not one-way: an IMU on the HUD board reports its yaw
-            // rate back up it, which the map prefers to the phone's own gyro.
-            l.onLine = { line ->
-                if (line.startsWith("\$IMU,")) runCatching { onImuLine(line) }
-                else if (line.startsWith(CarLink.PREFIX)) runCatching { onCarLine(line) }
-                else if (line.startsWith("\$MAG,")) runCatching { onMagLine(line) }
-                else runCatching { onBoardLine(line) }
+        //
+        // But only when it has to go: every new destination and every Resume
+        // comes through here, and rebuilding a link that is up blanked a
+        // Bluetooth HUD for as long as ten seconds of reconnecting. Same
+        // transport and open, or being opened, is kept as it is.
+        val old = link
+        val keep = old != null && (old is BtSerialLink) == useBt &&
+                   (old.isOpen || linkOpening.get())
+        if (!keep) {
+            old?.let { linkExec.execute { runCatching { it.close() } } }
+            link = (if (useBt) BtSerialLink(this) else UsbSerialLink(this)).also { l ->
+                // The cable is not one-way: an IMU on the HUD board reports its
+                // yaw rate back up it, which the map prefers to the phone's gyro.
+                l.onLine = { line ->
+                    if (line.startsWith("\$IMU,")) runCatching { onImuLine(line) }
+                    else if (line.startsWith(CarLink.PREFIX)) runCatching { onCarLine(line) }
+                    else if (line.startsWith("\$MAG,")) runCatching { onMagLine(line) }
+                    else runCatching { onBoardLine(line) }
+                }
+                linkInfo = "opening..."
+                // Never on this thread: a Bluetooth connect blocks for as long
+                // as ten seconds when the board is off, and this is the main
+                // thread. Flagged like the tick's retry, so the next start
+                // sees "opening".
+                linkOpening.set(true)
+                linkExec.execute { try { openLink(l) } finally { linkOpening.set(false) } }
             }
-            linkInfo = "opening..."
-            // Never on this thread: a Bluetooth connect blocks for as long as
-            // ten seconds when the board is off, and this is the main thread.
-            linkExec.execute { openLink(l) }
         }
 
         country = Prefs.homeCountry(this)
