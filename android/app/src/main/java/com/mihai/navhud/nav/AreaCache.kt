@@ -98,7 +98,32 @@ object AreaCache {
         }
     }
 
+    /**
+     * A body stored under a plain name rather than as a circle: the route's
+     * camera list, which covers a corridor, not an area. Kept out of [get] and
+     * [nearest] on purpose -- as a circle it would have to be huge, and offline
+     * [nearest] would then hand the camera list back as the road data for
+     * every point in Europe.
+     */
+    fun putNamed(name: String, body: String) {
+        val d = dir ?: return
+        runCatching {
+            if (!d.exists()) d.mkdirs()
+            File(d, "n_$name.json").writeText(body)
+            prune(d)
+        }
+    }
+
+    /** [putNamed]'s body if it exists and is younger than [maxAgeMs]. */
+    fun getNamed(name: String, maxAgeMs: Long, nowMs: Long): String? {
+        val f = File(dir ?: return null, "n_$name.json")
+        if (!f.isFile || nowMs - f.lastModified() > maxAgeMs) return null
+        return runCatching { f.readText() }.getOrNull()
+    }
+
     private fun entry(f: File): Entry? {
+        // Only area windows; named bodies and anything else are not circles.
+        if (!f.name.startsWith("a_")) return null
         val p = f.name.removePrefix("a_").removeSuffix(".json").split('_')
         return when (p.size) {
             6 -> Entry(f, (p[3].toLongOrNull() ?: return null) / 1e5,

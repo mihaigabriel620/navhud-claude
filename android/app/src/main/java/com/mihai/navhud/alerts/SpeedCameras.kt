@@ -166,7 +166,15 @@ object SpeedCameras {
      * bucket AreaRoads never asks for (its windows are 1-6 km), so a camera
      * body can never be served as a road network or the other way round.
      */
-    internal const val CACHE_BUCKET_M = 999_000.0
+    /**
+     * Cache name for a route's camera list: its destination, to ~100 m. A
+     * reroute to the same place reuses it; the cached body is parsed against
+     * the route actually driven, so cameras off it are dropped anyway.
+     */
+    internal fun cacheKey(route: Route): String {
+        val dest = route.pts.last()
+        return "cams_${Math.round(dest[0] * 1e3)}_${Math.round(dest[1] * 1e3)}"
+    }
 
     /**
      * Blocking network call; run it off the main thread.
@@ -186,15 +194,14 @@ object SpeedCameras {
     internal fun fetchWith(
         route: Route, cache: AreaCache?, transport: (String) -> String
     ): List<SpeedCamera> {
-        val dest = route.pts.last()
+        val key = cacheKey(route)
         val body = try {
             transport("data=" + java.net.URLEncoder.encode(buildQuery(route), "UTF-8")).also {
                 checkComplete(it)
-                cache?.put(dest[0], dest[1], CACHE_BUCKET_M, it)
+                cache?.putNamed(key, it)
             }
         } catch (e: Exception) {
-            cache?.get(dest[0], dest[1], CACHE_BUCKET_M, Long.MAX_VALUE, System.currentTimeMillis())
-                ?: throw e
+            cache?.getNamed(key, Long.MAX_VALUE, System.currentTimeMillis()) ?: throw e
         }
         return parse(body, route)
     }

@@ -176,5 +176,10 @@ class CameraRouteTest {
         for (radius in listOf(1200.0, 2000.0, 6000.0)) {
             assertNull(AreaCache.get(end[0], end[1], radius, Long.MAX_VALUE, System.currentTimeMillis()))
         }
+        // ...and not offline either, anywhere: nearest() is what free drive and
+        // the route's limit fallback use with no signal.
+        for (p in listOf(end, north.pts.first(), doubleArrayOf(45.9, 25.6))) {
+            assertNull(AreaCache.nearest(p[0], p[1], Long.MAX_VALUE, System.currentTimeMillis()))
+        }
     }
 }

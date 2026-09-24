@@ -212,7 +212,8 @@ class HudService : Service(), LocationListener {
             // the setting mid-route did nothing until the next country change:
             // switching alerts off left the old watcher announcing positions.
             s.watcher = if (cameraPolicy == CameraPolicy.OFF) null
-                        else CameraWatcher(s.watcherCameras, cameraPolicy)
+                        else s.watcher?.successor(s.watcherCameras, cameraPolicy)
+                            ?: CameraWatcher(s.watcherCameras, cameraPolicy)
             if (speakSample) s.voice?.sample()
         }
 
@@ -632,6 +633,9 @@ class HudService : Service(), LocationListener {
      * guidance to it. The reply now checks that it is still wanted.
      */
     @Volatile private var routeGen = 0
+
+    /** Bumped on every adopted route, reroutes included; see fetchCameras. */
+    @Volatile private var cameraGen = 0
 
     private val free = FreeTracker()
     @Volatile private var freeArea: Area? = null
@@ -1447,8 +1451,13 @@ class HudService : Service(), LocationListener {
         countryLookupBusy.set(true)
         aux.execute {
           try {
-            val c = runCatching { prov.countryAt(here) }.getOrNull()
-                ?: runCatching { com.mihai.navhud.nav.Geocoders.countryCodeAt(here) }.getOrNull()
+            // Normalised, because a lookup can answer "BEL" or "Belgique"; and
+            // the cached OSM area's region code as a last resort, so it still
+            // works with no signal.
+            val c = CountryRules.normalise(runCatching { prov.countryAt(here) }.getOrNull())
+                ?: CountryRules.normalise(runCatching {
+                    com.mihai.navhud.nav.Geocoders.countryCodeAt(here) }.getOrNull())
+                ?: CountryRules.normalise(freeArea?.regionCode)
             if (c == null) {
                 // Do NOT stamp the checkpoint on a failure. It used to, so one
                 // failed lookup at a border froze the previous country's rules
@@ -1458,16 +1467,24 @@ class HudService : Service(), LocationListener {
                 return@execute
             }
             lastCountryCheck = here
+            // On a route, the route's own per-segment country wins.
+            if (routeCountryCode != null) return@execute
             if (c.equals(country, ignoreCase = true)) return@execute
-            country = c
-            cameraPolicy = CountryRules.effective(c, Prefs.cameraPreference(this))
-            watcher = if (cameraPolicy == CameraPolicy.OFF) null
-                      else CameraWatcher(watcherCameras, cameraPolicy)
-            setStatus(CountryRules.explain(c))
+            applyCountry(c)
           } finally {
             countryLookupBusy.set(false)
           }
         }
+    }
+
+    /** Switch camera rules to country [c], keeping what was already announced. */
+    private fun applyCountry(c: String) {
+        country = c
+        cameraPolicy = CountryRules.effective(c, Prefs.cameraPreference(this))
+        watcher = if (cameraPolicy == CameraPolicy.OFF) null
+                  else watcher?.successor(watcherCameras, cameraPolicy)
+                      ?: CameraWatcher(watcherCameras, cameraPolicy)
+        setStatus(CountryRules.explain(c))
     }
 
     private val countryLookupBusy = AtomicBoolean(false)
@@ -1634,6 +1651,9 @@ class HudService : Service(), LocationListener {
     }
 
     private fun adoptRoute(r: Route, reason: String) {
+        // A route replacing a running one is a reroute (or a switch to an
+        // alternative): the voice must not repeat turns it has just called.
+        val replacing = tracker != null
         // Where the router has no limit, the same OSM window and legal
         // defaults free drive uses. The window keeps being fetched on a route
         // (step() -> maybeFetchArea), so this has data wherever free drive would.
@@ -1648,7 +1668,7 @@ class HudService : Service(), LocationListener {
         // coordinate cannot point the map the wrong way down the street.
         routeInitialBearing = Geo.bearingAlong(r.pts, r.cum, 30.0, spanM = 30.0)
         routeGeneration++
-        voice?.reset()
+        if (replacing) voice?.onReroute() else voice?.reset()
         // Deliberately *not* touching lastRerouteMs here: the cooldown exists to
         // stop repeated failures spinning, and it is armed when a reroute is
         // requested. Arming it on adoption made the first route mute the next
@@ -1671,6 +1691,11 @@ class HudService : Service(), LocationListener {
                 reason
             )
         )
+        // The cameras already known, measured along the NEW route straight away.
+        // Keeping the old watcher until the fetch landed left every countdown
+        // measured along a road we had just left -- or, offline, for good.
+        cameraGen++
+        watcher?.let { w -> w.rebase(r).also { watcher = it; watcherCameras = it.cameras } }
         fetchCameras(r)
     }
 
@@ -1679,6 +1704,7 @@ class HudService : Service(), LocationListener {
             watcher = null; watcherCameras = emptyList(); return
         }
         val gen = routeGen
+        val cg = cameraGen
         // Deliberately not on `net`: Overpass can take a minute, and a reroute
         // must never queue behind it.
         aux.execute {
@@ -1686,12 +1712,14 @@ class HudService : Service(), LocationListener {
             // runs to a sixty-second timeout, and a missed turn three seconds
             // in queues a second fetch behind this one. Installing route A's
             // cameras while driving route B pinned every countdown to distances
-            // measured along a road we are not on.
-            if (gen != routeGen) return@execute
-            val cams = runCatching { SpeedCameras.fetch(r) }
+            // measured along a road we are not on. `cameraGen` catches reroutes,
+            // which do not change `routeGen`.
+            if (gen != routeGen || cg != cameraGen) return@execute
+            // Cached on disk, so a reroute or restart with no signal still has them.
+            val cams = runCatching { SpeedCameras.fetch(r, AreaCache) }
                 .onFailure { Log.w(TAG, "camera fetch failed", it) }
                 .getOrNull()
-            if (gen != routeGen) return@execute
+            if (gen != routeGen || cg != cameraGen) return@execute
             if (cams == null) {
                 // A failed refresh is not "there are no cameras". Overwriting
                 // a good list with an empty one silently disarmed every camera
@@ -1700,7 +1728,8 @@ class HudService : Service(), LocationListener {
                 return@execute
             }
             watcherCameras = cams
-            watcher = CameraWatcher(cams, cameraPolicy)
+            // successor(): a camera already announced is not announced again.
+            watcher = watcher?.successor(cams, cameraPolicy) ?: CameraWatcher(cams, cameraPolicy)
             cameraOnRoute.clear()
             camerasFetchedAtMs = System.currentTimeMillis()
             lastCameraFetchMs = SystemClock.elapsedRealtime()
@@ -1800,6 +1829,9 @@ class HudService : Service(), LocationListener {
 
         lastFrame = frame
         routeCountryCode = t.route.countryAt(t.alongM)
+        // The route knows which country each stretch is in, offline and to the
+        // metre at a border; the reverse geocode only checks every 25 km.
+        routeCountryCode?.let { if (!it.equals(country, ignoreCase = true)) applyCountry(it) }
         // Null while a route is running. This used to keep whatever road free
         // drive matched before the trip started -- possibly the origin, three
         // hundred kilometres back -- and the moment anything cleared the route
@@ -1815,7 +1847,13 @@ class HudService : Service(), LocationListener {
         // angle before it next repaints the arrow.
         frame.rabLine()?.let { l?.write(it) }
         voice?.enabled = voiceEnabled && !quietMode
-        voice?.onFrame(frame, t.nextManeuver?.alongM?.toLong())
+        // The maneuver after the next one lets the voice say "… puis à gauche"
+        // instead of two calls back to back on a close pair of turns.
+        val next = t.nextManeuver
+        val then = t.thenManeuver
+        voice?.onFrame(frame, next?.alongM?.toLong(),
+            thenManeuver = then?.code,
+            thenGapM = if (next != null && then != null) (then.alongM - next.alongM).toInt() else null)
 
         currentRoadName = t.currentRoadName
         // The road network is worth having with a route as well as without
