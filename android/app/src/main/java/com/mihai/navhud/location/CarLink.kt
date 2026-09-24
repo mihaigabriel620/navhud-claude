@@ -80,6 +80,14 @@ class CarLink {
         /** Refuse to believe a correction outside this. */
         const val SCALE_MIN = 0.90
         const val SCALE_MAX = 1.10
+
+        /**
+         * The bus reading zero while GPS says this much, for [ZERO_SUSPECT_MS],
+         * is not a stopped car: the board sends 0 when its own speed frame has
+         * gone stale. 15 km/h is well clear of GPS standstill wander.
+         */
+        const val ZERO_SUSPECT_GPS_MPS = 15.0 / 3.6
+        const val ZERO_SUSPECT_MS = 3_000L
     }
 
     @Volatile var speedKph: Int = 0; private set
@@ -144,6 +152,27 @@ class CarLink {
     /** True while the board is reporting recently enough to be believed. */
     fun fresh(nowMs: Long): Boolean = atMs != 0L && nowMs - atMs < STALE_MS
 
+    /** Latched by [checkPlausible]; cleared by the bus reporting motion again. */
+    @Volatile var zeroSuspect: Boolean = false; private set
+    private var zeroSinceMs = 0L
+
+    /** Fresh, and not a stuck zero. */
+    fun usable(nowMs: Long): Boolean = fresh(nowMs) && !zeroSuspect
+
+    /**
+     * Cross-check a zero on the bus against GPS. Call on every tick with the
+     * current GPS speed, or null when there is no recent fix -- which can
+     * neither raise nor clear the suspicion.
+     */
+    @Synchronized
+    fun checkPlausible(gpsMps: Double?, nowMs: Long) {
+        if (speedKph > STOPPED_KPH) { zeroSuspect = false; zeroSinceMs = 0L; return }
+        if (!fresh(nowMs) || gpsMps == null) return
+        if (gpsMps <= ZERO_SUSPECT_GPS_MPS) { zeroSinceMs = 0L; return }
+        if (zeroSinceMs == 0L) zeroSinceMs = nowMs
+        if (nowMs - zeroSinceMs >= ZERO_SUSPECT_MS) zeroSuspect = true
+    }
+
     /**
      * Corrected road speed in m/s, or null when there is no usable car data.
      *
@@ -152,7 +181,17 @@ class CarLink {
      * because a cable fell out.
      */
     fun speedMps(nowMs: Long): Double? =
-        if (!fresh(nowMs)) null else speedKph / 3.6 * scale
+        if (!usable(nowMs)) null else speedKph / 3.6 * scale
+
+    /**
+     * What the car's own speedometer path says, uncorrected, or null.
+     *
+     * The number to *show*: the HUD firmware draws the raw bus speed, so the
+     * app gauge and the over-limit check must use the same one or the two
+     * displays disagree by the learned scale. [speedMps] is for distance.
+     */
+    fun rawSpeedMps(nowMs: Long): Double? =
+        if (!usable(nowMs)) null else speedKph / 3.6
 
     /**
      * The car has been standing still long enough to act on it.
@@ -162,7 +201,7 @@ class CarLink {
      * true rate is known to be zero.
      */
     fun stopped(nowMs: Long): Boolean =
-        fresh(nowMs) && stoppedSinceMs != 0L && nowMs - stoppedSinceMs >= STOPPED_SETTLE_MS
+        usable(nowMs) && stoppedSinceMs != 0L && nowMs - stoppedSinceMs >= STOPPED_SETTLE_MS
 
     /**
      * Nudge the wheel-speed correction using a GPS ground speed.
@@ -186,6 +225,7 @@ class CarLink {
     fun reset() {
         speedKph = 0; rpm = 0; ps = 0; volts = 0.0; voltsRaw = 0
         ignitionOn = false; atMs = 0L; stoppedSinceMs = 0L
+        zeroSuspect = false; zeroSinceMs = 0L
         // scale survives: it is a property of the car's tyres, not of this
         // drive, and throwing it away means relearning it every trip.
     }

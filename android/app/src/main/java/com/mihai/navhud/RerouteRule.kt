@@ -35,18 +35,38 @@ object RerouteRule {
      * straight on and you are still only ten or fifteen metres from the line
      * for the first couple of seconds, so a purely distance-based test waits
      * for you to get far enough away to be sure — which is the "hell amount of
-     * time" the driver notices. Direction is fast evidence: the moment the car
-     * is pointing sixty degrees away from where the route runs *and* it is off
-     * the line at all, the turn has already happened.
+     * time" the driver notices. Direction is fast evidence: pointing
+     * [TURNED_OFF_DEG] away from where the route runs, [TURNED_OFF_CROSS_M]
+     * off the line, for [TURNED_OFF_MS], means the turn has already happened
+     * -- well before the car is [RouteTracker.OFF_ROUTE_M] away.
      *
-     * Sixty degrees, not less, because a route polyline cuts corners and a
-     * bend can put twenty or thirty degrees between the car and the segment it
-     * is snapped to without anyone having gone anywhere.
+     * A route polyline cuts corners, so a bend can put twenty or thirty
+     * degrees between the car and the segment it is snapped to for a moment.
+     * The two seconds are what keep that, and a single multipath fix, from
+     * counting.
      */
-    const val TURNED_OFF_DEG = 60.0
+    const val TURNED_OFF_DEG = 45.0
+    const val TURNED_OFF_CROSS_M = 15.0
+    const val TURNED_OFF_MS = 2000L
 
     /** Minimum gap between two *requests*, so a failure cannot loop. */
     const val COOLDOWN_MS = 6000L
+
+    /** Back-off for a failed route request: 2 s, 4 s, 8 s, 16 s, then 20 s. */
+    const val RETRY_BASE_MS = 2000L
+    const val RETRY_MAX_MS = 20_000L
+
+    /**
+     * How long to wait after the [attempt]th failure in a row (0-based).
+     * Losing signal in a tunnel is the ordinary case, so it never gives up --
+     * it just asks less often.
+     */
+    fun retryDelayMs(attempt: Int): Long =
+        (RETRY_BASE_MS shl attempt.coerceIn(0, 4)).coerceAtMost(RETRY_MAX_MS)
+
+    /** The heading test on its own, for the caller that times it. */
+    fun turnedOff(crossM: Double, headingOffDeg: Double?): Boolean =
+        headingOffDeg != null && headingOffDeg > TURNED_OFF_DEG && crossM > TURNED_OFF_CROSS_M
 
     /**
      * @param offRoute        the tracker's debounced verdict
@@ -56,6 +76,8 @@ object RerouteRule {
      * @param nowMs           monotonic clock
      * @param headingOffDeg   |car heading - route direction| here, null if the
      *                        car has no trustworthy heading
+     * @param turnedOffSinceMs when [turnedOff] first became true in the current
+     *                        unbroken run, 0 if it is not true now
      */
     fun shouldReroute(
         offRoute: Boolean,
@@ -64,22 +86,18 @@ object RerouteRule {
         lastRequestMs: Long,
         nowMs: Long,
         headingOffDeg: Double? = null,
-        offLine: Boolean = offRoute
+        turnedOffSinceMs: Long = 0L
     ): Boolean {
         // The cooldown is the one thing nothing may skip: it is what stops a
         // failing network request spinning.
         if (lastRequestMs != 0L && nowMs - lastRequestMs < COOLDOWN_MS) return false
 
-        // The instant path. Off the line *on this fix* and pointing well away
-        // from where the route runs: the turn has already happened, there is
-        // nothing left to confirm, and waiting is the difference between this
-        // and the apps it is being compared to.
-        //
-        // It deliberately does not wait for the debounced `offRoute`, because
-        // that debounce exists for the case where direction cannot tell us
-        // anything -- a parallel service road, a wide junction, GPS drift --
-        // and this is not that case.
-        if (offLine && headingOffDeg != null && headingOffDeg > TURNED_OFF_DEG) return true
+        // The direction path. It deliberately does not wait for the debounced
+        // `offRoute`, because that debounce exists for the case where direction
+        // cannot tell us anything -- a parallel service road, a wide junction,
+        // GPS drift -- and this is not that case.
+        if (turnedOffSinceMs != 0L && turnedOff(crossM, headingOffDeg) &&
+            nowMs - turnedOffSinceMs >= TURNED_OFF_MS) return true
 
         if (!offRoute || offRouteSinceMs == 0L) return false
         if (crossM > OBVIOUS_CROSS_M) return true

@@ -39,6 +39,7 @@ import com.mihai.navhud.nav.LatLon
 import com.mihai.navhud.nav.MapboxProvider
 import com.mihai.navhud.nav.NavProvider
 import com.mihai.navhud.nav.Route
+import com.mihai.navhud.nav.SpeedDefaults
 import java.util.Calendar
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -101,6 +102,9 @@ class HudService : Service(), LocationListener {
 
         private const val TICK_MS = 250L
 
+        /** Older than this, a fix is no evidence for or against a reroute. */
+        private const val REROUTE_FIX_MAX_AGE_MS = 2000L
+
         /**
 
          * How long the last usable fix may be before the driver is told.
@@ -135,12 +139,18 @@ class HudService : Service(), LocationListener {
         /** How often to retry a cable that will not open. */
         private const val LINK_RETRY_MS = 3000L
 
-        /** Back-off for a failed route request: 2 s, 4 s, 8 s, capped. */
-        private const val ROUTE_RETRY_BASE_MS = 2000L
-        private const val ROUTE_RETRY_MAX_MS = 20_000L
 
         /** Floor on how often free drive may ask Overpass for road data. */
         private const val AREA_MIN_INTERVAL_MS = 20_000L
+
+        /** Road data kept on disk ahead of the car on a route, and when to top up. */
+        private const val PREFETCH_AHEAD_M = 100_000.0
+        private const val PREFETCH_REFILL_M = 50_000.0
+
+        /** Between prefetch requests; Overpass fair use. */
+        private const val PREFETCH_GAP_MS = 3_000L
+        private const val PREFETCH_RETRY_BASE_MS = 30_000L
+        private const val PREFETCH_RETRY_MAX_MS = 600_000L
 
         /** Re-check which country we are in after moving this far. */
         private const val COUNTRY_RECHECK_M = 25_000.0
@@ -251,9 +261,12 @@ class HudService : Service(), LocationListener {
          */
         @Volatile var featureAhead: RoadAhead.Hit? = null; private set
         @Volatile var lastLocation: Location? = null; private set
+        /**
+         * Distance along the route of the last *real* fix -- never a coasted
+         * or led-forward position -- and the elapsedRealtime() that fix was
+         * taken at, so the map can extrapolate it and knows when to coast.
+         */
         @Volatile var alongM: Double = 0.0; private set
-
-        /** Monotonic time `alongM` was computed, so the map can extrapolate it. */
         @Volatile var alongAtMs: Long = 0L; private set
 
         /**
@@ -266,6 +279,14 @@ class HudService : Service(), LocationListener {
         @Volatile var routeGeneration: Int = 0; private set
         @Volatile var cameraAlert: CameraAlert? = null; private set
         @Volatile var country: String? = null; private set
+
+        /**
+         * The country the car is in according to the route itself -- Mapbox's
+         * per-intersection `admins` -- or null off a route or when the router
+         * did not say. Known before the border and needs no signal, unlike
+         * [country], which is a reverse geocode every 25 km.
+         */
+        @Volatile var routeCountryCode: String? = null; private set
         @Volatile var cameraPolicy: CameraPolicy = CountryRules.DEFAULT; private set
         @Volatile var lanes: LaneGuidance? = null; private set
         @Volatile var destinationLabelPublic: String? = null; private set
@@ -415,6 +436,10 @@ class HudService : Service(), LocationListener {
          * rather than differentiated, updated every 100-300 ms rather than
          * once a second, exactly zero when parked, and unaffected by having no
          * sky. Prefer it wherever it is non-null.
+         *
+         * Re-evaluated on every tick, so it goes null within a tick of the
+         * data going stale (2 s) or of the bus reading a stuck zero while GPS
+         * says the car is moving -- not only when the next line arrives.
          */
         @Volatile var carSpeedMps: Double? = null; private set
 
@@ -559,7 +584,9 @@ class HudService : Service(), LocationListener {
         private fun setStatus(s: String) {
             status = s
             Log.i(TAG, s)
-            statusListener?.invoke()
+            // Called from the network threads' catch blocks too: a listener
+            // that throws there must not take the thread, and the app, down.
+            runCatching { statusListener?.invoke() }
         }
     }
 
@@ -616,7 +643,8 @@ class HudService : Service(), LocationListener {
     @Volatile private var tickGen = 0
     private val linkOpening = AtomicBoolean(false)
     private var lastLinkTryMs = 0L
-    private var routeAttempt = 0
+    /** Failed route requests in a row; a retry is already scheduled while > 0. */
+    @Volatile private var routeAttempt = 0
     private var lastFix: Location? = null
     private var lastFixAtMs = 0L
 
@@ -629,6 +657,27 @@ class HudService : Service(), LocationListener {
     private val carLink = CarLink()
     private var parkedRestoreTried = false
     private var offRouteSinceMs = 0L
+    /** Start of the current unbroken run of RerouteRule.turnedOff, 0 if none. */
+    private var turnedOffSinceMs = 0L
+
+    /**
+     * Where the car last was on the route, and what it drove since: what
+     * RouteChoice needs to turn down a reroute that loops back. Worker thread.
+     */
+    @Volatile private var departure: DoubleArray? = null
+    private val breadcrumb = Breadcrumb()
+
+    // Route prefetch state; see maybePrefetch. Worker and aux both touch it.
+    @Volatile private var prefetchRoute: Route? = null
+    @Volatile private var prefetchNext = 0
+    @Volatile private var prefetchUntil = -1
+    @Volatile private var prefetchRetryAtMs = 0L
+    @Volatile private var prefetchBackoffMs = 0L
+    private val prefetching = AtomicBoolean(false)
+
+    /** The fix `alongM` was last published for; 0 to republish. */
+    @Volatile private var alongFixAtMs = 0L
+    private var lastRouteTickMs = 0L
     private var lastRerouteMs = 0L
     private var lastCountryCheck: LatLon? = null
     private var lastCameraFetchMs = 0L
@@ -935,6 +984,7 @@ class HudService : Service(), LocationListener {
             handler.post {
                 lastCameraFetchMs = 0L
                 offRouteSinceMs = 0L
+                turnedOffSinceMs = 0L
                 lastRerouteMs = 0L
                 routeAttempt = 0
                 requestRoute(reason = "initial")
@@ -1078,6 +1128,7 @@ class HudService : Service(), LocationListener {
         roadBearing = null
         roadPts = null
         currentRoadName = null
+        routeCountryCode = null
         lastFrame = null
         fixQuality = "no fix"
         // Everything the map screen or the Setup screen can still read has to
@@ -1185,6 +1236,9 @@ class HudService : Service(), LocationListener {
         lastFix = used
         lastLocation = used
         lastFixAtMs = SystemClock.elapsedRealtime()
+        // GPS only: a cell-tower fix is hundreds of metres wide, and a track
+        // through it would put the car on roads it never drove.
+        if (f.isGps) breadcrumb.add(used.latitude, used.longitude)
 
         // Which way the car is pointing, and remembering it for next time.
         // The restore gets exactly one attempt, on the first usable fix of the
@@ -1421,7 +1475,11 @@ class HudService : Service(), LocationListener {
 
     // ---- routing -----------------------------------------------------------
 
-    private fun requestRoute(reason: String) {
+    /**
+     * @param back on a reroute, what the car just did -- so a way back to the
+     *             line it left can be turned down. Null for a first route.
+     */
+    private fun requestRoute(reason: String, back: RouteChoice.Backtrack? = null) {
         val dest = destination ?: return
         val prov = provider ?: return
         if (!rerouting.compareAndSet(false, true)) return
@@ -1433,14 +1491,16 @@ class HudService : Service(), LocationListener {
                 if (fix == null) {
                     setStatus("waiting for a GPS fix before routing")
                     rerouting.set(false)
-                    handler.postDelayed({ requestRoute(reason) }, 3000)
+                    handler.postDelayed({ requestRoute(reason, back) }, 3000)
                     return@execute
                 }
                 val from = LatLon(fix.latitude, fix.longitude)
                 // Route away from where the car is pointing, not from whichever
-                // carriageway happens to be nearest the fix.
-                val heading = if (fix.hasBearing() && fix.hasSpeed() && fix.speed > 2f)
-                    fix.bearing.toDouble() else null
+                // carriageway happens to be nearest the fix -- whenever it is
+                // moving, and the bus knows that better than a GPS speed does.
+                val moving = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f,
+                                          SystemClock.elapsedRealtime()) > 2f
+                val heading = if (fix.hasBearing() && moving) fix.bearing.toDouble() else null
                 val found = prov.routes(from, dest, alternatives = true, headingDeg = heading)
                 // Still wanted? The driver may have pressed X, or searched for
                 // somewhere else, while this was in the air.
@@ -1457,7 +1517,7 @@ class HudService : Service(), LocationListener {
                 // useless advice -- RouteChoice prefers a forward alternative
                 // when one exists within a tolerance of the fastest, and falls
                 // back to the fastest when none does.
-                adoptRoute(RouteChoice.pick(found) ?: found.first(), reason)
+                adoptRoute(RouteChoice.pick(found, back) ?: found.first(), reason)
                 fetchZones(found, gen)
             } catch (e: Exception) {
                 if (gen != routeGen) { rerouting.set(false); return@execute }
@@ -1465,13 +1525,12 @@ class HudService : Service(), LocationListener {
                 // precisely when a reroute was asked for. Giving up silently
                 // left the app navigating the old route to the old destination
                 // for the rest of the drive.
-                val wait = (ROUTE_RETRY_BASE_MS shl routeAttempt.coerceAtMost(4))
-                    .coerceAtMost(ROUTE_RETRY_MAX_MS)
+                val wait = RerouteRule.retryDelayMs(routeAttempt)
                 routeAttempt++
                 setStatus("routing failed: ${e.message}. Retrying in ${wait / 1000} s")
                 rerouting.set(false)
                 handler.postDelayed({
-                    if (running && destination != null) requestRoute(reason)
+                    if (running && destination != null) requestRoute(reason, back)
                 }, wait)
                 return@execute
             }
@@ -1524,6 +1583,9 @@ class HudService : Service(), LocationListener {
         alongM = 0.0
         routeAttempt = 0
         offRouteSinceMs = 0L
+        turnedOffSinceMs = 0L
+        departure = null
+        alongFixAtMs = 0L
         free.resetAnnouncements()
         // Force a fresh area fetch: the route's camera list is not the same as
         // the one free drive wants, which is everything around us.
@@ -1545,8 +1607,42 @@ class HudService : Service(), LocationListener {
     private fun bestSpeedMps(gpsSpeed: Float, nowMs: Long): Float =
         carLink.speedMps(nowMs)?.toFloat() ?: gpsSpeed
 
+    /**
+     * The speed to show, and to judge the limit against: the car's own,
+     * *unscaled*, when the bus is fresh and believable, else GPS.
+     *
+     * Unscaled because the HUD firmware draws the raw bus number whenever it
+     * has one. The app gauge, the voice's over-limit chime and the HUD used to
+     * show three different speeds -- scaled bus on a route, GPS in free drive,
+     * raw bus on the glass. [bestSpeedMps] stays for placing the car.
+     */
+    private fun displaySpeedMps(gpsSpeed: Float, nowMs: Long): Float =
+        carLink.rawSpeedMps(nowMs)?.toFloat() ?: gpsSpeed
+
+    /**
+     * Once a tick: age the car data even when no `$CAR` line arrives, so a
+     * silent board reads as "no car speed" rather than its last number, and
+     * catch the board's stale-frame zero while GPS says the car is moving.
+     */
+    private fun refreshCarState(nowMs: Long) {
+        val fix = lastFix
+        val gps = if (fix != null && fix.hasSpeed() && nowMs - lastFixAtMs <= FIX_STALE_MS)
+            fix.speed.toDouble() else null
+        carLink.checkPlausible(gps, nowMs)
+        carSpeedMps = carLink.speedMps(nowMs)
+        carStopped = carLink.stopped(nowMs)
+    }
+
     private fun adoptRoute(r: Route, reason: String) {
-        tracker = RouteTracker(r)
+        // Where the router has no limit, the same OSM window and legal
+        // defaults free drive uses. The window keeps being fetched on a route
+        // (step() -> maybeFetchArea), so this has data wherever free drive would.
+        tracker = RouteTracker(r).also {
+            it.limitFallback = { lat, lon, h ->
+                SpeedDefaults.limitAt(freeArea, lat, lon, h, routeCountryCode ?: country,
+                    Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
+            }
+        }
         currentRoute = r
         // 30 m in: far enough past the start vertex that a jitter in the first
         // coordinate cannot point the map the wrong way down the street.
@@ -1559,6 +1655,9 @@ class HudService : Service(), LocationListener {
         // fifteen seconds of rerouting, which is exactly when you are most
         // likely to miss the first turn.
         offRouteSinceMs = 0L
+        turnedOffSinceMs = 0L
+        departure = null
+        alongFixAtMs = 0L
         lastLanesSent = null
         // The cached "is this camera on our road" answers were computed against
         // the previous route's geometry. Keep them and a camera correctly
@@ -1642,6 +1741,8 @@ class HudService : Service(), LocationListener {
             }
         }
 
+        refreshCarState(SystemClock.elapsedRealtime())
+
         val night = isNight()
         val t = tracker
         if (t == null) { freeStep(l, night); return }
@@ -1649,26 +1750,56 @@ class HudService : Service(), LocationListener {
         val frame: HudFrame
         val bearing: Double?
 
+        val now = SystemClock.elapsedRealtime()
         val fix = lastFix
-        val age = SystemClock.elapsedRealtime() - lastFixAtMs
-        if (fix == null || age > 8000) {
+        val age = now - lastFixAtMs
+        // Real time since the last route tick, for coasting. Capped, so a
+        // stalled looper cannot throw the car a kilometre up the road.
+        val tickS = if (lastRouteTickMs == 0L) 0.0
+                    else (now - lastRouteTickMs).coerceIn(0L, 1000L) / 1000.0
+        lastRouteTickMs = now
+        if (fix == null) {
             frame = t.update(0.0, 0.0, 0f, null, hasFix = false, night = night)
+            bearing = null
+        } else if (age > 8000) {
+            // A tunnel. Keep running along the route at the car's speed -- or
+            // the last GPS speed, held -- so the HUD keeps counting down to
+            // the exit instead of freezing; the tracker gives up after
+            // RouteTracker.COAST_MAX_MS. alongM/alongAtMs deliberately stay
+            // on the last real fix: the map coasts from that on its own.
+            val v = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f, now)
+            val shown = carLink.rawSpeedMps(now)?.let { Math.round(it * 3.6).toInt() } ?: -1
+            frame = t.coast(v * tickS, shown, age, night)
             bearing = null
         } else {
             val dt = age / 1000.0
-            val v = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f,
-                                 SystemClock.elapsedRealtime())
+            val gps = if (fix.hasSpeed()) fix.speed else 0f
+            val v = bestSpeedMps(gps, SystemClock.elapsedRealtime())
             val brg = if (fix.hasBearing()) fix.bearing else null
             val lead = if (brg != null && v > 1f) {
                 Geo.destination(fix.latitude, fix.longitude, brg.toDouble(), v * dt)
             } else doubleArrayOf(fix.latitude, fix.longitude)
-            frame = t.update(lead[0], lead[1], v, brg, hasFix = true, night = night)
+            frame = t.update(lead[0], lead[1], v, brg, hasFix = true, night = night,
+                             displayMps = displaySpeedMps(gps, SystemClock.elapsedRealtime()))
             bearing = brg?.toDouble()
+            // Still on the line: this is where a wrong turn would have left it.
+            if (age <= REROUTE_FIX_MAX_AGE_MS && t.lastCrossM <= RerouteRule.TURNED_OFF_CROSS_M) {
+                departure = doubleArrayOf(t.snappedLat, t.snappedLon)
+            }
+            // Where the *real* fix sits on the route, and when it was taken --
+            // once per fix. The tracker was fed a point led forward in time,
+            // and stamping that with the tick's clock told the map it had a
+            // fresh position four times a second through a tunnel, so the
+            // map's own coasting never engaged.
+            if (lastFixAtMs != alongFixAtMs) {
+                alongM = t.alongOf(fix.latitude, fix.longitude, v, brg)
+                alongAtMs = lastFixAtMs
+                alongFixAtMs = lastFixAtMs
+            }
         }
 
         lastFrame = frame
-        alongM = t.alongM
-        alongAtMs = SystemClock.elapsedRealtime()
+        routeCountryCode = t.route.countryAt(t.alongM)
         // Null while a route is running. This used to keep whatever road free
         // drive matched before the trip started -- possibly the origin, three
         // hundred kilometres back -- and the moment anything cleared the route
@@ -1702,16 +1833,21 @@ class HudService : Service(), LocationListener {
         pushLanes(t, l, frame.speedKph)
         pushCameras(t, l, frame, bearing)
 
-        // Arrived: the trip is over, so the stored destination must go too.
-        // Left behind, a sticky restart while parked at the destination would
-        // route the driver to where the car is already standing.
+        // Arrived: the trip is over. The frame above has already gone to the
+        // HUD and to the voice, so "you have arrived" is queued; clearRoute()
+        // only resets the voice's bookkeeping, it does not stop the speech.
+        // It used to clear just the stored destination and leave the tracker
+        // running, so the car parked a few metres off the line was declared
+        // off route and rerouted straight back to where it was standing.
         if (frame.flags and HudFrame.FLAG_ARRIVED != 0) {
-            resumeLabel = null
-            Prefs.clearActiveDestination(this)
+            clearRoute()
+            setStatus("arrived · free drive")
+            return
         }
 
         maybeReroute(t)
         maybeRefreshCameras(t)
+        maybePrefetch(t, SystemClock.elapsedRealtime())
     }
 
     /**
@@ -1728,7 +1864,9 @@ class HudService : Service(), LocationListener {
         val age = now - lastFixAtMs
         val live = fix != null && age <= 8000
 
-        val v = if (live && fix!!.hasSpeed()) fix.speed else 0f
+        // The same speed the route shows and the HUD draws: the bus when it
+        // is talking sense, GPS otherwise. Free drive used GPS only.
+        val v = if (live) displaySpeedMps(if (fix!!.hasSpeed()) fix.speed else 0f, now) else 0f
         val brg = if (live && fix!!.hasBearing()) fix.bearing else null
 
         if (live) maybeFetchArea(fix!!, v.toDouble(), brg?.toDouble(), now)
@@ -1749,6 +1887,7 @@ class HudService : Service(), LocationListener {
         )
 
         lastFrame = frame
+        routeCountryCode = null
         currentRoadName = free.roadName
         crossTrackM = free.crossM
         // Free drive snaps to the road network the same way a route snaps to
@@ -1797,13 +1936,27 @@ class HudService : Service(), LocationListener {
      */
     private fun maybeFetchArea(fix: Location, speedMps: Double, heading: Double?, nowMs: Long) {
         if (areaFetching.get()) return
-        val want = AreaRoads.radiusFor(speedMps)
-        if (!AreaRoads.needsRefetch(freeArea, fix.latitude, fix.longitude, want)) return
+        val t = tracker
+        val r = currentRoute
+        val centre: DoubleArray
+        val want: Double
+        if (t != null && r != null && !t.offRoute) {
+            // On a route: the window of the route the car is in, the same
+            // centre and radius the prefetch stored -- so this is normally a
+            // disk hit, and with no signal it is the only thing that works.
+            if (AreaRoads.routeWindowStillGood(freeArea, fix.latitude, fix.longitude)) return
+            val w = AreaRoads.routeWindow(r, AreaRoads.routeWindowIndex(t.alongM))
+            centre = doubleArrayOf(w.lat, w.lon)
+            want = w.radiusM
+        } else {
+            want = AreaRoads.radiusFor(speedMps)
+            if (!AreaRoads.needsRefetch(freeArea, fix.latitude, fix.longitude, want)) return
+            centre = AreaRoads.centreFor(fix.latitude, fix.longitude, heading, want)
+        }
         // Don't hammer Overpass if it is refusing us.
         if (lastAreaFetchAtMs != 0L && nowMs - lastAreaFetchAtMs < AREA_MIN_INTERVAL_MS) return
         lastAreaFetchAtMs = nowMs
         areaFetching.set(true)
-        val centre = AreaRoads.centreFor(fix.latitude, fix.longitude, heading, want)
         aux.execute {
             try {
                 val a = AreaRoads.fetch(centre[0], centre[1], want, nowMs)
@@ -1814,14 +1967,87 @@ class HudService : Service(), LocationListener {
                 cameraOnRoute.clear()
                 cameraCount = a.cameras.size
                 camerasFetchedAtMs = System.currentTimeMillis()
-                setStatus("free drive · ${a.roads.size} roads, ${a.cameras.size} cameras " +
-                          "within ${(want / 1000).toInt()} km")
+                // On a route the status line belongs to the route.
+                if (tracker == null) {
+                    setStatus("free drive · ${a.roads.size} roads, ${a.cameras.size} cameras " +
+                              "within ${(want / 1000).toInt()} km")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "area fetch failed", e)
-                setStatus("free drive · road data unavailable (${e.message})")
+                if (tracker == null) setStatus("free drive · road data unavailable (${e.message})")
             } finally {
                 areaFetching.set(false)
             }
+        }
+    }
+
+    /**
+     * Keep the road data for the route ahead on disk, in rolling chunks.
+     *
+     * The route windows (AreaRoads.routeWindow) for roughly the next
+     * [PREFETCH_AHEAD_M] are downloaded into AreaCache, and topped up again
+     * whenever less than [PREFETCH_REFILL_M] of them is left ahead. A dead
+     * zone -- a valley, a border, a long tunnel approach -- is then already on
+     * disk when the car gets there, and the live lookup for the same window is
+     * a cache hit rather than a request.
+     *
+     * Rolling rather than all at once so a 2000 km trip holds ~100 km of
+     * Europe at a time, not the whole corridor: AreaCache's caps evict what
+     * is behind. One request at a time on `aux`, at least [PREFETCH_GAP_MS]
+     * apart and through AreaRoads' fair-use gate; windows already fresh on
+     * disk cost nothing. A failure -- offline, or Overpass saying 429/504 --
+     * stops the run and backs off, doubling to [PREFETCH_RETRY_MAX_MS]. A new
+     * route or a reroute starts over from where the car is.
+     */
+    private fun maybePrefetch(t: RouteTracker, nowMs: Long) {
+        val r = t.route
+        if (prefetchRoute !== r) {
+            prefetchRoute = r
+            prefetchNext = AreaRoads.routeWindowIndex(t.alongM)
+            prefetchUntil = -1
+            prefetchBackoffMs = 0L
+            prefetchRetryAtMs = 0L
+        }
+        if (prefetching.get() || nowMs < prefetchRetryAtMs) return
+        val todo = AreaRoads.prefetchRange(r, t.alongM, prefetchNext,
+                                           PREFETCH_AHEAD_M, PREFETCH_REFILL_M) ?: return
+        prefetchNext = todo.first
+        prefetchUntil = todo.last
+        prefetching.set(true)
+        continuePrefetch(r)
+    }
+
+    private fun continuePrefetch(r: Route) {
+        if (runCatching { aux.execute { prefetchStep(r) } }.isFailure) prefetching.set(false)
+    }
+
+    /** One request (after skipping what is already fresh), then yield `aux`. */
+    private fun prefetchStep(r: Route) {
+        var scheduled = false
+        try {
+            while (running && currentRoute === r && prefetchNext <= prefetchUntil) {
+                val w = AreaRoads.routeWindow(r, prefetchNext)
+                if (!AreaCache.covers(w.lat, w.lon, w.radiusM, AreaCache.FRESH_MS,
+                                      System.currentTimeMillis())) {
+                    AreaRoads.prefetch(w.lat, w.lon, w.radiusM)
+                    if (currentRoute === r) prefetchNext++
+                    prefetchBackoffMs = 0L
+                    scheduled = runCatching {
+                        handler.postDelayed({ continuePrefetch(r) }, PREFETCH_GAP_MS)
+                    }.getOrDefault(false)
+                    return
+                }
+                prefetchNext++
+            }
+        } catch (e: Exception) {
+            // Offline, or Overpass is busy. Not an error worth a status line:
+            // the live lookup falls back to disk on its own.
+            prefetchBackoffMs = (prefetchBackoffMs * 2)
+                .coerceIn(PREFETCH_RETRY_BASE_MS, PREFETCH_RETRY_MAX_MS)
+            prefetchRetryAtMs = SystemClock.elapsedRealtime() + prefetchBackoffMs
+            Log.i(TAG, "route prefetch paused ${prefetchBackoffMs / 1000} s: ${e.message}")
+        } finally {
+            if (!scheduled) prefetching.set(false)
         }
     }
 
@@ -1971,34 +2197,48 @@ class HudService : Service(), LocationListener {
 
     private fun maybeReroute(t: RouteTracker) {
         val now = SystemClock.elapsedRealtime()
-        // Not gated on the debounced verdict any more: the instant path in
-        // RerouteRule needs to see a fix that is off the line *now*, and
-        // returning here would have thrown that fix away 600 ms before the
-        // debounce agreed.
-        if (!t.offLine) { offRouteSinceMs = 0L; return }
-        if (t.offRoute && offRouteSinceMs == 0L) offRouteSinceMs = now
+        if (!t.offRoute) offRouteSinceMs = 0L
+        else if (offRouteSinceMs == 0L) offRouteSinceMs = now
+        // Only a fresh fix is evidence. The tick leads an older fix along its
+        // bearing for up to eight seconds, and on a bend that invented point
+        // drifts off the line and away from the road's direction on its own.
+        val fix = lastFix
+        if (fix == null || now - lastFixAtMs > REROUTE_FIX_MAX_AGE_MS) {
+            turnedOffSinceMs = 0L
+            return
+        }
         // How far the car is pointing from the way the route runs here. Only
         // once the car is genuinely moving: below walking pace a GPS bearing
         // is noise, and a noisy bearing would fire the shortcut at every stop.
-        val fix = lastFix
-        val carBrg = if (fix != null && fix.hasBearing() && fix.hasSpeed() && fix.speed > 2.5f)
+        val carBrg = if (fix.hasBearing() && fix.hasSpeed() && fix.speed > 2.5f)
             fix.bearing.toDouble() else null
         val routeBrg = t.roadBearing
         val headingOff = if (carBrg != null && routeBrg != null)
             Geo.bearingDelta(routeBrg, carBrg) else null
+        // Timed here rather than in the rule, which is stateless: the heading
+        // test has to hold for two seconds without a break.
+        if (!RerouteRule.turnedOff(t.lastCrossM, headingOff)) turnedOffSinceMs = 0L
+        else if (turnedOffSinceMs == 0L) turnedOffSinceMs = now
+        if (!t.offLine && turnedOffSinceMs == 0L) return
+        // A failed request is already retrying on its own back-off. Starting
+        // another every cooldown would hammer a dead network and say
+        // "recalculating" every six seconds with no signal; meanwhile the old
+        // route keeps guiding. The retry reroutes once the network is back.
+        if (routeAttempt > 0) return
         if (!RerouteRule.shouldReroute(
-                offRoute = true,
+                offRoute = t.offRoute,
                 crossM = t.lastCrossM,
                 offRouteSinceMs = offRouteSinceMs,
                 lastRequestMs = lastRerouteMs,
                 nowMs = now,
                 headingOffDeg = headingOff,
-                offLine = t.offLine
+                turnedOffSinceMs = turnedOffSinceMs
             )
         ) return
         lastRerouteMs = now
         voice?.announceReroute()
-        requestRoute("off route by ${t.lastCrossM.toInt()} m")
+        requestRoute("off route by ${t.lastCrossM.toInt()} m",
+            RouteChoice.Backtrack(departure, breadcrumb.snapshot()))
     }
 
     private fun isNight(): Boolean {

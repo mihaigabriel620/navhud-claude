@@ -23,7 +23,12 @@ import kotlin.math.abs
 class MapboxProvider(
     private val token: String,
     /** Mapbox localises its step names and banner text. */
-    private val language: String = "en"
+    private val language: String = "en",
+    /**
+     * The HTTP GET: the body of a 2xx, or a throw. Swappable so the failure
+     * paths -- no signal, a timeout, an error page -- can be tested.
+     */
+    private val http: (url: String) -> String = ::mapboxGet
 ) : NavProvider {
 
     override val name = "Mapbox"
@@ -48,11 +53,14 @@ class MapboxProvider(
             // and jams; both need the driving-traffic profile.
             append("&annotations=maxspeed,duration,congestion,closure")
             if (headingDeg != null) {
-                // "this way, +-60 degrees" for the start point, nothing imposed
-                // on the destination. Without it a reroute on a dual
-                // carriageway happily snaps you to the opposite side.
+                // "this way, +-45 degrees" for the start point, nothing imposed
+                // on the destination (the empty slot after the ';'). Without
+                // it a reroute on a dual carriageway happily snaps you to the
+                // opposite side. Mapbox recommends 45 or 90; 45 is the one
+                // that keeps a reroute going the way the car already is.
+                // https://docs.mapbox.com/api/navigation/directions/
                 val h = (((headingDeg % 360.0) + 360.0) % 360.0).toInt()
-                append("&bearings=").append(h).append(",60;")
+                append("&bearings=").append(h).append(",45;")
             }
             append("&language=").append(language)
             append("&access_token=").append(token)
@@ -82,10 +90,12 @@ class MapboxProvider(
             "${point.lon},${point.lat}.json?types=country&limit=1&access_token=$token"
         val features = runCatching { getJson(url).optJSONArray("features") }.getOrNull() ?: return null
         if (features.length() == 0) return null
-        val f = features.getJSONObject(0)
-        f.optJSONObject("properties")?.optString("short_code")?.takeIf { it.isNotBlank() }
-            ?.let { return it.uppercase().take(2) }
-        return f.optString("text").takeIf { it.isNotBlank() }
+        val f = features.optJSONObject(0) ?: return null
+        // The ISO code or nothing. This used to fall back to the feature's
+        // `text` -- the country's *name*, "Belgique" -- which every caller
+        // then compared against "BE" and treated as a country with no rules.
+        return f.optJSONObject("properties")?.optString("short_code")
+            ?.trim()?.uppercase()?.take(2)?.takeIf { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
     }
 
 
@@ -185,6 +195,61 @@ class MapboxProvider(
                 ?: leg.optJSONObject("annotation")?.optJSONArray("duration")?.length()
                 ?: 0
             vertexBase += n
+        }
+
+        // ---- which country each segment is in -------------------------------
+        // Each leg lists the countries it passes through in `admins`; each
+        // intersection says which of them it is in (`admin_index`) and where
+        // it sits in the leg's geometry (`geometry_index`, relative to the
+        // leg). No extra request parameter: it comes with steps=true.
+        // https://docs.mapbox.com/api/navigation/directions/
+        // What the border crossing needs is on the route before the car gets
+        // there, so the camera and speed rules switch on time with no signal.
+        val countryCodes = ArrayList<String>()
+        val countryIdx = ByteArray(nSeg) { -1 }
+        var legBase = 0
+        for (li in 0 until legs.length()) {
+            val leg = legs.getJSONObject(li)
+            val legSegs = leg.optJSONObject("annotation")?.optJSONArray("congestion")?.length()
+                ?: leg.optJSONObject("annotation")?.optJSONArray("duration")?.length()
+                ?: (nSeg - legBase)
+            val admins = leg.optJSONArray("admins")
+            val legCode = IntArray(admins?.length() ?: 0) { k ->
+                val cc = admins?.optJSONObject(k)?.optString("iso_3166_1")?.trim()?.uppercase()
+                if (cc == null || cc.length != 2 || countryCodes.size >= Byte.MAX_VALUE) -1
+                else countryCodes.indexOf(cc).takeIf { it >= 0 } ?: run {
+                    countryCodes.add(cc); countryCodes.size - 1
+                }
+            }
+            // (vertex in the whole route, country index), in route order.
+            val marks = ArrayList<Pair<Int, Int>>()
+            val steps = leg.optJSONArray("steps") ?: JSONArray()
+            for (si in 0 until steps.length()) {
+                val ints = steps.optJSONObject(si)?.optJSONArray("intersections") ?: continue
+                for (ii in 0 until ints.length()) {
+                    val x = ints.optJSONObject(ii) ?: continue
+                    val gi = x.optInt("geometry_index", -1)
+                    val ai = x.optInt("admin_index", -1)
+                    val code = legCode.getOrNull(ai) ?: -1
+                    if (gi >= 0 && code >= 0) marks.add(legBase + gi to code)
+                }
+            }
+            marks.sortBy { it.first }
+            val legEnd = minOf(nSeg, legBase + legSegs)
+            if (marks.isEmpty()) {
+                // No intersections to say where: a one-country leg is still known.
+                val only = legCode.filter { it >= 0 }.distinct().singleOrNull()
+                if (only != null) for (s in legBase until legEnd) countryIdx[s] = only.toByte()
+            } else {
+                for ((m, mark) in marks.withIndex()) {
+                    val from = if (m == 0) legBase else mark.first
+                    val to = if (m + 1 < marks.size) marks[m + 1].first else legEnd
+                    for (s in maxOf(legBase, from) until minOf(legEnd, to)) {
+                        countryIdx[s] = mark.second.toByte()
+                    }
+                }
+            }
+            legBase += legSegs
         }
 
         // ---- maneuvers, pinned to a distance along the polyline -------------
@@ -306,7 +371,9 @@ class MapboxProvider(
             durationTypicalS = r.optDouble("duration_typical", r.optDouble("duration", 0.0)),
             congestion = congestion,
             closed = closed,
-            traits = traits
+            traits = traits,
+            countryCodes = countryCodes,
+            countryIdx = countryIdx
         )
     }
 
@@ -367,26 +434,42 @@ class MapboxProvider(
         return best
     }
 
+    /**
+     * Every failure comes out as a [NavException] -- no signal, a timeout, an
+     * error page, a body that is not JSON -- so the callers' one catch is
+     * enough and nothing escapes a network path.
+     */
     private fun getJson(url: String): JSONObject {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 8000
-        conn.readTimeout = 12000
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("User-Agent", com.mihai.navhud.Net.USER_AGENT)
-        try {
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream?.bufferedReader()?.use(BufferedReader::readText) ?: ""
-            if (code !in 200..299) {
-                throw NavException("HTTP $code from ${URL(url).host}: ${body.take(200)}")
-            }
-            return JSONObject(body)
+        val body = try {
+            http(url)
         } catch (e: NavException) {
             throw e
         } catch (e: Exception) {
             throw NavException("Network error: ${e.message}", e)
-        } finally {
-            conn.disconnect()
         }
+        return try {
+            JSONObject(body)
+        } catch (e: Exception) {
+            throw NavException("Unreadable answer from Mapbox: ${body.take(80)}", e)
+        }
+    }
+}
+
+private fun mapboxGet(url: String): String {
+    val conn = URL(url).openConnection() as HttpURLConnection
+    conn.connectTimeout = 8000
+    conn.readTimeout = 12000
+    conn.requestMethod = "GET"
+    conn.setRequestProperty("User-Agent", com.mihai.navhud.Net.USER_AGENT)
+    try {
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        val body = stream?.bufferedReader()?.use(BufferedReader::readText) ?: ""
+        if (code !in 200..299) {
+            throw NavException("HTTP $code from ${URL(url).host}: ${body.take(200)}")
+        }
+        return body
+    } finally {
+        conn.disconnect()
     }
 }

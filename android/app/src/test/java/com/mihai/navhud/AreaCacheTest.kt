@@ -1,12 +1,16 @@
 package com.mihai.navhud
 
 import com.mihai.navhud.nav.AreaCache
+import com.mihai.navhud.nav.AreaRoads
+import com.mihai.navhud.nav.ManeuverPoint
+import com.mihai.navhud.nav.Route
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -40,13 +44,20 @@ class AreaCacheTest {
 
     private val BODY = """{"elements":[{"type":"way","id":1}]}"""
 
+    private val realTransport = AreaRoads.transport
+    private val realFairUse = AreaRoads.fairUse
+
     @Before fun setUp() {
         AreaCache.dir = tmp.newFolder("area")
+        AreaRoads.fairUse = AreaRoads.FairUse(minGapMs = 0L)
     }
 
     /** The cache is global state; leaving it set would poison every later test. */
     @After fun tearDown() {
         AreaCache.dir = null
+        AreaCache.maxBytes = AreaCache.MAX_BYTES
+        AreaRoads.transport = realTransport
+        AreaRoads.fairUse = realFairUse
     }
 
     private fun now() = System.currentTimeMillis()
@@ -59,25 +70,36 @@ class AreaCacheTest {
 
     private fun onlyFile(): File = AreaCache.dir!!.listFiles()!!.single()
 
+    private fun body(lat: Double, lon: Double, r: Double, maxAge: Long = AreaCache.FRESH_MS) =
+        AreaCache.get(lat, lon, r, maxAge, now())?.body
+
     // ---- the basic round trip ------------------------------------------------
 
     @Test fun `what went in comes back out`() {
         AreaCache.put(LAT, LON, RADIUS_M, BODY)
         assertEquals(1, AreaCache.fileCount())
-        assertEquals(BODY, AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+        assertEquals(BODY, body(LAT, LON, RADIUS_M))
         assertTrue("the body is on disk, not in memory", AreaCache.sizeBytes() > 0L)
     }
 
     @Test fun `a window never fetched is simply absent`() {
-        assertNull(AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+        assertNull(body(LAT, LON, RADIUS_M))
     }
 
     @Test fun `with no directory set the cache is a no-op, not a crash`() {
         AreaCache.dir = null
         AreaCache.put(LAT, LON, RADIUS_M, BODY)          // must not throw
-        assertNull(AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+        assertNull(body(LAT, LON, RADIUS_M))
+        assertNull(AreaCache.nearest(LAT, LON, Long.MAX_VALUE, now()))
         assertEquals(0, AreaCache.fileCount())
         assertEquals(0L, AreaCache.sizeBytes())
+    }
+
+    @Test fun `fetching the same window again replaces it`() {
+        AreaCache.put(LAT, LON, RADIUS_M, "old")
+        AreaCache.put(LAT + 0.001, LON, RADIUS_M, BODY)   // same cell, same bucket
+        assertEquals(1, AreaCache.fileCount())
+        assertEquals(BODY, body(LAT + 0.001, LON, RADIUS_M))
     }
 
     // ---- freshness -----------------------------------------------------------
@@ -86,12 +108,10 @@ class AreaCacheTest {
         AreaCache.put(LAT, LON, RADIUS_M, BODY)
 
         age(onlyFile(), AreaCache.FRESH_MS - 60_000L)
-        assertNotNull("just inside the window",
-            AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+        assertNotNull("just inside the window", body(LAT, LON, RADIUS_M))
 
         age(onlyFile(), AreaCache.FRESH_MS + 60_000L)
-        assertNull("just outside it",
-            AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+        assertNull("just outside it", body(LAT, LON, RADIUS_M))
     }
 
     /**
@@ -104,61 +124,65 @@ class AreaCacheTest {
         AreaCache.put(LAT, LON, RADIUS_M, BODY)
         age(onlyFile(), 30L * 24 * 3600 * 1000)          // a month
 
-        assertNull(AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
-        assertEquals(BODY, AreaCache.get(LAT, LON, RADIUS_M, Long.MAX_VALUE, now()))
+        assertNull(body(LAT, LON, RADIUS_M))
+        assertEquals(BODY, body(LAT, LON, RADIUS_M, Long.MAX_VALUE))
     }
 
-    // ---- the nearest-cell fallback -------------------------------------------
+    // ---- what counts as covered ------------------------------------------------
 
     /**
-     * Keying on the exact query centre would almost never hit: the centre is
-     * derived from the car's position and heading and is different on every
-     * fetch. The grid is what makes a hit possible at all, and this is what
-     * saves the drive that happens to run along a cell boundary.
+     * The labelling bug. A neighbouring cell's window used to be handed back
+     * for any request within 1.5 km, and the caller labelled it with the
+     * centre it had asked for -- so a window centred up to 1.5 km away was
+     * believed to be centred on the car. Now only a window that contains the
+     * whole circle asked for is a hit, and it says where it really is.
      */
-    @Test fun `a neighbouring cell answers for a window just off the grid`() {
+    @Test fun `a neighbour that does not cover the request is not a hit`() {
         AreaCache.put(LAT, LON, RADIUS_M, BODY)
-
-        // 4.306 rounds to cell 431, not 430 -- so the exact key misses. The
-        // stored cell centre is 422 m away, well inside NEAR_M.
-        assertEquals(BODY, AreaCache.get(LAT, 4.306, RADIUS_M, AreaCache.FRESH_MS, now()))
+        // 422 m east: a 2 km circle there sticks out of the cached one.
+        assertNull(body(LAT, 4.306, RADIUS_M))
+        // ...but a small request well inside it is covered.
+        val h = AreaCache.get(LAT, 4.306, 1200.0, AreaCache.FRESH_MS, now())!!
+        assertEquals(BODY, h.body)
+        assertEquals("labelled with its own centre", LON, h.lon, 1e-5)
+        assertEquals(LAT, h.lat, 1e-5)
+        assertEquals(RADIUS_M, h.radiusM, 1.0)
     }
 
-    @Test fun `a cell too far away is not borrowed from`() {
-        AreaCache.put(LAT, LON, RADIUS_M, BODY)
-
-        // 4.33 is 2.1 km from the stored cell centre. A 2 km window centred
-        // there does not contain the road under the car, so answering with it
-        // would be worse than answering with nothing.
-        assertNull(AreaCache.get(LAT, 4.33, RADIUS_M, AreaCache.FRESH_MS, now()))
+    @Test fun `any radius bucket that covers the request will do`() {
+        AreaCache.put(LAT, LON, 3000.0, BODY)
+        assertEquals(BODY, body(LAT, 4.31, 1500.0))       // 700 m off, 1.5 km circle
+        // A 2 km circle is not an answer to a question about a 6 km one.
+        AreaCache.put(50.95, 4.40, RADIUS_M, BODY)
+        assertNull(body(50.95, 4.40, 6000.0))
+        // And one more than twice the size is not used for a small request:
+        // AreaRoads.needsRefetch would ask again straight away.
+        AreaCache.put(51.2, 4.4, 6000.0, BODY)
+        assertNull(body(51.2, 4.4, 1200.0))
+        assertTrue(AreaCache.covers(LAT, 4.31, 1500.0, AreaCache.FRESH_MS, now()))
     }
 
-    @Test fun `a stale neighbour is skipped as surely as a stale exact hit`() {
-        AreaCache.put(LAT, LON, RADIUS_M, BODY)
-        age(onlyFile(), AreaCache.FRESH_MS + 60_000L)
-
-        assertNull(AreaCache.get(LAT, 4.306, RADIUS_M, AreaCache.FRESH_MS, now()))
-        assertEquals("...but the no-limit fallback still finds it", BODY,
-            AreaCache.get(LAT, 4.306, RADIUS_M, Long.MAX_VALUE, now()))
+    @Test fun `offline, any window the point is inside answers, labelled truthfully`() {
+        AreaCache.put(LAT, LON, RADIUS_M, "near")
+        AreaCache.put(50.859, LON, RADIUS_M, "far")      // ~1 km north
+        val h = AreaCache.nearest(LAT, 4.306, Long.MAX_VALUE, now())!!
+        assertEquals("the one with the most room around the point", "near", h.body)
+        assertEquals(LON, h.lon, 1e-5)
+        // 2.1 km away is outside both: nothing, rather than the wrong roads.
+        assertNull(AreaCache.nearest(LAT, 4.33, Long.MAX_VALUE, now()))
     }
 
-    @Test fun `a window fetched at another radius is not reused`() {
-        AreaCache.put(LAT, LON, RADIUS_M, BODY)
-
-        // A 2 km circle is not an answer to a question about a 6 km one: at
-        // 100 km/h the lookahead runs off the edge of what was cached.
-        assertNull(AreaCache.get(LAT, LON, 6000.0, AreaCache.FRESH_MS, now()))
-        assertNull(AreaCache.get(LAT, 4.306, 6000.0, AreaCache.FRESH_MS, now()))
+    @Test fun `an old-style file is still read, and trusted less`() {
+        val d = AreaCache.dir!!
+        File(d, "a_5085_430_2.json").writeText(BODY)     // cell (50.85, 4.30), 2 km
+        // Its true centre could be ~700 m out, so it only answers close in.
+        assertNull(body(LAT, LON, 1200.0))
+        val h = AreaCache.nearest(LAT, LON, Long.MAX_VALUE, now())!!
+        assertEquals(BODY, h.body)
+        assertTrue(h.radiusM < RADIUS_M)
     }
 
-    @Test fun `the nearest of several neighbours is the one read`() {
-        AreaCache.put(LAT, LON, RADIUS_M, "near")        // cell centre, 0 m away
-        AreaCache.put(50.859, LON, RADIUS_M, "far")      // next cell north, ~1 km
-
-        assertEquals("near", AreaCache.get(LAT, 4.306, RADIUS_M, AreaCache.FRESH_MS, now()))
-    }
-
-    // ---- the cap -------------------------------------------------------------
+    // ---- the caps ------------------------------------------------------------
 
     /**
      * Left uncapped this grows without bound: every new town adds cells and
@@ -191,7 +215,7 @@ class AreaCacheTest {
         assertTrue("and so does the newest of the batch",
             File(d, "a_${AreaCache.MAX_FILES + overflow}_0_2.json").exists())
         assertEquals("the write that triggered the prune is still readable", BODY,
-            AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+            body(LAT, LON, RADIUS_M))
     }
 
     @Test fun `under the cap nothing is evicted`() {
@@ -203,6 +227,19 @@ class AreaCacheTest {
         assertTrue(File(d, "a_1_0_2.json").exists())
     }
 
+    @Test fun `a long trip cannot fill the disk`() {
+        // Three windows bigger than a third of the byte cap each: the oldest goes.
+        AreaCache.maxBytes = 250L
+        val big = "x".repeat(100)
+        AreaCache.put(50.0, 4.0, RADIUS_M, big)
+        age(AreaCache.dir!!.listFiles()!!.single(), 3_000L)
+        AreaCache.put(51.0, 4.0, RADIUS_M, big)
+        AreaCache.put(52.0, 4.0, RADIUS_M, big)
+        assertEquals(2, AreaCache.fileCount())
+        assertTrue(AreaCache.sizeBytes() <= 250L)
+        assertNull("the oldest went", body(50.0, 4.0, RADIUS_M))
+    }
+
     @Test fun `clear empties the lot`() {
         AreaCache.put(LAT, LON, RADIUS_M, BODY)
         AreaCache.put(50.9, 4.4, RADIUS_M, BODY)
@@ -212,7 +249,7 @@ class AreaCacheTest {
 
         assertEquals(0, AreaCache.fileCount())
         assertEquals(0L, AreaCache.sizeBytes())
-        assertNull(AreaCache.get(LAT, LON, RADIUS_M, AreaCache.FRESH_MS, now()))
+        assertNull(body(LAT, LON, RADIUS_M))
     }
 
     // ---- the published numbers ------------------------------------------------
@@ -220,7 +257,110 @@ class AreaCacheTest {
     @Test fun `the grid and the window are the shipped ones`() {
         assertEquals(0.01, AreaCache.CELL_DEG, 0.0)
         assertEquals(7L * 24 * 3600 * 1000, AreaCache.FRESH_MS)
-        assertEquals(1500.0, AreaCache.NEAR_M, 0.0)
         assertEquals(400, AreaCache.MAX_FILES)
+        assertEquals(120L * 1024 * 1024, AreaCache.MAX_BYTES)
+    }
+
+    // ---- fetching with no network ----------------------------------------------
+
+    @Test fun `with no network the live lookup falls back to the disk, labelled truthfully`() {
+        AreaCache.put(LAT, LON, RADIUS_M, BODY)
+        age(onlyFile(), 30L * 24 * 3600 * 1000)          // stale: not a normal hit
+        var calls = 0
+        AreaRoads.transport = { _, _ -> calls++; throw java.net.UnknownHostException("offline") }
+        val a = AreaRoads.fetch(LAT, 4.306, RADIUS_M, 0L)
+        assertEquals(1, calls)
+        assertTrue(a.fromCache)
+        assertEquals("the window's own centre, not the one asked for", LON, a.centreLon, 1e-5)
+    }
+
+    @Test fun `with no network and nothing on disk the failure reaches the caller`() {
+        AreaRoads.transport = { _, _ -> throw java.net.SocketTimeoutException("no signal") }
+        try {
+            AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+            fail("nothing to fall back on")
+        } catch (e: java.io.IOException) {
+            // The service catches it and keeps what it has.
+        }
+    }
+
+    @Test fun `a fresh answer is cached and a remark instead of data is not`() {
+        AreaRoads.transport = { _, _ -> BODY }
+        AreaRoads.prefetch(LAT, LON, RADIUS_M)
+        assertEquals(BODY, body(LAT, LON, RADIUS_M))
+
+        AreaRoads.transport = { _, _ -> """{"remark":"runtime error: timeout"}""" }
+        try { AreaRoads.prefetch(50.0, 4.0, RADIUS_M); fail() } catch (e: java.io.IOException) { }
+        assertNull(body(50.0, 4.0, RADIUS_M))
+    }
+
+    @Test fun `a 429 makes every request back off, doubling, until one succeeds`() {
+        val g = AreaRoads.FairUse(minGapMs = 3_000L, baseBackoffMs = 30_000L, maxBackoffMs = 120_000L)
+        assertEquals(0L, g.waitMs(0L))
+        g.sent(0L)
+        assertEquals("the fair-use gap", 3_000L, g.waitMs(0L))
+        g.answered(429, 1_000L)
+        assertEquals(-1L, g.waitMs(20_000L))
+        assertEquals(0L, g.waitMs(31_000L))
+        g.answered(504, 31_000L)
+        assertEquals("doubled", -1L, g.waitMs(31_000L + 59_000L))
+        g.answered(429, 100_000L); g.answered(429, 100_000L)
+        assertEquals("capped", 0L, g.waitMs(100_000L + 120_000L))
+        g.answered(200, 300_000L)
+        g.answered(429, 300_000L)
+        assertEquals("reset by a success", 0L, g.waitMs(330_000L))
+    }
+
+    @Test fun `while backing off nothing is sent and the disk answers`() {
+        AreaCache.put(LAT, LON, RADIUS_M, BODY)
+        age(onlyFile(), 30L * 24 * 3600 * 1000)
+        var calls = 0
+        AreaRoads.fairUse = AreaRoads.FairUse(minGapMs = 0L)
+        AreaRoads.transport = { _, _ -> calls++; throw AreaRoads.HttpStatus(429, "slow down") }
+        AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        assertEquals("the second never went out", 1, calls)
+        try { AreaRoads.prefetch(50.0, 4.0, RADIUS_M); fail() }
+        catch (e: AreaRoads.OverpassBusy) { }
+        assertEquals(1, calls)
+    }
+
+    // ---- rolling along a route ------------------------------------------------
+
+    private fun straightRoute(km: Int): Route {
+        val pts = Array(km + 1) { Geo.destination(47.0, 10.0, 90.0, it * 1000.0) }
+        val cum = Geo.cumulative(pts)
+        return Route(pts, cum, IntArray(km), listOf(ManeuverPoint(0.0, Man.DEPART, 0, "")),
+                     cum.last(), km * 36.0, "test")
+    }
+
+    @Test fun `the prefetch works in chunks, about 100 km ahead, topped up below 50`() {
+        val r = straightRoute(2000)                     // Brussels to Bucharest, roughly
+        val first = AreaRoads.prefetchRange(r, 0.0, 0, 100_000.0, 50_000.0)!!
+        assertEquals(0, first.first)
+        assertEquals(50, first.last)                    // 100 km of 2 km windows
+        // 30 km on, 70 km are still ahead: nothing to do.
+        assertNull(AreaRoads.prefetchRange(r, 30_000.0, first.last + 1, 100_000.0, 50_000.0))
+        // 54 km on, under 50 km ahead: top up to 154 km.
+        val next = AreaRoads.prefetchRange(r, 54_000.0, first.last + 1, 100_000.0, 50_000.0)!!
+        assertEquals(51, next.first)
+        assertEquals(77, next.last)
+        // Near the end it stops at the last window.
+        val end = AreaRoads.prefetchRange(r, 1_990_000.0, 900, 100_000.0, 50_000.0)!!
+        assertEquals(AreaRoads.routeWindowCount(r) - 1, end.last)
+    }
+
+    @Test fun `the live window on a route is the prefetched one, so it is a disk hit`() {
+        val r = straightRoute(20)
+        val w = AreaRoads.routeWindow(r, AreaRoads.routeWindowIndex(5_100.0))
+        AreaCache.put(w.lat, w.lon, w.radiusM, BODY)
+        AreaRoads.transport = { _, _ -> fail("must not go to the network"); "" }
+        val a = AreaRoads.fetch(w.lat, w.lon, w.radiusM, 0L)
+        assertTrue(a.fromCache)
+        // Kept until the car is well past its centre, then the next one.
+        val p = Geo.pointAlong(r.pts, r.cum, 6_000.0)
+        assertTrue(AreaRoads.routeWindowStillGood(a, p[0], p[1]))
+        val q = Geo.pointAlong(r.pts, r.cum, 7_300.0)
+        assertFalse(AreaRoads.routeWindowStillGood(a, q[0], q[1]))
     }
 }

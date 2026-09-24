@@ -12,8 +12,15 @@ import kotlin.math.roundToInt
 class RouteTracker(val route: Route) {
 
     companion object {
-        /** Perpendicular distance that counts as having left the route. */
-        const val OFF_ROUTE_M = 45.0
+        /**
+         * Perpendicular distance that counts as having left the route.
+         *
+         * 30, not the 45 it was: a side street is often only 30-40 m from the
+         * line when you realise you missed the turn, and every metre here is
+         * a second of waiting at town speed. The tracker stays within 8 m of
+         * its own route on the demo drive, so there is still plenty of margin.
+         */
+        const val OFF_ROUTE_M = 30.0
 
         /**
          * How long the car has to be off the line before we believe it, ms.
@@ -28,8 +35,8 @@ class RouteTracker(val route: Route) {
          * which matters because this is driven from the 4 Hz tick rather than
          * from the GPS callback, so a fix-count streak was really a tick-count
          * streak and told you nothing about elapsed time either. The direction
-         * test in RerouteRule is what actually makes a wrong turn instant;
-         * this is only the debounce for the cases where direction cannot tell.
+         * test in RerouteRule is what actually makes a wrong turn fast; this
+         * is only the debounce for the cases where direction cannot tell.
          */
         const val OFF_ROUTE_MS = 600L
 
@@ -45,21 +52,38 @@ class RouteTracker(val route: Route) {
         const val ARRIVED_M = 25.0
 
         /**
+         * Parked beside the pin counts as arrived too. A route's last metres
+         * often run round the block or along the far side of a car park, so
+         * the remaining distance can sit above [ARRIVED_M] with the car
+         * already standing next to the destination -- and the route never
+         * ended. Capped by [ARRIVED_NEAR_REMAINING_M] so a route that passes
+         * the pin once before coming back to it is not cut short.
+         */
+        const val ARRIVED_NEAR_M = 30.0
+        const val ARRIVED_NEAR_REMAINING_M = 60.0
+
+        /**
          * Close enough to the line that drawing the car *on* the road is the
          * honest thing to do. Beyond this the fix is telling us something the
          * route does not know about -- a slip road, a car park, a wrong turn --
          * and pinning the marker to the route would be a lie.
          */
         const val SNAP_TRUST_M = 25.0
+
+        /**
+         * How long [coast] keeps the car running along the route with no fix.
+         * Three minutes covers the long Belgian tunnels (Leopold II, Kennedy)
+         * and the Alpine ones on the way east at motorway speed, while a car
+         * that has genuinely left the route in the dark is not pinned to it
+         * for ever. The map's COAST_ON_ROUTE_MS is the same figure.
+         */
+        const val COAST_MAX_MS = 180_000L
     }
 
     private var lastSegIdx = 0
     /**
-     * Off the line on *this* fix, with no debounce at all.
-     *
-     * RerouteRule pairs it with the direction test: off the line and pointing
-     * sixty degrees away from where the route runs means the turn has already
-     * happened, and there is nothing to wait for.
+     * Off the line on *this* fix, with no debounce at all. The service uses
+     * it as the cheap "is there anything to decide" test before RerouteRule.
      */
     var offLine = false
         private set
@@ -79,7 +103,50 @@ class RouteTracker(val route: Route) {
     private var heldLimit = 0
     private var heldLimitAlong = -1e9
 
-    /** Metres travelled along the route at the last fix. */
+    /**
+     * Where to ask when the router has no limit for the segment: the OSM road
+     * under the car, or its legal default (SpeedDefaults.limitAt). Returns 0
+     * for "nothing", -1 for derestricted. Injected so the tracker stays pure.
+     *
+     * Mapbox's `maxspeed` is missing on a good share of minor roads, and the
+     * route used to show a blank sign there -- or, worse, the previous road's
+     * limit held on through the turn.
+     */
+    var limitFallback: ((lat: Double, lon: Double, headingDeg: Double?) -> Int)? = null
+
+    /** The limit from the last [limitAt] was held or came from the fallback. */
+    private var limitLowConf = false
+
+    /**
+     * The router's limit for this segment; else the fallback; else the last
+     * known one held over a short gap in the data, but never past a maneuver
+     * -- a turn is exactly where the road, and so the limit, changes.
+     */
+    private fun limitAt(seg: Int, along: Double, lat: Double, lon: Double, heading: Double?): Int {
+        val raw = if (seg < route.limitKph.size) route.limitKph[seg] else 0
+        limitLowConf = false
+        if (raw != 0) {
+            heldLimit = raw
+            heldLimitAlong = along
+            return raw
+        }
+        // A limit from a second source, matched by position: flagged, and not
+        // held, because it is only as good as the match it came from.
+        val fb = limitFallback?.invoke(lat, lon, heading) ?: 0
+        if (fb != 0) {
+            limitLowConf = true
+            return fb
+        }
+        val turned = route.maneuvers.any { it.alongM > heldLimitAlong && it.alongM <= along }
+        if (heldLimit != 0 && !turned && along - heldLimitAlong < LIMIT_HOLD_M) {
+            limitLowConf = true         // brief gap in the data, keep showing it
+            return heldLimit
+        }
+        heldLimit = 0
+        return 0
+    }
+
+    /** Metres along the route at the last fix, or where [coast] has taken it. */
     var alongM = 0.0
         private set
 
@@ -119,6 +186,14 @@ class RouteTracker(val route: Route) {
         private set
 
     /**
+     * The maneuver after [nextManeuver], or null when that is the last one.
+     * Its [ManeuverPoint.alongM] minus the next one's is the gap between the
+     * two -- what "then turn left" needs to decide whether to be said at all.
+     */
+    var thenManeuver: ManeuverPoint? = null
+        private set
+
+    /**
      * The road you are on right now, as opposed to the one you are turning
      * onto. It is the name attached to the last maneuver you passed, because
      * that maneuver is what put you on this road.
@@ -134,7 +209,12 @@ class RouteTracker(val route: Route) {
         hasFix: Boolean,
         night: Boolean = false,
         /** Monotonic clock. Supplied so the debounce is testable. */
-        nowMs: Long = android.os.SystemClock.elapsedRealtime()
+        nowMs: Long = android.os.SystemClock.elapsedRealtime(),
+        /**
+         * The speed to *show*, when it differs from the one used to place the
+         * car: the HUD draws the raw bus speed, positioning wants the scaled one.
+         */
+        displayMps: Float = speedMps
     ): HudFrame {
 
         if (!hasFix) {
@@ -186,51 +266,99 @@ class RouteTracker(val route: Route) {
         offRoute = offLine && offLineSeen && nowMs - offLineSinceMs >= OFF_ROUTE_MS
 
         // ---- where to draw the car -----------------------------------------
-        val sp = Geo.pointAlong(route.pts, route.cum, snap.along)
-        snappedLat = sp[0]
-        snappedLon = sp[1]
-        roadBearing = Geo.bearingAlong(route.pts, route.cum, snap.along)
+        placeAt(snap.along)
         snapTrusted = snap.cross <= SNAP_TRUST_M && !offRoute
 
-        // ---- speed limit, with hold-over across unmapped stretches ----------
-        val raw = if (snap.segIndex < route.limitKph.size) route.limitKph[snap.segIndex] else 0
-        var limit: Int
-        var lowConf = false
-        if (raw != 0) {
-            limit = raw
-            heldLimit = raw
-            heldLimitAlong = snap.along
-        } else if (heldLimit != 0 && snap.along - heldLimitAlong < LIMIT_HOLD_M) {
-            limit = heldLimit          // brief gap in the data, keep showing it
-            lowConf = true
-        } else {
-            limit = 0
-            heldLimit = 0
-        }
-        if (offRoute) { lowConf = true }
+        // ---- speed limit ----------------------------------------------------
+        val limit = limitAt(snap.segIndex, snap.along, lat, lon, heading)
+        val lowConf = limitLowConf || offRoute
 
-        // ---- next maneuver --------------------------------------------------
-        val next: ManeuverPoint? = route.maneuvers.firstOrNull {
-            it.alongM > snap.along + MANEUVER_PASSED_M
+        val nearPin = route.destination.let {
+            Geo.haversine(lat, lon, it.lat, it.lon) < ARRIVED_NEAR_M
         }
+        return frameAt(snap.along, (displayMps * 3.6f).roundToInt(), limit, lowConf,
+                       gpsOk = true, night = night, nearPin = nearPin)
+    }
+
+    /**
+     * No fix: carry on along the route instead of giving up on it.
+     *
+     * A tunnel, a covered junction, an underground stretch of ring road: the
+     * route is still the best information there is about where the car went,
+     * and the car's own speed (or the last GPS one) says how far. So the
+     * position runs on along the line, the countdown to the next maneuver
+     * keeps falling, and the snap stays trusted -- for [COAST_MAX_MS]. After
+     * that, or when the car was not on the route when the fix went, this is
+     * exactly the no-fix frame [update] gives.
+     *
+     * @param advanceM   metres travelled since the last call
+     * @param displayKph speed to show, or -1 when only GPS knew it
+     * @param sinceFixMs how long since the last real fix
+     */
+    fun coast(advanceM: Double, displayKph: Int, sinceFixMs: Long, night: Boolean = false): HudFrame {
+        if (sinceFixMs > COAST_MAX_MS || !snapTrusted || offRoute) {
+            return update(0.0, 0.0, 0f, null, hasFix = false, night = night)
+        }
+        // As on losing the fix: an off-line run does not survive the outage.
+        offLineSeen = false
+        offLine = false
+        lastCrossM = 0.0
+        val along = minOf(route.totalDistanceM, alongM + max(0.0, advanceM))
+        while (lastSegIdx < route.cum.size - 2 && route.cum[lastSegIdx + 1] <= along) lastSegIdx++
+        alongM = along
+        placeAt(along)
+        val limit = limitAt(lastSegIdx, along, snappedLat, snappedLon, roadBearing)
+        // Not GPS_OK: the HUD says NO GPS, and the distances are an estimate.
+        return frameAt(along, displayKph, limit, lowConf = true, gpsOk = false,
+                       night = night, nearPin = false)
+    }
+
+    /**
+     * Where along the route a fix projects, without moving the tracker. The
+     * service publishes this for the *real* fix while the tracker itself is
+     * fed a position led forward in time.
+     */
+    fun alongOf(lat: Double, lon: Double, speedMps: Float, bearingDeg: Float?): Double =
+        Geo.project(
+            route.pts, route.cum, lat, lon,
+            fromIdx = lastSegIdx,
+            windowMeters = max(400.0, speedMps * 20.0),
+            headingDeg = if (speedMps > 2.0f) bearingDeg?.toDouble() else null
+        ).along
+
+    private fun placeAt(along: Double) {
+        val sp = Geo.pointAlong(route.pts, route.cum, along)
+        snappedLat = sp[0]
+        snappedLon = sp[1]
+        roadBearing = Geo.bearingAlong(route.pts, route.cum, along)
+    }
+
+    private fun frameAt(
+        along: Double, speedKph: Int, limit: Int, lowConf: Boolean,
+        gpsOk: Boolean, night: Boolean, nearPin: Boolean
+    ): HudFrame {
+        // ---- next maneuver --------------------------------------------------
+        val nextIdx = route.maneuvers.indexOfFirst { it.alongM > along + MANEUVER_PASSED_M }
+        val next: ManeuverPoint? = route.maneuvers.getOrNull(nextIdx)
         nextManeuver = next
+        thenManeuver = if (nextIdx >= 0) route.maneuvers.getOrNull(nextIdx + 1) else null
         currentRoadName = route.maneuvers
-            .lastOrNull { it.alongM <= snap.along + MANEUVER_PASSED_M }
+            .lastOrNull { it.alongM <= along + MANEUVER_PASSED_M }
             ?.name?.takeIf { it.isNotBlank() }
 
-        val remaining = max(0.0, route.totalDistanceM - snap.along)
-        val arrived = remaining < ARRIVED_M
+        val remaining = max(0.0, route.totalDistanceM - along)
+        val arrived = remaining < ARRIVED_M || (remaining < ARRIVED_NEAR_REMAINING_M && nearPin)
 
         val etaS = if (route.totalDistanceM > 1.0) {
             (route.totalDurationS * (remaining / route.totalDistanceM)).roundToInt()
         } else 0
 
-        val speedKph = (speedMps * 3.6f).roundToInt()
         val over = limit > 0 && speedKph > limit + OVER_LIMIT_TOLERANCE_KPH
 
         // This tracker exists only because there is a route, so the bit is
         // unconditional here. It is what tells the HUD it may draw a maneuver.
-        var flags = HudFrame.FLAG_GPS_OK or HudFrame.FLAG_ROUTE
+        var flags = HudFrame.FLAG_ROUTE
+        if (gpsOk) flags = flags or HudFrame.FLAG_GPS_OK
         if (over) flags = flags or HudFrame.FLAG_OVER_LIMIT
         if (offRoute) flags = flags or HudFrame.FLAG_OFF_ROUTE
         if (arrived) flags = flags or HudFrame.FLAG_ARRIVED
@@ -246,7 +374,7 @@ class RouteTracker(val route: Route) {
             roundaboutExit = if (next?.code == Man.ROUNDABOUT) next.exit else 0,
             roundaboutBearing =
                 if (next?.code == Man.ROUNDABOUT) next.exitBearing else null,
-            distToManeuverM = if (next != null) (next.alongM - snap.along).roundToInt() else 0,
+            distToManeuverM = if (next != null) (next.alongM - along).roundToInt() else 0,
             etaSeconds = etaS,
             remainingM = remaining.roundToInt(),
             flags = flags,

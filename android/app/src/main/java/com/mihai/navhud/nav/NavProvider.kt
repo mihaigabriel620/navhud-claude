@@ -51,8 +51,23 @@ class Route(
     /** Segments the provider reports as closed — roadworks, accidents, events. */
     val closed: BooleanArray = BooleanArray(0),
     /** Bitmask of [RouteTrait]: what this route makes you drive through. */
-    val traits: Int = 0
+    val traits: Int = 0,
+    /** ISO 3166-1 alpha-2 codes of the countries the route crosses. */
+    val countryCodes: List<String> = emptyList(),
+    /** Per polyline segment, an index into [countryCodes]; -1 unknown. */
+    val countryIdx: ByteArray = ByteArray(0)
 ) {
+    /**
+     * The country the route is in at [alongM], or null when the router did
+     * not say. Known ahead of time, so border rules can switch with no signal.
+     */
+    fun countryAt(alongM: Double): String? {
+        if (countryIdx.isEmpty()) return null
+        val i = segmentAt(alongM)
+        val c = if (i in countryIdx.indices) countryIdx[i].toInt() else -1
+        return countryCodes.getOrNull(c)
+    }
+
     val destination: LatLon
         get() = pts.last().let { LatLon(it[0], it[1]) }
 
