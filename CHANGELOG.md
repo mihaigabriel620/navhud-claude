@@ -1,5 +1,48 @@
 # Changelog
 
+## App 1.27 — the road-test list
+
+Everything on "bugs and features to add", fixed at the cause rather than
+patched over. Firmware unchanged.
+
+**Map and arrow**
+- Snap-to-road is on again (it had been switched off by default), so the arrow
+  sits on the middle of the route line, not 5–10 m beside it.
+- The arrow is drawn by MapLibre's location layer, updated in the same frame as
+  the camera, so it no longer lags or jitters against the map. The 30 fps cap
+  that beat against the 60 Hz screen is gone.
+- The arrow moves with a speed- and acceleration-limited "rubber band": no
+  lurches, never backwards. In a tunnel it keeps going at the car's speed (or
+  the last GPS speed) for up to 3 minutes and eases back onto the fix after.
+- Above 5 km/h the arrow and map follow the road (GPS course off-road); the
+  compass/gyro is only used standing still, to show which way you face.
+- The route line vanishes under the arrow as you drive, Waze style.
+- Tilt and pinch-zoom no longer drop follow mode; only a one-finger pan does.
+- Map tiles are downloaded in 80 km chunks ahead of the car for dead zones.
+
+**Voice and sound**
+- Beeps are TTS earcons with ducking focus: music is lowered, never paused.
+- One voice queue: nothing interrupts a line already playing; stale lines
+  are dropped; close turns become one call ("… puis à gauche").
+- "Vitesse limitée": margin +10 (≤50), +20 (70–90), +30 (≥100) km/h, held
+  3 s, then 3 minutes of silence unless you drop 10 under the limit or the
+  limit changes.
+- Cameras: ANPR added, 35 m corridor, kept across reroutes, cached offline,
+  and camera rules checked per country (e.g. none in DE/CH, danger zones in FR).
+
+**Routing, limits, speed**
+- Arrival ends the route; no more rerouting back to where you just parked.
+- Reroute after 30 m off the route (or a sustained turn into a side street),
+  and the new route prefers carrying on over looping back.
+- Speed limits: OSM and per-country legal defaults fill the gaps in Mapbox's
+  data (Belgian regions, and the countries on the way to Romania); the old
+  limit no longer carries through a turn.
+- App and HUD show the same speed: the car's CAN speed when valid, else GPS.
+- Speed limits, cameras and crossings cached in chunks ~100 km ahead; losing
+  the network never ends guidance, and a failed reroute retries quietly.
+
+**Icons** from the supplied pack for road-ahead warnings and the map.
+
 ## 2.7 — the roundabout arrow points where the exit actually is
 
 First, a correction to what I told you: `roundaboutArt()` was never drawing a
