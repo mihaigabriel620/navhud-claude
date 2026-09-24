@@ -88,6 +88,30 @@ class ArrivalEndsRouteTest {
         assertFalse(arrived(t.update(p[0], p[1], 8f, null, hasFix = true)))
     }
 
+    @Test fun `a long route arrives although the router's total is longer than the line`() {
+        // 100 km north, vertex every 100 m; Mapbox's own distance is 0.3 %
+        // (300 m) longer than the decoded line the tracker measures on.
+        val pts = ArrayList<DoubleArray>()
+        var p = doubleArrayOf(50.85, 4.35)
+        pts.add(p)
+        repeat(1000) { p = Geo.destination(p[0], p[1], 0.0, 100.0); pts.add(p) }
+        val arr = pts.toTypedArray()
+        val cum = Geo.cumulative(arr)
+        val r = Route(arr, cum, IntArray(arr.size - 1), listOf(ManeuverPoint(0.0, Man.DEPART, 0, "")),
+                      cum.last() * 1.003, cum.last() / 30.0, "test")
+        val t = RouteTracker(r)
+        var a = 0.0
+        while (a < cum.last() - 100.0) {
+            val q = Geo.pointAlong(arr, cum, a)
+            t.update(q[0], q[1], 25f, 0f, hasFix = true)
+            a += 50.0
+        }
+        val q = Geo.pointAlong(arr, cum, cum.last() - 10.0)
+        val f = t.update(q[0], q[1], 2f, null, hasFix = true)
+        assertTrue("remaining ${f.remainingM} m", arrived(f))
+        assertTrue("eta ${f.etaSeconds} s", f.etaSeconds < 5)
+    }
+
     @Test fun `the thresholds are the published ones`() {
         assertEquals(25.0, RouteTracker.ARRIVED_M, 0.0)
         assertEquals(30.0, RouteTracker.ARRIVED_NEAR_M, 0.0)

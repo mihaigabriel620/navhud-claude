@@ -332,7 +332,7 @@ class RouteTracker(val route: Route) {
         offLineSeen = false
         offLine = false
         lastCrossM = 0.0
-        val along = minOf(route.totalDistanceM, alongM + max(0.0, advanceM))
+        val along = minOf(route.cum.last(), alongM + max(0.0, advanceM))
         while (lastSegIdx < route.cum.size - 2 && route.cum[lastSegIdx + 1] <= along) lastSegIdx++
         alongM = along
         placeAt(along)
@@ -375,12 +375,16 @@ class RouteTracker(val route: Route) {
             .lastOrNull { it.alongM <= along + MANEUVER_PASSED_M }
             ?.name?.takeIf { it.isNotBlank() }
 
-        val remaining = max(0.0, route.totalDistanceM - along)
+        // Measured on the decoded line, as `along` is: the router's own total
+        // differs by 0.04-0.3 %, 60-300 m on 100 km, and kept the remaining
+        // distance from ever dropping under the arrival thresholds.
+        val lineM = route.cum.last()
+        val remaining = max(0.0, lineM - along)
         val arrived = canArrive &&
             (remaining < ARRIVED_M || (remaining < ARRIVED_NEAR_REMAINING_M && nearPin))
 
-        val etaS = if (route.totalDistanceM > 1.0) {
-            (route.totalDurationS * (remaining / route.totalDistanceM)).roundToInt()
+        val etaS = if (lineM > 1.0) {
+            (route.totalDurationS * (remaining / lineM)).roundToInt()
         } else 0
 
         val over = limit > 0 && speedKph > limit + OVER_LIMIT_TOLERANCE_KPH
