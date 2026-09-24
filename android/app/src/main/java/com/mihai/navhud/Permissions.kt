@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.mihai.navhud.ui.Notice
@@ -31,6 +32,18 @@ object Permissions {
     /** The driver allowed location, but only "Approximate". */
     fun approximateOnly(ctx: Context) =
         !precise(ctx) && granted(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
+
+    /** Android 10+: location while no screen of the app is open ("Allow all the time"). */
+    fun background(ctx: Context) = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+        granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+
+    /**
+     * Start-with-the-car cannot work: from Android 11 a service started from
+     * the background gets no location without "Allow all the time", and on
+     * 14+ its startForeground(location) throws and the service stops.
+     */
+    fun bootBlocked(ctx: Context) =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !background(ctx)
 
     /** This app's page in the system settings, where every permission lives. */
     fun openAppSettings(ctx: Context) {

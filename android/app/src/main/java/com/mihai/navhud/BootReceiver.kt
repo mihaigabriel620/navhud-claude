@@ -59,6 +59,13 @@ class BootReceiver : BroadcastReceiver() {
             Log.i(TAG, "boot: no precise location permission, staying down")
             return
         }
+        // Android 11+: started from here, without "Allow all the time" the
+        // service gets no location (and on 14+ cannot go foreground at all).
+        // The Setup screen's "Start with the car" line says what to change.
+        if (Permissions.bootBlocked(ctx)) {
+            Log.i(TAG, "boot: location not allowed all the time, staying down")
+            return
+        }
 
         Log.i(TAG, "boot: starting the HUD service")
         runCatching {

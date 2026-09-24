@@ -135,6 +135,10 @@
     <string name="bg_all_ok">All clear. The phone is not standing in the way.</string>
     <string name="bg_steps_title">Only you can do these, in the phone\'s settings:</string>
     <string name="boot_start">Start with the car (run when the device boots)</string>
+    <string name="bg_location_title">Start with the car</string>
+    <string name="bg_location_body">To start by itself when the car switches on, before anyone opens it, NavHUD needs location while its screens are closed. On the next screen choose \"Allow all the time\".</string>
+    <string name="bg_location_go">Continue</string>
+    <string name="bg_location_later">Not now</string>
     <string name="sec_driving">Driving</string>
     <string name="sec_display">Head-up display</string>
     <string name="sec_keys">Map and search keys</string>

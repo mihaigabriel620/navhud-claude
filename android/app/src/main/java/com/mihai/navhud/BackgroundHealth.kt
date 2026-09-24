@@ -75,6 +75,11 @@ object BackgroundHealth {
             }
         ),
         Check(
+            "Start with the car",
+            !Prefs.startOnBoot(ctx) || !Permissions.bootBlocked(ctx),
+            "Needs location \"Allow all the time\": app settings → Permissions → Location."
+        ),
+        Check(
             "Battery optimisation",
             ignoringBatteryOptimisations(ctx),
             if (ignoringBatteryOptimisations(ctx)) "Off for NavHUD. Good."

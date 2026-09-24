@@ -101,7 +101,9 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, MapActivity::class.java))
         }
 
-        requestPermissions()
+        // Background location only once the ordinary ones are settled: Android
+        // 11+ refuses it before FINE, and two dialogs at once is one too many.
+        if (!requestPermissions() && savedInstanceState == null) offerBackgroundLocation()
         HudService.statusListener = { ui.post { refresh() } }
         refresh()
         // Started in onResume, not here: the 400 ms poll formats a multi-line
@@ -212,7 +214,10 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<CheckBox>(R.id.bootStart).apply {
             isChecked = Prefs.startOnBoot(this@MainActivity)
-            setOnCheckedChangeListener { _, on -> Prefs.setStartOnBoot(this@MainActivity, on) }
+            setOnCheckedChangeListener { _, on ->
+                Prefs.setStartOnBoot(this@MainActivity, on)
+                if (on) offerBackgroundLocation()
+            }
         }
 
         // Diagnostics are folded away. What used to be the bottom third of this
@@ -245,7 +250,10 @@ class MainActivity : AppCompatActivity() {
 
         // A permission the system will no longer ask for is changed only there.
         findViewById<android.widget.Button>(R.id.permFix).apply {
-            visibility = if (Permissions.precise(this@MainActivity)) View.GONE else View.VISIBLE
+            val ctx = this@MainActivity
+            visibility = if (Permissions.precise(ctx) &&
+                             !(Prefs.startOnBoot(ctx) && Permissions.bootBlocked(ctx))) View.GONE
+                         else View.VISIBLE
             setOnClickListener { Permissions.openAppSettings(this@MainActivity) }
         }
 
@@ -350,7 +358,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestPermissions() {
+    /**
+     * Start-with-the-car needs location while no screen is open. Asked on its
+     * own, after saying why: Android 11+ answers the request by opening the
+     * settings page where "Allow all the time" is, which is baffling unexplained.
+     */
+    private fun offerBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !Prefs.startOnBoot(this) ||
+            !Permissions.precise(this) || Permissions.background(this)) return
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.bg_location_title)
+            .setMessage(R.string.bg_location_body)
+            .setPositiveButton(R.string.bg_location_go) { _, _ ->
+                ActivityCompat.requestPermissions(
+                    this, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 8)
+            }
+            .setNegativeButton(R.string.bg_location_later, null)
+            .show()
+    }
+
+    /** @return true when a permission dialog is now on screen. */
+    private fun requestPermissions(): Boolean {
         // FINE and COARSE together: Android 12+ may ignore FINE asked alone.
         val want = Permissions.LOCATION.toMutableList()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -363,6 +391,7 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), 7)
+        return missing.isNotEmpty()
     }
 
     @Deprecated("requestPermissions is fine for a single request")
