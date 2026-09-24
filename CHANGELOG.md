@@ -1,5 +1,45 @@
 # Changelog
 
+## App 1.30 — final sweep
+
+Fixes from two full read-through audits. Firmware unchanged.
+
+- Arrival now triggers on long routes (all Android versions). The remaining
+  distance was measured against Mapbox's own total, which differs by 60–300 m
+  per 100 km from the line the car is tracked on, so it never got under the
+  25/60 m arrival thresholds.
+- Location is asked as "precise + approximate" together, as Android 12+
+  requires. If only "Approximate" is allowed, the map says "Precise location
+  needed" with a tap to the app settings, and Setup shows it too (12+).
+- Refusing a permission is no longer silent: a notice explains it and links
+  to the app settings, including after "Don't ask again" (all versions; 11+
+  never shows the dialog again after a second refusal).
+- "Start with the car" asks for location "Allow all the time", explained
+  first (10+). Without it Android 11+ gave a boot-started service no location
+  (14+: it stopped at once); now it stays down and Setup says what to change.
+- A new destination clears the old camera warning and lane arrows from the
+  HUD (all versions).
+- USB: refusing the USB permission no longer brings the dialog back every
+  few seconds over the map; replug the HUD to be asked again. Granting it now
+  connects straight away (all versions).
+- With the phone's Location switch off, the map says "Turn on Location" with
+  a link to it, and the service no longer blames the permission (matters most
+  on 14+, where the service cannot start at all).
+- Setup warns when notifications are off, with a button to allow them: the
+  Stop button and "Resume route?" live there (13+ asks for this permission).
+- Choosing a new destination or Resume keeps a working HUD link instead of
+  reconnecting; a Bluetooth HUD no longer goes blank for up to 10 s (all).
+- After Stop, the map switching to night mode at dusk no longer restarts the
+  service (all versions).
+- The Bluetooth switch and the Mapbox token in Setup take effect at once
+  instead of on the next start (all versions).
+- Setup no longer lists the offline-roads cache on the main thread every
+  0.4 s; it is counted in the background every 5 s (all versions).
+- If the text-to-speech engine fails to start, the next start of the service
+  tries a fresh one instead of staying silent all session (all versions).
+- Back button handled the modern way (same behaviour; future Android
+  versions drop the old method).
+
 ## App 1.29.2 — search box a little closer to the edge
 
 - The gap between the screen edge and the search box is halved (16 → 8 dp);
