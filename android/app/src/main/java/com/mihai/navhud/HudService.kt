@@ -419,6 +419,10 @@ class HudService : Service(), LocationListener {
          * rather than differentiated, updated every 100-300 ms rather than
          * once a second, exactly zero when parked, and unaffected by having no
          * sky. Prefer it wherever it is non-null.
+         *
+         * Re-evaluated on every tick, so it goes null within a tick of the
+         * data going stale (2 s) or of the bus reading a stuck zero while GPS
+         * says the car is moving -- not only when the next line arrives.
          */
         @Volatile var carSpeedMps: Double? = null; private set
 
@@ -1570,6 +1574,32 @@ class HudService : Service(), LocationListener {
     private fun bestSpeedMps(gpsSpeed: Float, nowMs: Long): Float =
         carLink.speedMps(nowMs)?.toFloat() ?: gpsSpeed
 
+    /**
+     * The speed to show, and to judge the limit against: the car's own,
+     * *unscaled*, when the bus is fresh and believable, else GPS.
+     *
+     * Unscaled because the HUD firmware draws the raw bus number whenever it
+     * has one. The app gauge, the voice's over-limit chime and the HUD used to
+     * show three different speeds -- scaled bus on a route, GPS in free drive,
+     * raw bus on the glass. [bestSpeedMps] stays for placing the car.
+     */
+    private fun displaySpeedMps(gpsSpeed: Float, nowMs: Long): Float =
+        carLink.rawSpeedMps(nowMs)?.toFloat() ?: gpsSpeed
+
+    /**
+     * Once a tick: age the car data even when no `$CAR` line arrives, so a
+     * silent board reads as "no car speed" rather than its last number, and
+     * catch the board's stale-frame zero while GPS says the car is moving.
+     */
+    private fun refreshCarState(nowMs: Long) {
+        val fix = lastFix
+        val gps = if (fix != null && fix.hasSpeed() && nowMs - lastFixAtMs <= FIX_STALE_MS)
+            fix.speed.toDouble() else null
+        carLink.checkPlausible(gps, nowMs)
+        carSpeedMps = carLink.speedMps(nowMs)
+        carStopped = carLink.stopped(nowMs)
+    }
+
     private fun adoptRoute(r: Route, reason: String) {
         // Where the router has no limit, the same OSM window and legal
         // defaults free drive uses. The window keeps being fetched on a route
@@ -1677,6 +1707,8 @@ class HudService : Service(), LocationListener {
             }
         }
 
+        refreshCarState(SystemClock.elapsedRealtime())
+
         val night = isNight()
         val t = tracker
         if (t == null) { freeStep(l, night); return }
@@ -1691,13 +1723,14 @@ class HudService : Service(), LocationListener {
             bearing = null
         } else {
             val dt = age / 1000.0
-            val v = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f,
-                                 SystemClock.elapsedRealtime())
+            val gps = if (fix.hasSpeed()) fix.speed else 0f
+            val v = bestSpeedMps(gps, SystemClock.elapsedRealtime())
             val brg = if (fix.hasBearing()) fix.bearing else null
             val lead = if (brg != null && v > 1f) {
                 Geo.destination(fix.latitude, fix.longitude, brg.toDouble(), v * dt)
             } else doubleArrayOf(fix.latitude, fix.longitude)
-            frame = t.update(lead[0], lead[1], v, brg, hasFix = true, night = night)
+            frame = t.update(lead[0], lead[1], v, brg, hasFix = true, night = night,
+                             displayMps = displaySpeedMps(gps, SystemClock.elapsedRealtime()))
             bearing = brg?.toDouble()
             // Still on the line: this is where a wrong turn would have left it.
             if (age <= REROUTE_FIX_MAX_AGE_MS && t.lastCrossM <= RerouteRule.TURNED_OFF_CROSS_M) {
@@ -1771,7 +1804,9 @@ class HudService : Service(), LocationListener {
         val age = now - lastFixAtMs
         val live = fix != null && age <= 8000
 
-        val v = if (live && fix!!.hasSpeed()) fix.speed else 0f
+        // The same speed the route shows and the HUD draws: the bus when it
+        // is talking sense, GPS otherwise. Free drive used GPS only.
+        val v = if (live) displaySpeedMps(if (fix!!.hasSpeed()) fix.speed else 0f, now) else 0f
         val brg = if (live && fix!!.hasBearing()) fix.bearing else null
 
         if (live) maybeFetchArea(fix!!, v.toDouble(), brg?.toDouble(), now)

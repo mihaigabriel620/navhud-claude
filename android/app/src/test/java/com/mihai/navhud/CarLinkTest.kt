@@ -181,6 +181,75 @@ class CarLinkTest {
         assertNull(c.speedMps(1_000L))
     }
 
+    // ---- the speed that is shown -------------------------------------------
+
+    @Test
+    fun `the displayed speed is the raw bus number, not the corrected one`() {
+        val c = CarLink()
+        repeat(400) { i ->
+            c.feed(line(100), 1_000L + i * 250L)
+            c.learnScale(96 / 3.6, 1_000L + i * 250L)
+        }
+        val now = 1_000L + 399 * 250L
+        // The HUD draws 100; the app must too, whatever the tyres have taught us.
+        assertEquals(100 / 3.6, c.rawSpeedMps(now)!!, 1e-9)
+        assertEquals(96 / 3.6, c.speedMps(now)!!, 0.05)
+        assertNull(c.rawSpeedMps(now + CarLink.STALE_MS))
+    }
+
+    @Test
+    fun `a zero on the bus while GPS says 50 is a stale frame, not a stop`() {
+        val c = CarLink()
+        var t = 1_000L
+        c.feed(line(0), t)
+        // Below the 3 s bar the zero still stands.
+        while (t < 1_000L + CarLink.ZERO_SUSPECT_MS - 250) {
+            c.feed(line(0), t); c.checkPlausible(50 / 3.6, t); t += 250
+        }
+        assertEquals(0.0, c.rawSpeedMps(t)!!, 1e-9)
+        c.feed(line(0), t); c.checkPlausible(50 / 3.6, t)
+        t += 250
+        c.feed(line(0), t); c.checkPlausible(50 / 3.6, t)
+        assertTrue(c.zeroSuspect)
+        assertNull("fall back to GPS", c.rawSpeedMps(t))
+        assertNull(c.speedMps(t))
+        assertFalse("and it is not a stopped car", c.stopped(t))
+
+        // Latched while it keeps reading zero, even once GPS slows...
+        t += 250
+        c.feed(line(0), t); c.checkPlausible(1.0, t)
+        assertNull(c.rawSpeedMps(t))
+        // ...until the bus reports motion again.
+        t += 250
+        c.feed(line(40), t); c.checkPlausible(11.0, t)
+        assertFalse(c.zeroSuspect)
+        assertEquals(40 / 3.6, c.rawSpeedMps(t)!!, 1e-9)
+    }
+
+    @Test
+    fun `a real stop is not suspected`() {
+        val c = CarLink()
+        var t = 1_000L
+        repeat(40) {
+            c.feed(line(0), t); c.checkPlausible(0.8, t); t += 250   // GPS wander
+        }
+        assertFalse(c.zeroSuspect)
+        assertEquals(0.0, c.rawSpeedMps(t - 250)!!, 1e-9)
+        // No fix at all: nothing to judge by, so nothing changes.
+        c.feed(line(0), t); c.checkPlausible(null, t)
+        assertFalse(c.zeroSuspect)
+    }
+
+    @Test
+    fun `a GPS dip below 15 restarts the three seconds`() {
+        val c = CarLink()
+        var t = 1_000L
+        repeat(10) { c.feed(line(0), t); c.checkPlausible(20.0, t); t += 250 }   // 2.5 s
+        c.feed(line(0), t); c.checkPlausible(3.0, t); t += 250
+        repeat(10) { c.feed(line(0), t); c.checkPlausible(20.0, t); t += 250 }
+        assertFalse(c.zeroSuspect)
+    }
+
     // ---- ignition -----------------------------------------------------------
 
     @Test

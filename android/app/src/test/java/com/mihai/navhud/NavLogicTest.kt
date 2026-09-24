@@ -191,6 +191,16 @@ class NavLogicTest {
         assertEquals(0, lost.flags and HudFrame.FLAG_GPS_OK)
     }
 
+    @Test fun `the frame shows the display speed, not the positioning one`() {
+        // Scaled bus speed places the car; the raw bus speed is what the HUD
+        // draws, so it is what the frame and the over-limit flag must carry.
+        val r = DemoDrive.buildRoute()
+        val t = RouteTracker(r)
+        val p = Geo.pointAlong(r.pts, r.cum, 100.0)
+        val f = t.update(p[0], p[1], 9.0f, null, hasFix = true, displayMps = 10.0f)
+        assertEquals(36, f.speedKph)
+    }
+
     @Test fun `the final approach shows arrive, never carry straight on`() {
         val r = DemoDrive.buildRoute()
         val t = RouteTracker(r)

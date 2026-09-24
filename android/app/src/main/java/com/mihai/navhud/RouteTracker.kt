@@ -192,7 +192,12 @@ class RouteTracker(val route: Route) {
         hasFix: Boolean,
         night: Boolean = false,
         /** Monotonic clock. Supplied so the debounce is testable. */
-        nowMs: Long = android.os.SystemClock.elapsedRealtime()
+        nowMs: Long = android.os.SystemClock.elapsedRealtime(),
+        /**
+         * The speed to *show*, when it differs from the one used to place the
+         * car: the HUD draws the raw bus speed, positioning wants the scaled one.
+         */
+        displayMps: Float = speedMps
     ): HudFrame {
 
         if (!hasFix) {
@@ -274,7 +279,7 @@ class RouteTracker(val route: Route) {
             (route.totalDurationS * (remaining / route.totalDistanceM)).roundToInt()
         } else 0
 
-        val speedKph = (speedMps * 3.6f).roundToInt()
+        val speedKph = (displayMps * 3.6f).roundToInt()
         val over = limit > 0 && speedKph > limit + OVER_LIMIT_TOLERANCE_KPH
 
         // This tracker exists only because there is a route, so the bit is
