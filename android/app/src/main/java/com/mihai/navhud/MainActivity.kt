@@ -365,5 +365,11 @@ class MainActivity : AppCompatActivity() {
         if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), 7)
     }
 
+    @Deprecated("requestPermissions is fine for a single request")
+    override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, permissions, results)
+        Permissions.onResult(this, permissions)
+    }
+
     private fun toast(s: String) = com.mihai.navhud.ui.Notice.show(this, s)
 }

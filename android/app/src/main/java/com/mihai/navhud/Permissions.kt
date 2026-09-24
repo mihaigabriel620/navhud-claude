@@ -42,6 +42,20 @@ object Permissions {
         }
     }
 
+    /**
+     * After the permission dialog. A refusal used to leave the app quietly
+     * doing nothing -- and after "Don't ask again" (Android 11+: a second
+     * refusal) the dialog never comes back, so the settings page is the only
+     * way left. Say so, with the way there.
+     */
+    fun onResult(activity: Activity, permissions: Array<out String>) {
+        // Empty when the request was cancelled; not ours when location was not asked.
+        if (Manifest.permission.ACCESS_FINE_LOCATION !in permissions || precise(activity)) return
+        if (approximateOnly(activity)) explainApproximate(activity)
+        else Notice.show(activity, activity.getString(R.string.need_location),
+                         activity.getString(R.string.open_app_settings)) { openAppSettings(activity) }
+    }
+
     /** "Precise location needed", with a tap through to the settings. */
     fun explainApproximate(activity: Activity) {
         Notice.show(activity, activity.getString(R.string.need_precise_location),
