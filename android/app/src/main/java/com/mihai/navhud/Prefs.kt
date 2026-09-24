@@ -22,6 +22,7 @@ object Prefs {
     private const val KEY_LANG = "voice_lang"
     private const val KEY_HOME_COUNTRY = "home_country"
     private const val KEY_SHOW_PERF = "show_perf"
+    private const val KEY_ARROW_DEBUG = "arrow_debug"
     private const val KEY_DEST_LAT = "dest_lat"
     private const val KEY_DEST_LON = "dest_lon"
     private const val KEY_DEST_LABEL = "dest_label"
@@ -316,4 +317,10 @@ object Prefs {
 
     fun setShowPerf(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean(KEY_SHOW_PERF, on).apply()
+
+    /** One line on the map saying where the arrow is drawn from, and why. */
+    fun arrowDebug(ctx: Context): Boolean = sp(ctx).getBoolean(KEY_ARROW_DEBUG, false)
+
+    fun setArrowDebug(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean(KEY_ARROW_DEBUG, on).apply()
 }

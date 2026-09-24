@@ -283,6 +283,7 @@ class MapActivity : AppCompatActivity() {
     private lateinit var searchIcon: ImageView
     private lateinit var statusChip: TextView
     private lateinit var perfOverlay: TextView
+    private lateinit var arrowDebugView: TextView
 
     // ---- frame timing, for when "it stutters" needs to become a number ----
     private var frameCount = 0
@@ -454,6 +455,7 @@ class MapActivity : AppCompatActivity() {
         statusView = findViewById(R.id.mapStatus)
         statusChip = findViewById(R.id.statusChip)
         perfOverlay = findViewById(R.id.perfOverlay)
+        arrowDebugView = findViewById(R.id.arrowDebugLine)
         followButton = findViewById(R.id.follow)
         voiceButton = findViewById(R.id.voiceButton)
         voiceLabel = findViewById(R.id.voiceState)
@@ -742,6 +744,8 @@ class MapActivity : AppCompatActivity() {
         // Read once here rather than per frame: the camera loop runs at 30 Hz
         // and this is a SharedPreferences hit.
         snapToRoad = Prefs.snapToRoad(this)
+        arrowDebug = Prefs.arrowDebug(this)
+        if (!arrowDebug) arrowDebugView.visibility = View.GONE
         lastCamFrameMs = 0L
         lastFrameNanos = 0L
         // A gesture cut off by the pause never delivered its end.
@@ -2093,10 +2097,14 @@ class MapActivity : AppCompatActivity() {
         val route = HudService.currentRoute
         // Both snaps are on by default again (1.27) -- see Prefs.snapToRoad.
         val snapWanted = snapToRoad
-        val onRouteSnap = snapWanted && route != null && HudService.snapTrusted
+        // Read once: the service writes snapOnRoute before snapTrusted.
+        val trusted = HudService.snapTrusted
+        val onLine = HudService.snapOnRoute
+        val onRouteSnap = snapWanted && route != null && trusted && onLine
         // Free drive snaps too, to the road network rather than to a route
-        // line, so the marker never sits in somebody's living room.
-        val freeSnap = snapWanted && route == null && HudService.snapTrusted
+        // line, so the marker never sits in somebody's living room -- and so
+        // does a route, once the car is off its line (see HudService).
+        val freeSnap = snapWanted && trusted && !onLine
         val snapped = onRouteSnap || freeSnap
 
         // ---- where to draw the car ------------------------------------------
@@ -2224,6 +2232,8 @@ class MapActivity : AppCompatActivity() {
         }
 
         updatePuck(lat, lon, puckBearing)
+        if (arrowDebug) showArrowDebug(now, if (onRouteSnap) "ROUTE" else if (freeSnap) "ROAD" else "RAW",
+            trusted, loc)
         // The route line starts under the arrow: from the arrow's own distance
         // while it runs on the line, else from the service's projection.
         maybeDrawRouteLine(route, if (onRouteSnap) puckAlong else HudService.alongM,
@@ -2436,6 +2446,24 @@ class MapActivity : AppCompatActivity() {
      * feeding it, or the CPU is busy elsewhere -- and those have nothing in
      * common except how they look from the driver's seat.
      */
+    /** See Prefs.arrowDebug. Read on resume; the frame loop runs at 30 Hz. */
+    private var arrowDebug = false
+    private var arrowDebugAtMs = 0L
+
+    /**
+     * One line on the map saying why the arrow is where it is: on the route
+     * line, on an OSM road, or on the raw fix -- with the distance from the
+     * route, the service's trust flag and the fix accuracy. Twice a second.
+     */
+    private fun showArrowDebug(now: Long, mode: String, trusted: Boolean, loc: Location) {
+        if (now - arrowDebugAtMs < 500L) return
+        arrowDebugAtMs = now
+        arrowDebugView.visibility = View.VISIBLE
+        arrowDebugView.text = "%s · cross %.0f m · trusted %s · acc %s".format(
+            mode, HudService.crossTrackM, if (trusted) "yes" else "no",
+            if (loc.hasAccuracy()) "%.0f m".format(loc.accuracy) else "?")
+    }
+
     private fun perfSummary(): String = buildString {
         append("NavHUD ").append(BuildConfig.VERSION_NAME)
         append(" (").append(BuildConfig.VERSION_CODE).append(")\n")

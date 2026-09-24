@@ -100,6 +100,39 @@ class SnapTest {
         val off = Geo.destination(p[0], p[1], headingAt(along) + 90.0, 60.0)
         t.update(off[0], off[1], 14f, headingAt(along).toFloat(), hasFix = true)
         assertFalse("must not claim to be on the route at 60 m out", t.snapTrusted)
+        assertFalse("nor draw the arrow on it", t.drawOnLine)
+    }
+
+    @Test fun `the arrow stays on the route line up to 50 m until off route is confirmed`() {
+        // The 1.27 drive: a 25-30 m urban error dropped the arrow onto the raw
+        // fix, beside the road, with the car plainly on its route.
+        val t = RouteTracker(route)
+        var along = 0.0
+        var now = 1_000L
+        repeat(20) {
+            val p = Geo.pointAlong(route.pts, route.cum, along)
+            t.update(p[0], p[1], 14f, headingAt(along).toFloat(), hasFix = true, nowMs = now)
+            along += 10.0; now += 250L
+        }
+        val p = Geo.pointAlong(route.pts, route.cum, along)
+        val off = Geo.destination(p[0], p[1], headingAt(along) + 90.0, 28.0)
+        repeat(8) {
+            t.update(off[0], off[1], 14f, headingAt(along).toFloat(), hasFix = true, nowMs = now)
+            now += 250L
+        }
+        assertFalse("28 m is past the tracker's own trust", t.snapTrusted)
+        assertTrue("but the arrow is still drawn on the line", t.drawOnLine)
+
+        // 45 m for over 600 ms is off route: the arrow leaves the line.
+        val far = Geo.destination(p[0], p[1], headingAt(along) + 90.0, 45.0)
+        t.update(far[0], far[1], 14f, headingAt(along).toFloat(), hasFix = true, nowMs = now)
+        assertTrue("one fix at 45 m is not yet off route", t.drawOnLine)
+        repeat(4) {
+            now += 250L
+            t.update(far[0], far[1], 14f, headingAt(along).toFloat(), hasFix = true, nowMs = now)
+        }
+        assertTrue(t.offRoute)
+        assertFalse(t.drawOnLine)
     }
 
     /**

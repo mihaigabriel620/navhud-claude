@@ -71,6 +71,14 @@ class RouteTracker(val route: Route) {
         const val SNAP_TRUST_M = 25.0
 
         /**
+         * How far off the line the *arrow* is still drawn on it. Wider than
+         * [SNAP_TRUST_M], which gates the tracker's own trust: a 25-50 m urban
+         * GPS error dropped the arrow onto the raw fix, beside the road, while
+         * the car was plainly on its route. Off route is still off route.
+         */
+        const val DRAW_ON_LINE_M = 50.0
+
+        /**
          * How long [coast] keeps the car running along the route with no fix.
          * Three minutes covers the long Belgian tunnels (Leopold II, Kennedy)
          * and the Alpine ones on the way east at motorway speed, while a car
@@ -184,6 +192,10 @@ class RouteTracker(val route: Route) {
     var snapTrusted = false
         private set
 
+    /** Draw the arrow on the route line: within [DRAW_ON_LINE_M] and not off route. */
+    var drawOnLine = false
+        private set
+
     /**
      * The maneuver currently being counted down to, or null on the final leg.
      * Voice guidance keys its announcements on this so a GPS wobble cannot make
@@ -226,6 +238,7 @@ class RouteTracker(val route: Route) {
 
         if (!hasFix) {
             snapTrusted = false
+            drawOnLine = false
             // Losing the fix ends the run. Kept across an outage, one stray
             // off-line fix before a tunnel and one on the way out would satisfy
             // "off the line for 600 ms" with a minute of nothing in between --
@@ -275,6 +288,7 @@ class RouteTracker(val route: Route) {
         // ---- where to draw the car -----------------------------------------
         placeAt(snap.along)
         snapTrusted = snap.cross <= SNAP_TRUST_M && !offRoute
+        drawOnLine = snap.cross <= DRAW_ON_LINE_M && !offRoute
 
         // ---- speed limit ----------------------------------------------------
         val limit = limitAt(snap.segIndex, snap.along, lat, lon, heading)

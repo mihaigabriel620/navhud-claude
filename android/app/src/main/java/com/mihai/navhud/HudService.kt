@@ -317,6 +317,11 @@ class HudService : Service(), LocationListener {
         @Volatile var snapLon: Double = 0.0; private set
         @Volatile var roadBearing: Double? = null; private set
         @Volatile var snapTrusted: Boolean = false; private set
+        /**
+         * With [snapTrusted]: true = the snap is on the route line, false = on
+         * the OSM road in [roadPts]. Written before [snapTrusted].
+         */
+        @Volatile var snapOnRoute: Boolean = false; private set
 
         /** The matched road's polyline, for re-projecting the drawn marker. */
         @Volatile var roadPts: Array<DoubleArray>? = null; private set
@@ -1877,11 +1882,32 @@ class HudService : Service(), LocationListener {
         // drive matched before the trip started -- possibly the origin, three
         // hundred kilometres back -- and the moment anything cleared the route
         // the map projected onto it and jumped there.
-        roadPts = null
-        snapLat = t.snappedLat
-        snapLon = t.snappedLon
-        roadBearing = t.roadBearing
-        snapTrusted = t.snapTrusted
+        // Where the map draws the arrow: on the route line while the car is
+        // on it (RouteTracker.DRAW_ON_LINE_M), else on the nearest OSM road --
+        // a wrong turn, a slip road the route does not use -- and on the raw
+        // fix only with no road nearby (a car park, a driveway). Off the line
+        // it used to go straight to the raw fix, beside the road.
+        val offLineRoad = if (!t.drawOnLine && fix != null && age <= 8000) freeArea?.let {
+            AreaRoads.match(it, fix.latitude, fix.longitude,
+                if (fix.hasBearing() && fix.speed > 2f) fix.bearing.toDouble() else null)
+        } else null
+        val offLinePt = if (offLineRoad != null && fix != null)
+            AreaRoads.projectOnto(offLineRoad.road.pts, fix.latitude, fix.longitude) else null
+        if (offLineRoad != null && offLinePt != null) {
+            snapLat = offLinePt[0]
+            snapLon = offLinePt[1]
+            roadBearing = offLineRoad.bearingDeg
+            roadPts = offLineRoad.road.pts
+            snapOnRoute = false
+            snapTrusted = true
+        } else {
+            roadPts = null
+            snapLat = t.snappedLat
+            snapLon = t.snappedLon
+            roadBearing = t.roadBearing
+            snapOnRoute = true
+            snapTrusted = t.drawOnLine
+        }
         crossTrackM = t.lastCrossM
         l?.write(frame.encode())
         // Straight after the frame it belongs to, so the board has the
@@ -1975,8 +2001,9 @@ class HudService : Service(), LocationListener {
         snapLat = free.snappedLat
         snapLon = free.snappedLon
         roadBearing = free.roadBearing
-        snapTrusted = free.snapTrusted
         roadPts = free.roadPts
+        snapOnRoute = false
+        snapTrusted = free.snapTrusted
         alongM = 0.0
         l?.write(frame.encode())
         // Straight after the frame it belongs to, so the board has the

@@ -374,6 +374,12 @@
                 android:layout_height="wrap_content"
                 android:text="@string/show_perf" />
 
+            <CheckBox
+                android:id="@+id/arrowDebug"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/arrow_debug" />
+
             <TextView
                 style="@style/NavHUD.Caption"
                 android:layout_width="match_parent"

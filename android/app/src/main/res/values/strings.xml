@@ -79,6 +79,7 @@
     <string name="type_an_address">Type an address or a place</string>
     <string name="nothing_found">Nothing found for \"%1$s\"</string>
     <string name="show_perf">Show frame timings in the quick menu</string>
+    <string name="arrow_debug">Show arrow debug line on the map (route / road / raw, distance from route, GPS accuracy)</string>
     <string name="search_unavailable">Search is unavailable. Check the connection.</string>
     <string name="no_speech">No speech recognition on this device</string>
     <string name="free_drive">Driving</string>

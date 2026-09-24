@@ -233,6 +233,10 @@ class MainActivity : AppCompatActivity() {
             isChecked = Prefs.showPerf(this@MainActivity)
             setOnCheckedChangeListener { _, on -> Prefs.setShowPerf(this@MainActivity, on) }
         }
+        findViewById<CheckBox>(R.id.arrowDebug).apply {
+            isChecked = Prefs.arrowDebug(this@MainActivity)
+            setOnCheckedChangeListener { _, on -> Prefs.setArrowDebug(this@MainActivity, on) }
+        }
 
         val fix = findViewById<android.widget.Button>(R.id.bgFix)
         val exempt = BackgroundHealth.ignoringBatteryOptimisations(this)
