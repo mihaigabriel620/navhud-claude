@@ -69,7 +69,12 @@ class OfflineRoutes(context: Context) {
 
     /** From the UI tick, with the route being driven and the car's distance along it. */
     fun update(current: Route?, alongM: Double, nowMs: Long) {
-        if (current !== route) { route = current; chunkStart = null }
+        if (current !== route) {
+            // Arrived or cancelled: the chunk still downloading is for a drive
+            // that is over. Stopped, not deleted -- what it has stays usable.
+            if (current == null) stopDownloads()
+            route = current; chunkStart = null
+        }
         val r = current ?: return
         val m = manager ?: return
         // A callback that never came back must not stop prefetching for good.
@@ -102,6 +107,22 @@ class OfflineRoutes(context: Context) {
                 }
             })
         }.onFailure { failed(it.toString()) }
+    }
+
+    private fun stopDownloads() {
+        val m = manager ?: return
+        runCatching {
+            m.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
+                override fun onList(offlineRegions: Array<OfflineRegion>?) {
+                    offlineRegions.orEmpty().filter { createdAt(it) != null }.forEach {
+                        runCatching { it.setDownloadState(OfflineRegion.STATE_INACTIVE) }
+                    }
+                }
+                override fun onError(error: String) {
+                    Log.w(TAG, "could not stop offline chunks: $error")
+                }
+            })
+        }
     }
 
     /** Delete all our regions but the newest [KEEP_OLDER]. */
@@ -140,6 +161,8 @@ class OfflineRoutes(context: Context) {
         m.createOfflineRegion(definition, meta, object : OfflineManager.CreateOfflineRegionCallback {
             override fun onCreate(offlineRegion: OfflineRegion) {
                 busy = false
+                // The route ended while this was being created.
+                if (route == null) return
                 runCatching {
                     offlineRegion.setObserver(Observer(offlineRegion))
                     offlineRegion.setDownloadState(OfflineRegion.STATE_ACTIVE)
