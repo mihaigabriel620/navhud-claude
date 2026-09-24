@@ -139,9 +139,6 @@ class HudService : Service(), LocationListener {
         /** How often to retry a cable that will not open. */
         private const val LINK_RETRY_MS = 3000L
 
-        /** Back-off for a failed route request: 2 s, 4 s, 8 s, capped. */
-        private const val ROUTE_RETRY_BASE_MS = 2000L
-        private const val ROUTE_RETRY_MAX_MS = 20_000L
 
         /** Floor on how often free drive may ask Overpass for road data. */
         private const val AREA_MIN_INTERVAL_MS = 20_000L
@@ -282,6 +279,14 @@ class HudService : Service(), LocationListener {
         @Volatile var routeGeneration: Int = 0; private set
         @Volatile var cameraAlert: CameraAlert? = null; private set
         @Volatile var country: String? = null; private set
+
+        /**
+         * The country the car is in according to the route itself -- Mapbox's
+         * per-intersection `admins` -- or null off a route or when the router
+         * did not say. Known before the border and needs no signal, unlike
+         * [country], which is a reverse geocode every 25 km.
+         */
+        @Volatile var routeCountryCode: String? = null; private set
         @Volatile var cameraPolicy: CameraPolicy = CountryRules.DEFAULT; private set
         @Volatile var lanes: LaneGuidance? = null; private set
         @Volatile var destinationLabelPublic: String? = null; private set
@@ -579,7 +584,9 @@ class HudService : Service(), LocationListener {
         private fun setStatus(s: String) {
             status = s
             Log.i(TAG, s)
-            statusListener?.invoke()
+            // Called from the network threads' catch blocks too: a listener
+            // that throws there must not take the thread, and the app, down.
+            runCatching { statusListener?.invoke() }
         }
     }
 
@@ -636,7 +643,8 @@ class HudService : Service(), LocationListener {
     @Volatile private var tickGen = 0
     private val linkOpening = AtomicBoolean(false)
     private var lastLinkTryMs = 0L
-    private var routeAttempt = 0
+    /** Failed route requests in a row; a retry is already scheduled while > 0. */
+    @Volatile private var routeAttempt = 0
     private var lastFix: Location? = null
     private var lastFixAtMs = 0L
 
@@ -1120,6 +1128,7 @@ class HudService : Service(), LocationListener {
         roadBearing = null
         roadPts = null
         currentRoadName = null
+        routeCountryCode = null
         lastFrame = null
         fixQuality = "no fix"
         // Everything the map screen or the Setup screen can still read has to
@@ -1516,8 +1525,7 @@ class HudService : Service(), LocationListener {
                 // precisely when a reroute was asked for. Giving up silently
                 // left the app navigating the old route to the old destination
                 // for the rest of the drive.
-                val wait = (ROUTE_RETRY_BASE_MS shl routeAttempt.coerceAtMost(4))
-                    .coerceAtMost(ROUTE_RETRY_MAX_MS)
+                val wait = RerouteRule.retryDelayMs(routeAttempt)
                 routeAttempt++
                 setStatus("routing failed: ${e.message}. Retrying in ${wait / 1000} s")
                 rerouting.set(false)
@@ -1631,7 +1639,7 @@ class HudService : Service(), LocationListener {
         // (step() -> maybeFetchArea), so this has data wherever free drive would.
         tracker = RouteTracker(r).also {
             it.limitFallback = { lat, lon, h ->
-                SpeedDefaults.limitAt(freeArea, lat, lon, h, country,
+                SpeedDefaults.limitAt(freeArea, lat, lon, h, routeCountryCode ?: country,
                     Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
             }
         }
@@ -1791,6 +1799,7 @@ class HudService : Service(), LocationListener {
         }
 
         lastFrame = frame
+        routeCountryCode = t.route.countryAt(t.alongM)
         // Null while a route is running. This used to keep whatever road free
         // drive matched before the trip started -- possibly the origin, three
         // hundred kilometres back -- and the moment anything cleared the route
@@ -1878,6 +1887,7 @@ class HudService : Service(), LocationListener {
         )
 
         lastFrame = frame
+        routeCountryCode = null
         currentRoadName = free.roadName
         crossTrackM = free.crossM
         // Free drive snaps to the road network the same way a route snaps to
@@ -2210,6 +2220,11 @@ class HudService : Service(), LocationListener {
         if (!RerouteRule.turnedOff(t.lastCrossM, headingOff)) turnedOffSinceMs = 0L
         else if (turnedOffSinceMs == 0L) turnedOffSinceMs = now
         if (!t.offLine && turnedOffSinceMs == 0L) return
+        // A failed request is already retrying on its own back-off. Starting
+        // another every cooldown would hammer a dead network and say
+        // "recalculating" every six seconds with no signal; meanwhile the old
+        // route keeps guiding. The retry reroutes once the network is back.
+        if (routeAttempt > 0) return
         if (!RerouteRule.shouldReroute(
                 offRoute = t.offRoute,
                 crossM = t.lastCrossM,

@@ -52,6 +52,18 @@ object RerouteRule {
     /** Minimum gap between two *requests*, so a failure cannot loop. */
     const val COOLDOWN_MS = 6000L
 
+    /** Back-off for a failed route request: 2 s, 4 s, 8 s, 16 s, then 20 s. */
+    const val RETRY_BASE_MS = 2000L
+    const val RETRY_MAX_MS = 20_000L
+
+    /**
+     * How long to wait after the [attempt]th failure in a row (0-based).
+     * Losing signal in a tunnel is the ordinary case, so it never gives up --
+     * it just asks less often.
+     */
+    fun retryDelayMs(attempt: Int): Long =
+        (RETRY_BASE_MS shl attempt.coerceIn(0, 4)).coerceAtMost(RETRY_MAX_MS)
+
     /** The heading test on its own, for the caller that times it. */
     fun turnedOff(crossM: Double, headingOffDeg: Double?): Boolean =
         headingOffDeg != null && headingOffDeg > TURNED_OFF_DEG && crossM > TURNED_OFF_CROSS_M
