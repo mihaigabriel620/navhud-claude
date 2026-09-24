@@ -229,6 +229,12 @@ class VoiceGuide internal constructor(
 
     private var tts: TextToSpeech? = null
     @Volatile private var ready = testSpeaker != null
+    /**
+     * The engine refused to start (not merely still starting), so this guide
+     * will stay silent; the service builds a new one on its next start.
+     */
+    @Volatile var initFailed = false
+        private set
     private val audio = ctx?.getSystemService(Context.AUDIO_SERVICE) as AudioManager?
     private var focusRequest: AudioFocusRequest? = null
 
@@ -303,6 +309,7 @@ class VoiceGuide internal constructor(
                 ready = true
             } else {
                 Log.w(TAG, "TTS init failed: $status")
+                initFailed = true
             }
         }
     }

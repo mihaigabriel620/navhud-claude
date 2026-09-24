@@ -915,6 +915,12 @@ class HudService : Service(), LocationListener {
             ?: Prefs.useBluetooth(this)
         voiceEnabled = intent?.getBooleanExtra(EXTRA_VOICE, Prefs.voice(this))
             ?: Prefs.voice(this)
+        // A TTS engine that failed to start (still installing, or busy at boot)
+        // left the voice silent for the whole session. Try a fresh one.
+        if (voice?.initFailed == true) {
+            voice?.shutdown()
+            voice = VoiceGuide(this, Prefs.phrases(this))
+        }
         val phrases = Prefs.phrases(this)
         // reset() clears maps the tick thread is writing four times a second,
         // and fixFilter is owned by the location callback. Both belong on the
