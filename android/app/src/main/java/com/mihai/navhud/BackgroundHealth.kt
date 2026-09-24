@@ -64,11 +64,12 @@ object BackgroundHealth {
 
     /** This app's notification switch (API 26+), with the app's page as a fallback. */
     fun openNotificationSettings(ctx: Context) {
-        val direct = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-            .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            runCatching { ctx.startActivity(direct); true }.getOrDefault(false)) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && runCatching {
+                ctx.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            }.getOrDefault(false)) return
         Permissions.openAppSettings(ctx)
     }
 
