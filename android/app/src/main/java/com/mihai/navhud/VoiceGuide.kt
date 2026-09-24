@@ -65,23 +65,12 @@ class VoiceGuide internal constructor(
         internal val MEDIUM = intArrayOf(400, 150)   // >= 50 km/h
         internal val SLOW   = intArrayOf(200, 60)    // town
 
-        private const val CHIME_MARGIN_KPH = 5
-
         /**
          * Say something about a closure from this far out. Roughly a minute at
          * motorway speed, which is enough to take the exit before it rather
          * than sit in the queue after it.
          */
         const val CLOSURE_ANNOUNCE_M = 2000
-
-        /**
-         * Waze does not tell you once and give up: it keeps chirping while you
-         * are over. This repeats on this interval, up to LIMIT_CHIME_MAX times
-         * per stretch, then goes quiet until you drop back under -- persistent
-         * enough to notice, not so persistent you mute the app.
-         */
-        private const val LIMIT_CHIME_REPEAT_MS = 9_000L
-        private const val LIMIT_CHIME_MAX = 4
 
         /**
          * Minimum gap between two announcements. Crossing a speed band changes
@@ -227,14 +216,12 @@ class VoiceGuide internal constructor(
     private val queue = VoiceQueue(testSpeaker ?: TtsSpeaker(), clock)
 
     private val spoken = HashMap<Long, Int>()
-    private var lastChimeMs = 0L
-    private var chimeCount = 0
+    private val speeding = SpeedingRule()
     // What the two suppression rules are measured against: the maneuver of the
     // last announcement, and the maneuver and time of the last "now" call.
     private var lastSpokeKey: Long? = null
     private var lastFinalKey: Long? = null
     private var lastFinalMs = 0L
-    private var wasOver = false
     private var arrivalSpoken = false
     private var arrivalClearMs = 0L
 
@@ -502,7 +489,6 @@ class VoiceGuide internal constructor(
         arrivalClearMs = 0L
         spoken.clear()
         arrivalSpoken = false
-        wasOver = false
         thenCovered = null
         lastTurn = null
     }
@@ -631,32 +617,14 @@ class VoiceGuide internal constructor(
     private val spokenClosures = HashSet<Long>()
     private val spokenFeatures = HashSet<Long>()
 
+    /**
+     * One chime and the limit out loud, as a single item, when [SpeedingRule]
+     * says so -- a bare beep does not tell you what you are supposed to be
+     * doing, and a beep every few seconds is how the app gets muted.
+     */
     private fun chimeIfSpeeding(f: HudFrame) {
-        val over = f.limitKph > 0 && f.speedKph > f.limitKph + CHIME_MARGIN_KPH
-        val now = clock()
-
-        if (over) {
-            // First chime immediately, then repeat on the interval.
-            if (!wasOver) { chimeCount = 0; lastChimeMs = 0L }
-            if (chimeCount < LIMIT_CHIME_MAX && now - lastChimeMs >= LIMIT_CHIME_REPEAT_MS) {
-                lastChimeMs = now
-                chimeCount++
-                // On the first one, say the limit out loud too -- a bare beep
-                // does not tell you what you are supposed to be doing.
-                val text = if (chimeCount == 1) phrases.overLimit(f.limitKph) else ""
-                say(text, Priority.HIGH, TTL_ALERT_MS, earcon = EARCON_WARN)
-            }
-            wasOver = true
-        } else {
-            // Hysteresis: you have to drop back under the posted limit before
-            // the chime re-arms, or it nags on every GPS speed wobble.
-            //
-            // "Under the limit" has to include "there is no limit any more":
-            // limitKph is 0 for unknown and -1 for derestricted, and the old
-            // test required it to be positive, so driving off a known road
-            // while speeding left wasOver latched true and killed the chime
-            // for the rest of the journey.
-            wasOver = false
+        if (speeding.update(clock(), f.speedKph, f.limitKph)) {
+            say(phrases.overLimit(f.limitKph), Priority.HIGH, TTL_ALERT_MS, earcon = EARCON_WARN)
         }
     }
 
