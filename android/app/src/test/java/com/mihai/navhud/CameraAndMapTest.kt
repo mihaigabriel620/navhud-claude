@@ -229,17 +229,35 @@ class CameraAndMapTest {
         assertEquals("bearing drifted while stationary", settled, c.bearing, 1e-9)
     }
 
-    @Test fun `heading is smoothed through a bend but snaps on a U-turn`() {
+    @Test fun `heading is smoothed through a bend and swings round a U-turn`() {
         val c = NavCamera()
         c.update(20.0, 0.0)
         c.update(20.0, 30.0)
         assertTrue("should not jump the whole way in one update",
             c.bearing > 0.0 && c.bearing < 30.0)
 
+        // A reversal used to be taken in one frame, flipping the whole map.
+        // It now swings at MAX_TURN_DPS: a quarter of the way per 0.25 s...
         val c2 = NavCamera()
         c2.update(20.0, 0.0)
-        c2.update(20.0, 180.0)
-        assertEquals("a reversal should snap, not crawl", 180.0, c2.bearing, 1e-9)
+        c2.update(20.0, 179.0, dtSeconds = 0.25)
+        assertEquals(NavCamera.MAX_TURN_DPS * 0.25, c2.bearing, 1e-6)
+        // ...and is all the way round in about a second, not crawling.
+        repeat(8) { c2.update(20.0, 179.0, dtSeconds = 0.25) }
+        assertEquals(179.0, c2.bearing, 2.0)
+    }
+
+    @Test fun `no turn is ever faster than the cap, whatever the frame rate`() {
+        for (dt in listOf(1.0 / 60, 1.0 / 30, 0.25)) {
+            var b = 10.0
+            repeat(100) {
+                val next = NavCamera.turnToward(b, 200.0, dt, 0.2)
+                assertTrue(kotlin.math.abs(NavCamera.shortestTurn(b, next)) <=
+                    NavCamera.MAX_TURN_DPS * dt + 1e-9)
+                b = next
+            }
+            assertEquals(200.0, b, 0.5)
+        }
     }
 
     @Test fun `tilt is constant, moving or stopped`() {

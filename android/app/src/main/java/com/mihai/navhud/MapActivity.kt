@@ -1915,7 +1915,9 @@ class MapActivity : AppCompatActivity() {
             val dtFix = if (lastFusedFixNs == 0L) 1.0
                         else ((fixNs - lastFusedFixNs) / 1e9).coerceIn(0.05, 5.0)
             fusion.setClock(android.os.SystemClock.elapsedRealtime())
-            fusion.onFix(gpsBrg, speed, dtFix)
+            // The car's speed when the bus reports one, so "moving" and
+            // "stationary" mean the same thing here as everywhere else.
+            fusion.onFix(gpsBrg, HudService.carSpeedMps ?: speed, dtFix)
             updateDeclination(loc.latitude, loc.longitude, loc.altitude)
             learnMountingOffset(gpsBrg, speed)
             lastFusedFixNs = fixNs
@@ -2085,8 +2087,13 @@ class MapActivity : AppCompatActivity() {
         // the wrong one on a driveway: it cannot tell which of the two ways
         // along the road you are facing, and it does not move when you swing
         // the car round into a space. The orientation sensor can and does.
+        //
+        // Moving (over 5 km/h, see HeadingFusion.moving) the fused heading is
+        // the smoothed GPS course alone, and the road bearing wins whenever the
+        // marker is snapped -- for the map and the arrow both.
+        val moving = fusion.moving
         val stopped = speed < HeadingFusion.STATIONARY_MPS
-        val targetHeading = if (snapped && !stopped) (roadBrg ?: fusion.heading ?: gpsBrg)
+        val targetHeading = if (snapped && (moving || !stopped)) (roadBrg ?: fusion.heading ?: gpsBrg)
                             else (fusion.heading ?: roadBrg ?: gpsBrg)
 
         // What the *arrow* points at, which is not always what turns the map.
@@ -2116,18 +2123,16 @@ class MapActivity : AppCompatActivity() {
             compassHeading = fusion.heading,
             mapHeading = targetHeading,
             compassDriving = fusion.usingCompass,
-            mountKnown = learnedThisDrive || Prefs.headingCalibrated(this)
+            mountKnown = learnedThisDrive || Prefs.headingCalibrated(this),
+            moving = moving
         )
         if (arrowHeading != null) {
-            puckBearing = if (puckBearing.isNaN() ||
-                kotlin.math.abs(Geo.signedDelta(arrowHeading, puckBearing)) > 90.0) {
-                arrowHeading
-            } else {
-                Geo.normalizeDeg(
-                    puckBearing + Geo.signedDelta(arrowHeading, puckBearing) *
-                        (1.0 - kotlin.math.exp(-dt / 0.2))
-                )
-            }
+            // Eased, and never faster than NavCamera.MAX_TURN_DPS -- a U-turn
+            // or the first fix after a tunnel swings round instead of
+            // flipping, in step with the map. Only the very first heading is
+            // taken whole.
+            puckBearing = if (puckBearing.isNaN()) arrowHeading
+                          else NavCamera.turnToward(puckBearing, arrowHeading, dt, 0.2)
         }
 
         updatePuck(lat, lon, puckBearing)

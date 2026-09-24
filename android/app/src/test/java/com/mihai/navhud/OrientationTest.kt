@@ -8,6 +8,12 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
+ * 3.6 km/h. Since 1.27 the fusion ignores turn-rate sensors above 5 km/h, so
+ * the tests that drive them after a GPS fix take the fix at a crawl.
+ */
+private const val CRAWL_MPS = 1.0
+
+/**
  * The orientation-sensor path: "make the arrow point where the car points even
  * when it is standing still."
  *
@@ -92,7 +98,7 @@ class OrientationTest {
     @Test
     fun `a gap in the samples is not integrated`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 20.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         var r = rotX(20.0)
         f.onOrientation(r, 0.02)
         r = mul(rotZ(-40.0), r)
@@ -164,7 +170,7 @@ class DoubleIntegrationTest {
     @Test
     fun `both sensors reporting a 90 degree turn move the heading 90 degrees`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 20.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         var r = DoubleArray(9).also { it[0] = 1.0; it[4] = 1.0; it[8] = 1.0 }
         f.onOrientation(r, 0.02)
 
@@ -183,7 +189,7 @@ class DoubleIntegrationTest {
     @Test
     fun `the HUD IMU keeps its reference orientation current while it drives`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 20.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         var r = DoubleArray(9).also { it[0] = 1.0; it[4] = 1.0; it[8] = 1.0 }
         f.onOrientation(r, 0.02)
 
@@ -241,7 +247,7 @@ class MixedFrameTest {
     @Test
     fun `samples from a second sensor frame cannot become a phantom turn`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 20.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         assertEquals(0.0, f.heading!!, 0.01)
 
         // Sensor A sits at the true heading; sensor B's frame is 25 degrees
@@ -260,7 +266,7 @@ class MixedFrameTest {
     @Test
     fun `a real turn is still tracked after a frame change`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 20.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         var r = identity
         f.onOrientation(r, 0.02, frameId = 1)
 

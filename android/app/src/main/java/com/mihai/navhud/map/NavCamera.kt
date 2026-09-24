@@ -1,7 +1,6 @@
 package com.mihai.navhud.map
 
 import com.mihai.navhud.Geo
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -135,6 +134,26 @@ class NavCamera {
             return ZOOM.last()
         }
 
+        /**
+         * Fastest the map or the arrow may turn, degrees per second.
+         *
+         * A turn over 90 degrees used to be taken in a single frame -- a
+         * U-turn, or the first bearing after a tunnel, flipped the whole map.
+         * 180 deg/s makes a reversal a one-second swing the eye can follow.
+         */
+        const val MAX_TURN_DPS = 180.0
+
+        /**
+         * One frame of easing from [from] toward [to]: exponential with time
+         * constant [tauS], the step capped at [MAX_TURN_DPS].
+         */
+        fun turnToward(from: Double, to: Double, dtS: Double, tauS: Double): Double {
+            val turn = shortestTurn(from, to)
+            val eased = turn * (1.0 - kotlin.math.exp(-dtS / tauS))
+            val cap = MAX_TURN_DPS * dtS
+            return Geo.normalizeDeg(from + eased.coerceIn(-cap, cap))
+        }
+
         /** Shortest signed turn from a to b, in degrees, -180..180. */
         fun shortestTurn(from: Double, to: Double): Double {
             var d = (to - from) % 360.0
@@ -193,15 +212,12 @@ class NavCamera {
         }
 
         val dt = dtSeconds.coerceIn(0.005, 0.5)
-        val aBearing = 1.0 - kotlin.math.exp(-dt / TAU_BEARING)
         val aZoom = 1.0 - kotlin.math.exp(-dt / TAU_ZOOM)
         val aTilt = 1.0 - kotlin.math.exp(-dt / TAU_TILT)
 
-        val turn = shortestTurn(bearing, targetBearing)
-        // Snap through a big change (a U-turn, or the first fix after a tunnel)
-        // instead of spinning the long way round slowly.
-        bearing = if (abs(turn) > 90.0) targetBearing
-                  else (bearing + turn * aBearing + 360.0) % 360.0
+        // Always the short way round, and a big change (a U-turn, the first
+        // fix after a tunnel) at MAX_TURN_DPS rather than in one frame.
+        bearing = turnToward(bearing, targetBearing, dt, TAU_BEARING)
 
         zoom += (targetZoom - zoom) * aZoom
         tilt += (targetTilt - tilt) * aTilt

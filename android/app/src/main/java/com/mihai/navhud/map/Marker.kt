@@ -31,12 +31,15 @@ object Marker {
      *                         without it the compass reads the *phone's*
      *                         heading rather than the car's, which would put
      *                         the arrow at an angle to a correctly aligned map
+     * @param moving           [HeadingFusion.moving]: over 5 km/h the arrow
+     *                         and the map point the same way, always
      */
     fun headingFor(
         compassHeading: Double?,
         mapHeading: Double?,
         compassDriving: Boolean,
-        mountKnown: Boolean
+        mountKnown: Boolean,
+        moving: Boolean = false
     ): Double? =
-        if (compassDriving && mountKnown) (compassHeading ?: mapHeading) else mapHeading
+        if (!moving && compassDriving && mountKnown) (compassHeading ?: mapHeading) else mapHeading
 }
