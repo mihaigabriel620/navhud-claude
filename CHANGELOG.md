@@ -1,5 +1,13 @@
 # Changelog
 
+## App 1.29.1 — the search button, not the box
+
+- 1.29 moved the whole search box against the screen edge and squared off
+  its left side. What was wanted was only the round search button moved left,
+  into the box's rounded end. The box is back where it was, fully rounded, and
+  the button now sits in its rounded end with the same small gap all round.
+- The OpenStreetMap (i) stays just above the box, lined up with its left edge.
+
 ## App 1.29 — the arrow stays on the road
 
 Fixes for what the owner saw with 1.28 parked at home (free drive, indoors).

@@ -272,22 +272,22 @@
       the entire interface, and everything else moved into a sheet you open
       deliberately.
 
-      Flush against the left edge (1.29), squared off on that side: a gap
-      there read as a floating chip, and the owner wanted it stuck to the edge.
-      The OpenStreetMap (i) sits just above it, see MapActivity.placeAttribution.
+      No start padding: the round search button sits in the pill's rounded
+      end with the same 2dp all round, concentric with it, instead of floating
+      with a gap on its left. The OpenStreetMap (i) sits just above the pill,
+      see MapActivity.placeAttribution.
     -->
     <LinearLayout
         android:id="@+id/tripPill"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|start"
-        android:layout_marginStart="0dp"
-        android:layout_marginBottom="@dimen/space_wide"
+        android:layout_margin="@dimen/space_wide"
         android:background="@drawable/bg_trip_pill"
         android:elevation="10dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="@dimen/space_tight"
+        android:paddingStart="0dp"
         android:paddingEnd="@dimen/space_tight">
 
         <!--

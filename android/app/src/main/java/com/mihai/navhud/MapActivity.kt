@@ -2334,7 +2334,7 @@ class MapActivity : AppCompatActivity() {
         val m = map ?: return
         if (tripPill.height == 0) return
         val d = resources.displayMetrics.density
-        m.uiSettings.setAttributionMargins((4 * d).toInt(), 0, 0,
+        m.uiSettings.setAttributionMargins(tripPill.left + (4 * d).toInt(), 0, 0,
             mapView.height - tripPill.top + (4 * d).toInt())
     }
 
