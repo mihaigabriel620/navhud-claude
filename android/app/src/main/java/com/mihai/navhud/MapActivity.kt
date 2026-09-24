@@ -1595,6 +1595,7 @@ class MapActivity : AppCompatActivity() {
             cameraLabel.setIfChanged(when (a.camera.kind) {
                 SpeedCamera.Kind.AVERAGE -> getString(R.string.cam_average)
                 SpeedCamera.Kind.TRAFFIC_LIGHT -> getString(R.string.cam_light)
+                SpeedCamera.Kind.ANPR -> getString(R.string.cam_anpr)
                 else -> getString(R.string.cam_fixed)
             })
             val limit = if (a.camera.limitKph > 0) " · ${a.camera.limitKph}" else ""

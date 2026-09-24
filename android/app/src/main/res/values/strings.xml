@@ -57,6 +57,7 @@
     <string name="cam_fixed">Speed camera</string>
     <string name="cam_average">Average speed check</string>
     <string name="cam_light">Traffic light camera</string>
+    <string name="cam_anpr">ANPR camera</string>
     <string name="cams_fresh">cameras %1$s</string>
     <string name="cams_never">cameras not loaded</string>
 
