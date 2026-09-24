@@ -39,6 +39,7 @@ import com.mihai.navhud.nav.AreaRoads
 import com.mihai.navhud.map.NavCamera
 import com.mihai.navhud.map.FreeDriveMotion
 import com.mihai.navhud.map.PuckMotion
+import com.mihai.navhud.map.RouteLine
 import com.mihai.navhud.nav.RoadSigns
 import com.mihai.navhud.nav.RoadFeature
 import com.mihai.navhud.nav.Route
@@ -187,46 +188,41 @@ class MapActivity : AppCompatActivity() {
 
         // Style ids live in MapIds, where a unit test can prove they are all
         // different from each other. See the note in that file.
-        private const val ROUTE_SOURCE = MapIds.ROUTE_SOURCE
+        private const val ROUTE_NEAR_SOURCE = MapIds.ROUTE_NEAR_SOURCE
+        private const val ROUTE_FAR_SOURCE = MapIds.ROUTE_FAR_SOURCE
         private const val ALT_SOURCE = MapIds.ALT_SOURCE
         private const val ALT_LAYER = MapIds.ALT_LAYER
         private const val ROUTE_CASING = MapIds.ROUTE_CASING
+        private const val ROUTE_CASING_FAR = MapIds.ROUTE_CASING_FAR
         private const val ROUTE_LAYER = MapIds.ROUTE_LAYER
-        private const val ROUTE_DONE_SOURCE = MapIds.ROUTE_DONE_SOURCE
-        private const val ROUTE_DONE_LAYER = MapIds.ROUTE_DONE_LAYER
+        private const val ROUTE_LAYER_FAR = MapIds.ROUTE_LAYER_FAR
         private const val PUCK_LAYER = MapIds.PUCK_LAYER
         private const val PUCK_ICON = MapIds.PUCK_ICON
         private const val PUCK_DOT_ICON = MapIds.PUCK_DOT_ICON
         private const val CAM_SOURCE = MapIds.CAM_SOURCE
         private const val CAM_LAYER = MapIds.CAM_LAYER
         private const val CAM_ICON = MapIds.CAM_ICON
-        // The travelled-route layer is a second line over the route, not a
-        // gradient on it. MapLibre's `lineGradient` replaces `lineColor`
-        // outright and needs `lineMetrics` on a source holding a single
-        // feature -- and the route line is neither: it is one feature per run
-        // of equal traffic level, coloured per feature. A gradient would have
-        // meant giving up the traffic colouring to show how far you had got,
-        // which is a bad trade. Two layers keep both.
-        //
-        // These two belong in MapIds with the rest, and the uniqueness test
-        // there does not cover them until they are moved.
-        /** Dim warm grey: read as "behind you" without competing with the amber. */
-        private const val ROUTE_DONE_COLOR = "#5E5648"
         /** Cap the drawn polyline; a full geometry can be many thousands of points. */
         private const val MAX_POLY_POINTS = 1500
 
         /**
-         * Rebuild the travelled line only after moving this far, metres.
-         *
-         * It is rebuilt from `alongM`, which advances every frame, and each
-         * rebuild is a GeoJSON parse plus a source upload on the main thread.
-         * Two metres is well under the width the line is drawn at, so nothing
-         * visible is lost, and at 100 km/h it is a redraw about fourteen times
-         * a second rather than thirty.
+         * The route line starts under the arrow, Waze-style: nothing is drawn
+         * behind the car. The first [NEAR_WINDOW_M] or so ahead are one
+         * full-resolution source, rebuilt from the frame loop; the rest is a
+         * second, thinned source whose start moves on in [FAR_STEP_M] steps,
+         * so it is rebuilt every 500 m rather than every frame. The near piece
+         * ends exactly where the far one starts. See RouteLine.
          */
-        const val TRAVELLED_EPSILON_M = 2.0
-        /** Same reasoning as MAX_POLY_POINTS, for the part already driven. */
-        private const val TRAVELLED_MAX_POINTS = 300
+        const val NEAR_WINDOW_M = 2000.0
+        const val FAR_STEP_M = 500.0
+
+        /**
+         * Rebuild the near piece at most this often, ns (~15 Hz), and only
+         * after the arrow has moved this far. The cut sits under the arrow,
+         * which covers a couple of metres of it at any nav zoom.
+         */
+        const val ROUTE_NEAR_MIN_NS = 66_000_000L
+        const val ROUTE_NEAR_EPSILON_M = 0.5
 
         /** No `$IMU` for this long and the HUD's sensor is treated as gone. */
         private const val IMU_TIMEOUT_MS = 1500L
@@ -888,13 +884,7 @@ class MapActivity : AppCompatActivity() {
      */
     private fun clearOurStyle(s: Style) {
         for (id in MapIds.layers) runCatching { s.removeLayer(id) }
-        runCatching { s.removeLayer(ROUTE_DONE_LAYER) }
         for (id in MapIds.sources) runCatching { s.removeSource(id) }
-        // Named separately only because these two ids have not been moved into
-        // MapIds yet. Left out, a style reload would leave the old travelled
-        // layer standing where it was and stack the new route line *over* it,
-        // so the part already driven would stop showing.
-        runCatching { s.removeSource(ROUTE_DONE_SOURCE) }
     }
 
     /**
@@ -945,67 +935,59 @@ class MapActivity : AppCompatActivity() {
                 PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
             )
         )
-        addSourceSafely(s, GeoJsonSource(ROUTE_SOURCE))
-        addLayerSafely(s,
-            // The casing. Near-black rather than the brown it used to be:
-            // two things separate a route from a road, colour and an edge.
-            // The map's roads are warm grey now, which gives the colour; this
-            // gives the edge, so the amber sits *on* the map instead of being
-            // one more line in it, and it still reads where the route runs
-            // along a pale road or over a junction full of them.
-            LineLayer(ROUTE_CASING, ROUTE_SOURCE).withProperties(
-                PropertyFactory.lineColor(Color.parseColor("#08080A")),
-                PropertyFactory.lineWidth(
-                    Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
-                        Expression.stop(10f, 7f), Expression.stop(18f, 26f))),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+        // The route ahead, in two sources (see NEAR_WINDOW_M), stacked casing
+        // far, casing near, line far, line near: both casings under both lines,
+        // so where the pieces meet no casing is painted across the amber.
+        // Nothing is drawn behind the car, which is also what tells the two
+        // passes of a route that doubles back apart.
+        addSourceSafely(s, GeoJsonSource(ROUTE_FAR_SOURCE))
+        addSourceSafely(s, GeoJsonSource(ROUTE_NEAR_SOURCE))
+        for ((id, src) in listOf(ROUTE_CASING_FAR to ROUTE_FAR_SOURCE,
+                                 ROUTE_CASING to ROUTE_NEAR_SOURCE)) {
+            addLayerSafely(s,
+                // The casing. Near-black rather than the brown it used to be:
+                // two things separate a route from a road, colour and an edge.
+                // The map's roads are warm grey now, which gives the colour;
+                // this gives the edge, so the amber sits *on* the map instead
+                // of being one more line in it, and it still reads where the
+                // route runs along a pale road or over a junction full of them.
+                LineLayer(id, src).withProperties(
+                    PropertyFactory.lineColor(Color.parseColor("#08080A")),
+                    PropertyFactory.lineWidth(
+                        Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
+                            Expression.stop(10f, 7f), Expression.stop(18f, 26f))),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                )
             )
-        )
+        }
         // The line is coloured by live traffic, the way every nav app has done
         // it since TomTom put it on a windscreen: amber running freely, through
         // orange and red, to a dark red for a stretch the provider reports as
         // closed. The levels come from Mapbox's congestion and closure
         // annotations, which is also how roadworks show up.
-        addLayerSafely(s,
-            LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
-                PropertyFactory.lineColor(
-                    Expression.step(
-                        Expression.toNumber(Expression.get("level")),
-                        Expression.color(Color.parseColor("#FFB121")),
-                        Expression.stop(2, Expression.color(Color.parseColor("#FF6A00"))),
-                        Expression.stop(3, Expression.color(red)),
-                        Expression.stop(4, Expression.color(Color.parseColor("#B31200"))),
-                        Expression.stop(5, Expression.color(Color.parseColor("#6E0A00")))
-                    )
-                ),
-                PropertyFactory.lineWidth(
-                    Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
-                        Expression.stop(10f, 5f), Expression.stop(18f, 20f))),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+        for ((id, src) in listOf(ROUTE_LAYER_FAR to ROUTE_FAR_SOURCE,
+                                 ROUTE_LAYER to ROUTE_NEAR_SOURCE)) {
+            addLayerSafely(s,
+                LineLayer(id, src).withProperties(
+                    PropertyFactory.lineColor(
+                        Expression.step(
+                            Expression.toNumber(Expression.get("level")),
+                            Expression.color(Color.parseColor("#FFB121")),
+                            Expression.stop(2, Expression.color(Color.parseColor("#FF6A00"))),
+                            Expression.stop(3, Expression.color(red)),
+                            Expression.stop(4, Expression.color(Color.parseColor("#B31200"))),
+                            Expression.stop(5, Expression.color(Color.parseColor("#6E0A00")))
+                        )
+                    ),
+                    PropertyFactory.lineWidth(
+                        Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
+                            Expression.stop(10f, 5f), Expression.stop(18f, 20f))),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                )
             )
-        )
-
-        // The part already driven, over the route line and under everything
-        // else. Every nav app dims the road behind you, and the reason is not
-        // decoration: on a route that doubles back -- a motorway and its
-        // service road, a ring road taken twice -- two amber lines an inch
-        // apart tell you nothing about which one you are on, and one amber and
-        // one grey tell you immediately.
-        addSourceSafely(s, GeoJsonSource(ROUTE_DONE_SOURCE))
-        addLayerSafely(s,
-            // Same width ramp as the route line, so it covers it exactly
-            // rather than leaving an amber fringe along one edge.
-            LineLayer(ROUTE_DONE_LAYER, ROUTE_DONE_SOURCE).withProperties(
-                PropertyFactory.lineColor(Color.parseColor(ROUTE_DONE_COLOR)),
-                PropertyFactory.lineWidth(
-                    Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
-                        Expression.stop(10f, 5f), Expression.stop(18f, 20f))),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
-            )
-        )
+        }
 
         runCatching { s.addImage(CAM_ICON, scaledToDp(cameraBitmap(), 30)) }
         addSourceSafely(s, GeoJsonSource(CAM_SOURCE))
@@ -1233,13 +1215,8 @@ class MapActivity : AppCompatActivity() {
         val route = HudService.currentRoute
         val s = style
 
-        if (s != null && route !== drawnRoute) {
-            drawRoute(s, route); drawnRoute = route
-            // A new route is a new set of distances, so the throttle below has
-            // nothing to compare against any more.
-            travelledDrawnM = -1.0
-        }
-        if (s != null) drawTravelled(s, route, HudService.alongM)
+        // Also how the line is cleared when the route ends: route is null.
+        if (s != null && route !== drawnRoute) { drawRoute(s, route); drawnRoute = route }
         if (s != null) {
             // Not in zone mode. Everything else about a danger zone is careful
             // not to publish a position -- the distance is blurred, the text
@@ -2136,6 +2113,10 @@ class MapActivity : AppCompatActivity() {
         }
 
         updatePuck(lat, lon, puckBearing)
+        // The route line starts under the arrow: from the arrow's own distance
+        // while it runs on the line, else from the service's projection.
+        maybeDrawRouteLine(route, if (onRouteSnap) puckAlong else HudService.alongM,
+            System.nanoTime())
         HudService.headingSource = fusion.describe()
         if (!following) return
 
@@ -2439,9 +2420,6 @@ class MapActivity : AppCompatActivity() {
     /** The puck layer of the current style. See newPuckLayer. */
     private var puckLayer: org.maplibre.android.style.layers.Layer? = null
 
-    /** Distance along the route the travelled line was last built for; -1 = none drawn. */
-    private var travelledDrawnM = -1.0
-
     private fun updatePuck(lat: Double, lon: Double, bearing: Double) {
         val layer = puckLayer ?: return
         // Setting a layer property marks the map dirty, and MapLibre renders
@@ -2504,139 +2482,71 @@ class MapActivity : AppCompatActivity() {
         map?.style?.getSourceAs<GeoJsonSource>(ALT_SOURCE)?.setGeoJson(FeatureCollectionEmpty)
     }
 
-    /**
-     * The part of the route already driven, as far as [alongM].
-     *
-     * A second polyline rather than a gradient on the first one. `lineGradient`
-     * would be the obvious way to fade the line behind the car, and it cannot
-     * be used here: it replaces `lineColor` outright, and `lineColor` on the
-     * route line is the live traffic colouring -- amber through red -- which
-     * is worth considerably more than the fade. It also requires `lineMetrics`
-     * on a source holding one feature, and the route source holds one feature
-     * per run of equal traffic level. So: a dimmer line, drawn over the top,
-     * ending exactly where the car is.
-     */
-    private fun drawTravelled(s: Style, route: Route?, alongM: Double) {
-        val src = s.getSourceAs<GeoJsonSource>(ROUTE_DONE_SOURCE) ?: return
-        if (route == null || route.pts.size < 2 || alongM <= 0.0) {
-            // Nothing to dim. Guarded so that with no route running this is
-            // not uploading an empty collection five times a second for ever.
-            if (travelledDrawnM == -1.0) return
-            src.setGeoJson(FeatureCollectionEmpty)
-            travelledDrawnM = -1.0
-            return
-        }
-        if (kotlin.math.abs(alongM - travelledDrawnM) < TRAVELLED_EPSILON_M) return
-        travelledDrawnM = alongM
+    // ---- the route line ----------------------------------------------------
 
-        // Last vertex at or before the car. Binary search rather than a scan:
-        // this runs on the main thread against a polyline that can be tens of
-        // thousands of points on a cross-country route.
-        var lo = 0
-        var hi = route.cum.size - 1
-        while (lo < hi) {
-            val mid = (lo + hi + 1) ushr 1
-            if (route.cum[mid] <= alongM) lo = mid else hi = mid - 1
-        }
-        if (lo < 1) {
-            // Still inside the first segment: there is no polyline to draw yet.
-            src.setGeoJson(FeatureCollectionEmpty)
-            return
-        }
+    /** The route the line is drawn from, and its per-segment traffic levels. */
+    private var lineRoute: Route? = null
+    private var lineLevels = IntArray(0)
+    private var lineStride = 1
+    /** Where the near piece last started, metres; NaN = not drawn. */
+    private var nearDrawnFrom = Double.NaN
+    private var nearDrawnAtNs = 0L
+    /** Which FAR_STEP_M step the far piece was built for. */
+    private var farDrawnStep = Long.MIN_VALUE
 
-        val stride = maxOf(1, lo / TRAVELLED_MAX_POINTS)
-        val pts = ArrayList<Point>(lo / stride + 3)
-        var k = 0
-        while (k <= lo) { pts.add(Point.fromLngLat(route.pts[k][1], route.pts[k][0])); k += stride }
-        // The stride can step straight over the last vertex, which is the one
-        // end of this line that has to be exact.
-        if (pts.size < 2 || k - stride != lo) {
-            pts.add(Point.fromLngLat(route.pts[lo][1], route.pts[lo][0]))
-        }
-        // ...and then the car itself, part-way along the next segment. Without
-        // it the dim line ends at whichever vertex was last passed, so it
-        // visibly lags the marker by up to a segment and catches up in jumps.
-        val next = lo + 1
-        if (next < route.pts.size) {
-            val segM = route.cum[next] - route.cum[lo]
-            if (segM > 0.01) {
-                val f = ((alongM - route.cum[lo]) / segM).coerceIn(0.0, 1.0)
-                val a = route.pts[lo]
-                val b = route.pts[next]
-                pts.add(Point.fromLngLat(a[1] + (b[1] - a[1]) * f, a[0] + (b[0] - a[0]) * f))
-            }
-        }
-
-        if (pts.size < 2) src.setGeoJson(FeatureCollectionEmpty)
-        else src.setGeoJson(Feature.fromGeometry(LineString.fromLngLats(pts)))
-    }
-
+    /** A new route, or none: work out its colours and draw it from the car. */
     private fun drawRoute(s: Style, route: Route?) {
-        val src = s.getSourceAs<GeoJsonSource>(ROUTE_SOURCE) ?: return
-        if (route == null || route.pts.size < 2) {
-            src.setGeoJson(FeatureCollectionEmpty)
+        lineRoute = route?.takeIf { it.pts.size >= 2 }
+        nearDrawnFrom = Double.NaN
+        farDrawnStep = Long.MIN_VALUE
+        val r = lineRoute
+        if (r == null) {
+            s.getSourceAs<GeoJsonSource>(ROUTE_NEAR_SOURCE)?.setGeoJson(FeatureCollectionEmpty)
+            s.getSourceAs<GeoJsonSource>(ROUTE_FAR_SOURCE)?.setGeoJson(FeatureCollectionEmpty)
             return
         }
-        val nSeg = route.pts.size - 1
-        val stride = maxOf(1, route.pts.size / MAX_POLY_POINTS)
-
-        // 0 unknown, 1 free .. 4 standstill, 5 closed.
-        val levels = IntArray(nSeg) { i ->
-            if (route.closed.getOrElse(i) { false }) 5
-            else route.congestion.getOrElse(i) { 0 }
-        }
-        // Traffic alternates segment by segment on a busy motorway, and one
-        // GeoJSON feature per run would undo the point-count cap entirely --
-        // thousands of two-point features instead of one line. Absorb runs
-        // shorter than the line is wide into their neighbour: they were never
-        // visible as separate colours anyway.
-        // Closures are exempt; a closed stretch is worth a feature of its own.
-        //
-        // Measured in *metres*, not in sampling stride. The stride version only
-        // ran when stride > 1, i.e. above MAX_POLY_POINTS vertices -- and a
-        // typical 6 km urban route at overview=full is 400-1200 points, so it
-        // never ran at all. Every congestion transition became its own
-        // two-point Feature: 200-400 of them, built on the main thread, which
-        // is a visible lurch at exactly the wrong moment -- the redraw after a
-        // reroute.
-        run {
-            var i = 0
-            while (i < nSeg) {
-                var j = i
-                while (j + 1 < nSeg && levels[j + 1] == levels[i]) j++
-                val runM = route.cum[j + 1] - route.cum[i]
-                if ((runM < MIN_TRAFFIC_RUN_M || j - i + 1 < stride) &&
-                    levels[i] != 5 && i > 0) {
-                    for (k in i..j) levels[k] = levels[i - 1]
-                }
-                i = j + 1
-            }
-        }
-
-        // One feature per run of equal traffic level, sharing end vertices so
-        // the line stays continuous where the colour changes.
-        val feats = ArrayList<Feature>()
-        var i = 0
-        while (i < nSeg) {
-            val level = levels[i]
-            var j = i
-            while (j + 1 < nSeg && levels[j + 1] == level) j++
-            val endVertex = j + 1
-            val pts = ArrayList<Point>((endVertex - i) / stride + 2)
-            var k = i
-            while (k < endVertex) {
-                pts.add(Point.fromLngLat(route.pts[k][1], route.pts[k][0])); k += stride
-            }
-            pts.add(Point.fromLngLat(route.pts[endVertex][1], route.pts[endVertex][0]))
-            if (pts.size >= 2) {
-                feats.add(Feature.fromGeometry(LineString.fromLngLats(pts)).apply {
-                    addNumberProperty("level", level)
-                })
-            }
-            i = j + 1
-        }
-        src.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(feats))
+        lineStride = maxOf(1, r.pts.size / MAX_POLY_POINTS)
+        lineLevels = RouteLine.trafficLevels(r, lineStride, MIN_TRAFFIC_RUN_M)
+        drawRouteLine(s, r, HudService.alongM)
     }
+
+    /**
+     * From the frame loop: move the start of the line to [alongM], at most
+     * ~15 times a second. Only for the route [drawRoute] was given -- a new
+     * one, or none, is refresh()'s to install.
+     */
+    private fun maybeDrawRouteLine(route: Route?, alongM: Double, nowNs: Long) {
+        val s = style ?: return
+        val r = lineRoute ?: return
+        if (route !== r || alongM.isNaN()) return
+        if (!nearDrawnFrom.isNaN() &&
+            (kotlin.math.abs(alongM - nearDrawnFrom) < ROUTE_NEAR_EPSILON_M ||
+                nowNs - nearDrawnAtNs < ROUTE_NEAR_MIN_NS)) return
+        nearDrawnAtNs = nowNs
+        drawRouteLine(s, r, alongM)
+    }
+
+    private fun drawRouteLine(s: Style, r: Route, alongM: Double) {
+        val from = alongM.coerceIn(0.0, r.cum.last())
+        val step = kotlin.math.floor(from / FAR_STEP_M).toLong()
+        val farFrom = step * FAR_STEP_M + NEAR_WINDOW_M
+        if (step != farDrawnStep) {
+            farDrawnStep = step
+            s.getSourceAs<GeoJsonSource>(ROUTE_FAR_SOURCE)?.setGeoJson(
+                routeFeatures(RouteLine.routeSlice(r, farFrom, r.cum.last(), lineLevels, lineStride)))
+        }
+        nearDrawnFrom = from
+        s.getSourceAs<GeoJsonSource>(ROUTE_NEAR_SOURCE)?.setGeoJson(
+            routeFeatures(RouteLine.routeSlice(r, from, farFrom, lineLevels)))
+    }
+
+    private fun routeFeatures(runs: List<RouteLine.Run>) =
+        org.maplibre.geojson.FeatureCollection.fromFeatures(runs.map { run ->
+            Feature.fromGeometry(LineString.fromLngLats(
+                run.pts.map { Point.fromLngLat(it[1], it[0]) })).apply {
+                addNumberProperty("level", run.level)
+            }
+        })
 
     private fun drawCameras(s: Style, cams: List<SpeedCamera>) {
         val src = s.getSourceAs<GeoJsonSource>(CAM_SOURCE) ?: return
