@@ -24,6 +24,8 @@ object MapIds {
     const val ROUTE_FAR_SOURCE = "navhud-route-far"
     const val ALT_SOURCE = "navhud-alts"
     const val CAM_SOURCE = "navhud-cams"
+    // Only used if the indicator layer cannot be created (see MapActivity).
+    const val PUCK_FALLBACK_SOURCE = "navhud-puck-fallback"
 
     // layers, in the order they are stacked
     const val ALT_LAYER = "navhud-alts-line"
@@ -40,7 +42,8 @@ object MapIds {
     const val PUCK_DOT_ICON = "navhud-puck-dot"
     const val CAM_ICON = "navhud-cam-icon"
 
-    val sources = listOf(ROUTE_NEAR_SOURCE, ROUTE_FAR_SOURCE, ALT_SOURCE, CAM_SOURCE)
+    val sources = listOf(ROUTE_NEAR_SOURCE, ROUTE_FAR_SOURCE, ALT_SOURCE, CAM_SOURCE,
+        PUCK_FALLBACK_SOURCE)
 
     val layers = listOf(
         ALT_LAYER, ROUTE_CASING_FAR, ROUTE_CASING, ROUTE_LAYER_FAR, ROUTE_LAYER,

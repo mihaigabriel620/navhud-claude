@@ -1058,6 +1058,9 @@ class MapActivity : AppCompatActivity() {
             )
             addLayerSafely(s, layer)
         }
+        // No indicator layer means no arrow at all -- on a car display that is
+        // not a degraded mode, it is a broken one. Fall back to the old symbol.
+        puckFallback = if (puckLayer == null) installFallbackPuck(s) else null
         puckShownDot = null
 
         verifyStyle(s)
@@ -1091,6 +1094,28 @@ class MapActivity : AppCompatActivity() {
         }
         layer
     }.onFailure { android.util.Log.e(TAG, "could not create the puck layer", it) }.getOrNull()
+
+    /**
+     * The pre-1.27 puck: a map-aligned symbol on a GeoJSON source. It trails
+     * the camera by a frame, which is why it is not the default, but it has
+     * worked on every MapLibre version -- the one thing the arrow must do.
+     */
+    private fun installFallbackPuck(s: Style): GeoJsonSource? = runCatching {
+        android.util.Log.w(TAG, "using the fallback symbol puck")
+        addSourceSafely(s, GeoJsonSource(MapIds.PUCK_FALLBACK_SOURCE))
+        addLayerSafely(s,
+            SymbolLayer(PUCK_LAYER, MapIds.PUCK_FALLBACK_SOURCE).withProperties(
+                PropertyFactory.iconImage(Expression.get("icon")),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+                // Flat on the road and turned with it, as the indicator draws it.
+                PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
+                PropertyFactory.iconRotate(Expression.get("bearing"))
+            )
+        )
+        s.getSourceAs<GeoJsonSource>(MapIds.PUCK_FALLBACK_SOURCE)
+    }.onFailure { android.util.Log.e(TAG, "fallback puck failed too", it) }.getOrNull()
 
     /** MapLibre treats bitmaps as raw pixels, so scale by screen density. */
     private fun scaledToDp(src: android.graphics.Bitmap, dp: Int): android.graphics.Bitmap {
@@ -2471,9 +2496,11 @@ class MapActivity : AppCompatActivity() {
     private var puckShownDot: Boolean? = null
     /** The puck layer of the current style. See newPuckLayer. */
     private var puckLayer: org.maplibre.android.style.layers.Layer? = null
+    /** Set instead of [puckLayer] when the indicator layer is unavailable. */
+    private var puckFallback: GeoJsonSource? = null
 
     private fun updatePuck(lat: Double, lon: Double, bearing: Double) {
-        val layer = puckLayer ?: return
+        if (puckLayer == null && puckFallback == null) return
         // Setting a layer property marks the map dirty, and MapLibre renders
         // when dirty -- so re-setting this every frame was, by itself, enough
         // to keep the GPU redrawing the whole map while the car was parked at
@@ -2494,17 +2521,37 @@ class MapActivity : AppCompatActivity() {
         // the true thing: here you are, direction not known yet. Google Maps
         // does the same, and switches to a chevron the moment it can.
         val dot = bearing.isNaN()
-        if (dot != puckShownDot) {
-            puckShownDot = dot
-            layer.setProperties(
-                LayoutPropertyValue("bearing-image", if (dot) PUCK_DOT_ICON else PUCK_ICON))
+        val brg = if (dot) 0.0 else Geo.normalizeDeg(bearing)
+        val layer = puckLayer
+        if (layer != null) {
+            val ok = runCatching {
+                if (dot != puckShownDot) {
+                    puckShownDot = dot
+                    layer.setProperties(
+                        LayoutPropertyValue("bearing-image", if (dot) PUCK_DOT_ICON else PUCK_ICON))
+                }
+                // The bearing is the absolute heading, clockwise from true
+                // north; the layer applies the camera's own rotation itself.
+                layer.setProperties(
+                    PaintPropertyValue("location", arrayOf(lat, lon, 0.0)),
+                    PaintPropertyValue("bearing", brg)
+                )
+            }.onFailure { android.util.Log.e(TAG, "puck layer update failed", it) }.isSuccess
+            if (ok) return
+            // Reflection into a package-private class: if a property ever stops
+            // being accepted, swap to the symbol rather than lose the arrow.
+            puckLayer = null
+            map?.style?.let { s ->
+                runCatching { s.removeLayer(layer) }
+                puckFallback = installFallbackPuck(s)
+            }
         }
-        // The bearing is the absolute heading, clockwise from true north; the
-        // layer applies the camera's own rotation itself.
-        layer.setProperties(
-            PaintPropertyValue("location", arrayOf(lat, lon, 0.0)),
-            PaintPropertyValue("bearing", if (dot) 0.0 else Geo.normalizeDeg(bearing))
-        )
+        puckFallback?.let { src ->
+            val f = Feature.fromGeometry(Point.fromLngLat(lon, lat))
+            f.addStringProperty("icon", if (dot) PUCK_DOT_ICON else PUCK_ICON)
+            f.addNumberProperty("bearing", brg)
+            runCatching { src.setGeoJson(f) }
+        }
     }
 
     /**
