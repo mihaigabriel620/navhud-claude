@@ -132,4 +132,13 @@ class FixFilterTest {
         assertTrue(f.accept(Fix(50.8, 4.35, 5f, 10f, 90f, 1000, "demo")))
         assertFalse("network still cannot displace it", f.accept(net(50.81, 4.35, 2000)))
     }
+
+    @Test fun `a network fix in a tunnel is ignored while the route is still snapped on GPS`() {
+        assertTrue(FixFilter.ignoreOnRoute(isGps = false, lastWasGps = true, routeSnapTrusted = true))
+        // Coasting gave up: the snap is no longer trusted, the cell fix is all there is.
+        assertFalse(FixFilter.ignoreOnRoute(isGps = false, lastWasGps = true, routeSnapTrusted = false))
+        // A cold start indoors, or already running on network fixes.
+        assertFalse(FixFilter.ignoreOnRoute(isGps = false, lastWasGps = false, routeSnapTrusted = true))
+        assertFalse(FixFilter.ignoreOnRoute(isGps = true, lastWasGps = true, routeSnapTrusted = true))
+    }
 }

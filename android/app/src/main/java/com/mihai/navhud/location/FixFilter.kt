@@ -62,6 +62,17 @@ class FixFilter {
          * followed, for ever, and the only cure would be killing the app.
          */
         const val MAX_CONSECUTIVE_REJECTS = 12
+
+        /**
+         * A network fix arriving while the route is still snapped on GPS: a
+         * tunnel, nearly always. Past [NETWORK_GRACE_MS] the filter lets cell
+         * fixes through, and the service used to take them -- which ended its
+         * coasting and put the car up to 200 m off the line, so it rerouted
+         * from a point on the surface. Ignored instead, the route coasts; once
+         * coasting gives up the snap is no longer trusted and they are used.
+         */
+        fun ignoreOnRoute(isGps: Boolean, lastWasGps: Boolean, routeSnapTrusted: Boolean): Boolean =
+            !isGps && lastWasGps && routeSnapTrusted
     }
 
     var last: Fix? = null

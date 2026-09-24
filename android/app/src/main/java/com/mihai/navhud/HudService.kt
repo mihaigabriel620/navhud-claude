@@ -651,6 +651,8 @@ class HudService : Service(), LocationListener {
     @Volatile private var routeAttempt = 0
     private var lastFix: Location? = null
     private var lastFixAtMs = 0L
+    /** Whether [lastFix] came from GPS rather than the network provider. */
+    private var lastFixGps = false
 
     /** See [ParkedHeading]. Lives here, not in the map, because the point of
      *  it is to be right the moment the app opens -- which means it has to
@@ -1231,6 +1233,11 @@ class HudService : Service(), LocationListener {
             return
         }
         val f = fixFilter.last!!
+        if (FixFilter.ignoreOnRoute(f.isGps, lastFixGps, tracker?.snapTrusted == true)) {
+            fixQuality = "ignored: network fix while coasting on the route"
+            return
+        }
+        lastFixGps = f.isGps
         fixQuality = when {
             !f.isGps -> "network fix, ±${f.accuracyM.toInt()} m"
             f.accuracyM <= 8f -> "GPS ±${f.accuracyM.toInt()} m"
