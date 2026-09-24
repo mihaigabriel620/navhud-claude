@@ -162,11 +162,6 @@ object SpeedCameras {
     }
 
     /**
-     * Where a route's raw response is kept in [AreaCache]: not a radius but a
-     * bucket AreaRoads never asks for (its windows are 1-6 km), so a camera
-     * body can never be served as a road network or the other way round.
-     */
-    /**
      * Cache name for a route's camera list: its destination, to ~100 m. A
      * reroute to the same place reuses it; the cached body is parsed against
      * the route actually driven, so cameras off it are dropped anyway.
