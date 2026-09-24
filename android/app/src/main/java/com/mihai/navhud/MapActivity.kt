@@ -98,6 +98,12 @@ class MapActivity : AppCompatActivity() {
 
         @JvmStatic var crashShown = false
 
+        /**
+         * Outlives the activity (it holds only the application context), so a
+         * night-mode recreation does not start the current chunk over.
+         */
+        private var offlineRoutes: com.mihai.navhud.map.OfflineRoutes? = null
+
         /** Fast enough that a GPS bearing is the car's real direction. */
         /**
          * Learn the mounting offset from this speed up. 14 km/h.
@@ -1250,6 +1256,12 @@ class MapActivity : AppCompatActivity() {
 
         // Also how the line is cleared when the route ends: route is null.
         if (s != null && route !== drawnRoute) { drawRoute(s, route); drawnRoute = route }
+        // Keep the next stretch of the route downloaded. See OfflineRoutes.
+        runCatching {
+            val off = offlineRoutes
+                ?: com.mihai.navhud.map.OfflineRoutes(applicationContext).also { offlineRoutes = it }
+            off.update(route, HudService.alongM, SystemClock.elapsedRealtime())
+        }
         if (s != null) {
             // Not in zone mode. Everything else about a danger zone is careful
             // not to publish a position -- the distance is blurred, the text
