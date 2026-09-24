@@ -45,6 +45,27 @@ object Permissions {
     fun bootBlocked(ctx: Context) =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !background(ctx)
 
+    /**
+     * The phone's Location switch. Off, there are no fixes at all, and on
+     * Android 14+ a location foreground service may not even start.
+     */
+    fun locationOn(ctx: Context): Boolean = runCatching {
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) lm.isLocationEnabled
+        else lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+             lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+    }.getOrDefault(true)
+
+    /** "Turn on Location", with a tap through to the switch. */
+    fun explainLocationOff(activity: Activity) {
+        Notice.show(activity, activity.getString(R.string.turn_on_location),
+                    activity.getString(R.string.open_location_settings)) {
+            runCatching {
+                activity.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            }
+        }
+    }
+
     /** This app's page in the system settings, where every permission lives. */
     fun openAppSettings(ctx: Context) {
         runCatching {

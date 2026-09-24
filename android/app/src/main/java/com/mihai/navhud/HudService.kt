@@ -2477,7 +2477,10 @@ class HudService : Service(), LocationListener {
             }
         }.onFailure { Log.w(TAG, "could not go foreground at all", it) }
 
-        setStatus("cannot run in the background: location permission is required")
+        // Android 14+ also refuses the location type while the Location switch
+        // is off; blaming the permission then sent people to the wrong setting.
+        setStatus(if (!Permissions.locationOn(this)) "cannot run: turn on Location"
+                  else "cannot run in the background: location permission is required")
         return false
     }
 

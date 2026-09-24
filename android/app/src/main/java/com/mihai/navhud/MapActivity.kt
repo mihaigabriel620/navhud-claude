@@ -1644,6 +1644,9 @@ class MapActivity : AppCompatActivity() {
             if (Permissions.approximateOnly(this)) Permissions.explainApproximate(this)
             return
         }
+        // No fixes at all with the switch off, and on 14+ the service cannot
+        // even start; say so rather than wait for GPS for ever.
+        if (!Permissions.locationOn(this)) Permissions.explainLocationOff(this)
         val lm = getSystemService(LOCATION_SERVICE) as LocationManager
         locationManager = lm
         // Start from a clean slate: after a long pause the filter's last fix is
