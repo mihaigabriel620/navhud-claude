@@ -1541,7 +1541,22 @@ class HudService : Service(), LocationListener {
                 // useless advice -- RouteChoice prefers a forward alternative
                 // when one exists within a tolerance of the fastest, and falls
                 // back to the fastest when none does.
-                adoptRoute(RouteChoice.pick(found, back) ?: found.first(), reason)
+                val pick = RouteChoice.pick(found, back) ?: found.first()
+                // Adopted on the tick's thread, like a picked alternative is:
+                // from here, a tick still running on the old route overwrote
+                // the new one's alongM and spent the voice's reroute memory on
+                // an old frame. `rerouting` is released there, so no tick in
+                // between asks for yet another route.
+                val posted = handler.post {
+                    try {
+                        if (gen == routeGen) adoptRoute(pick, reason)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "adopting a route", e)
+                    } finally {
+                        rerouting.set(false)
+                    }
+                }
+                if (!posted) rerouting.set(false)
                 fetchZones(found, gen)
             } catch (e: Exception) {
                 if (gen != routeGen) { rerouting.set(false); return@execute }
@@ -1556,9 +1571,7 @@ class HudService : Service(), LocationListener {
                 handler.postDelayed({
                     if (running && destination != null) requestRoute(reason, back)
                 }, wait)
-                return@execute
             }
-            rerouting.set(false)
         }
     }
 
@@ -1664,12 +1677,28 @@ class HudService : Service(), LocationListener {
         // Where the router has no limit, the same OSM window and legal
         // defaults free drive uses. The window keeps being fetched on a route
         // (step() -> maybeFetchArea), so this has data wherever free drive would.
-        tracker = RouteTracker(r).also {
+        val nt = RouteTracker(r).also {
             it.limitFallback = { lat, lon, h ->
                 SpeedDefaults.limitAt(freeArea, lat, lon, h, routeCountryCode ?: country,
                     Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
             }
         }
+        tracker = nt
+        // The new route's own distance for the last real fix, published before
+        // the route is: the map resets the arrow on a new route and takes the
+        // first alongM it reads whole, and the old route's metres put it
+        // kilometres away -- or, a little ahead, parked until the car caught up.
+        // And no snap until the new tracker has placed the car itself.
+        val fix = lastFix
+        if (fix != null) {
+            alongM = nt.alongOf(fix.latitude, fix.longitude, if (fix.hasSpeed()) fix.speed else 0f,
+                                if (fix.hasBearing()) fix.bearing else null)
+            alongAtMs = lastFixAtMs
+        } else {
+            alongM = 0.0
+        }
+        alongFixAtMs = 0L
+        snapTrusted = false
         currentRoute = r
         // 30 m in: far enough past the start vertex that a jitter in the first
         // coordinate cannot point the map the wrong way down the street.
@@ -1684,7 +1713,6 @@ class HudService : Service(), LocationListener {
         offRouteSinceMs = 0L
         turnedOffSinceMs = 0L
         departure = null
-        alongFixAtMs = 0L
         lastLanesSent = null
         // The cached "is this camera on our road" answers were computed against
         // the previous route's geometry. Keep them and a camera correctly

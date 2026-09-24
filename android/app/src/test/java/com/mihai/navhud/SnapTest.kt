@@ -148,6 +148,13 @@ class SnapTest {
         assertFalse(t.snapTrusted)
     }
 
+    /** What the service publishes for a route it has just adopted, before any tick. */
+    @Test fun `a fresh tracker finds a fix far along the route`() {
+        val at = route.totalDistanceM * 0.6
+        val p = Geo.pointAlong(route.pts, route.cum, at)
+        assertEquals(at, RouteTracker(route).alongOf(p[0], p[1], 30f, headingAt(at).toFloat()), 1.0)
+    }
+
     @Test fun `a coast never arrives, and on a held GPS speed it gives up after a minute`() {
         val t = RouteTracker(route)
         val at = route.totalDistanceM - 200.0
