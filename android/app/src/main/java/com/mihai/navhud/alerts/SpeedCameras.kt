@@ -600,7 +600,12 @@ class CameraWatcher(
         }
     }
 
-    /** (cameraId, stage) pairs already spoken. */
+    /**
+     * (cameraId, stage) pairs already spoken. Locked: the tick adds to it
+     * while [successor] copies it from the fetch, country or settings thread,
+     * and a HashSet iterated during an add throws -- on the fetch executor,
+     * which takes the whole app down.
+     */
     private val announced = HashSet<Long>(announcedBefore)
 
     /**
@@ -619,7 +624,8 @@ class CameraWatcher(
      */
     fun successor(cameras: List<SpeedCamera>, policy: CameraPolicy = this.policy): CameraWatcher {
         val ids = cameras.mapTo(HashSet()) { it.id }
-        return CameraWatcher(cameras, policy, announced.filter { it / 8L in ids })
+        val said = synchronized(announced) { announced.filter { it / 8L in ids } }
+        return CameraWatcher(cameras, policy, said)
     }
 
     /** The alert to show, or null. */
@@ -662,7 +668,7 @@ class CameraWatcher(
      * gets a warning, a reminder and a final chirp rather than one message.
      */
     fun shouldAnnounce(alert: CameraAlert): Boolean =
-        announced.add(alert.camera.id * 8L + alert.stage)
+        synchronized(announced) { announced.add(alert.camera.id * 8L + alert.stage) }
 
-    fun reset() = announced.clear()
+    fun reset() = synchronized(announced) { announced.clear() }
 }
