@@ -1,5 +1,34 @@
 # Changelog
 
+## App 1.28 — the 1.27 test drive
+
+Fixes for what the owner found driving 1.27. Firmware unchanged.
+
+**Arrow**
+- With a route, the arrow stays on the route line up to 50 m from it (was
+  25 m) until the car is really off route. Off the route (a wrong turn, a slip
+  road) it sits on the nearest OpenStreetMap road instead of the raw GPS point
+  beside the road. The raw point is only used when no road is near (car park).
+- New in Setup > diagnostics: "Show arrow debug line". It shows on the map
+  whether the arrow is on the ROUTE, a ROAD or the RAW fix, the distance from
+  the route, and the GPS accuracy, so the next drive shows the cause.
+
+**Voice**
+- Motorway exits and forks get three calls: 1200 / 500 / 200 m at motorway
+  speed, closer at lower speed. Ordinary turns keep two calls.
+- Speed cameras: calls at 1000 / 500 / 200 m on fast roads (600 / 300 / 150 m
+  at 50-89 km/h, 400 / 200 / 100 m in town). The voice says the round stage
+  distance, never the live one, so no more "in 13 m": under 50 m it just
+  says "Radar". The HUD still shows the exact distance.
+- Music: the voice is only marked ready once it is set up as navigation audio,
+  so no line can go out as normal media (a head unit stops the music for a new
+  media source). If the speech engine never reports the end of a line, the
+  music is given back anyway after about 20 s.
+
+**Setup**
+- Shows the offline cache: how many road/camera areas are stored on the
+  phone, and the state of the map tile download ahead of the car.
+
 ## App 1.27 — the road-test list
 
 Everything on "bugs and features to add", fixed at the cause rather than

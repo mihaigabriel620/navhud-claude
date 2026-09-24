@@ -21,8 +21,8 @@ android {
         applicationId = "com.mihai.navhud"
         minSdk = 24          // Android 7.0 -- covers old head units too
         targetSdk = 34
-        versionCode = 33
-        versionName = "1.27"
+        versionCode = 34
+        versionName = "1.28"
 
         // MapLibre ships native libraries for four CPU architectures, which
         // triples the APK for no benefit: every Android head unit and phone in
