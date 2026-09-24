@@ -41,6 +41,8 @@ object MapIds {
     const val PUCK_ICON = "navhud-puck-icon"
     const val PUCK_DOT_ICON = "navhud-puck-dot"
     const val CAM_ICON = "navhud-cam-icon"
+    // A number-plate camera: no speed to enforce, so not the red speed-camera pin.
+    const val CAM_ANPR_ICON = "navhud-cam-anpr-icon"
 
     val sources = listOf(ROUTE_NEAR_SOURCE, ROUTE_FAR_SOURCE, ALT_SOURCE, CAM_SOURCE,
         PUCK_FALLBACK_SOURCE)
@@ -50,7 +52,7 @@ object MapIds {
         CAM_LAYER, PUCK_LAYER
     )
 
-    val images = listOf(PUCK_ICON, PUCK_DOT_ICON, CAM_ICON)
+    val images = listOf(PUCK_ICON, PUCK_DOT_ICON, CAM_ICON, CAM_ANPR_ICON)
 
     val all: List<String> get() = sources + layers + images
 }

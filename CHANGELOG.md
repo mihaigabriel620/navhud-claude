@@ -41,7 +41,7 @@ patched over. Firmware unchanged.
 - Speed limits, cameras and crossings cached in chunks ~100 km ahead; losing
   the network never ends guidance, and a failed reroute retries quietly.
 
-**Icons** from the supplied pack: coming in the next build.
+**Icons** from the supplied pack: the road-ahead chip shows a level-crossing or (amber) speed-bump sign, and ANPR cameras get their own amber map pin.
 
 ## 2.7 — the roundabout arrow points where the exit actually is
 

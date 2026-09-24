@@ -217,6 +217,7 @@
             android:background="@drawable/bg_warn_chip"
             android:drawablePadding="8dp"
             android:elevation="6dp"
+            android:gravity="center_vertical"
             android:paddingStart="@dimen/space"
             android:paddingEnd="@dimen/space_wide"
             android:paddingTop="@dimen/space_tight"

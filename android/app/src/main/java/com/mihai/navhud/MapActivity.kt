@@ -208,6 +208,7 @@ class MapActivity : AppCompatActivity() {
         private const val CAM_SOURCE = MapIds.CAM_SOURCE
         private const val CAM_LAYER = MapIds.CAM_LAYER
         private const val CAM_ICON = MapIds.CAM_ICON
+        private const val CAM_ANPR_ICON = MapIds.CAM_ANPR_ICON
         /** Cap the drawn polyline; a full geometry can be many thousands of points. */
         private const val MAX_POLY_POINTS = 1500
 
@@ -1029,10 +1030,14 @@ class MapActivity : AppCompatActivity() {
         }
 
         runCatching { s.addImage(CAM_ICON, scaledToDp(cameraBitmap(), 30)) }
+        runCatching { s.addImage(CAM_ANPR_ICON, scaledToDp(cameraBitmap(anpr = true), 30)) }
         addSourceSafely(s, GeoJsonSource(CAM_SOURCE))
         addLayerSafely(s,
             SymbolLayer(CAM_LAYER, CAM_SOURCE).withProperties(
-                PropertyFactory.iconImage(CAM_ICON),
+                // "kind" is SpeedCamera.Kind's name, set in drawCameras.
+                PropertyFactory.iconImage(Expression.match(Expression.get("kind"),
+                    Expression.literal(CAM_ICON),
+                    Expression.stop(SpeedCamera.Kind.ANPR.name, CAM_ANPR_ICON))),
                 PropertyFactory.iconAllowOverlap(true),
                 PropertyFactory.iconIgnorePlacement(true),
                 PropertyFactory.iconSize(1.0f)
@@ -1247,7 +1252,11 @@ class MapActivity : AppCompatActivity() {
         return bmp
     }
 
-    private fun cameraBitmap(): android.graphics.Bitmap {
+    /**
+     * @param anpr a number-plate camera: amber instead of red, since it
+     *        enforces no speed, with the camera raised over a plate.
+     */
+    private fun cameraBitmap(anpr: Boolean = false): android.graphics.Bitmap {
         val size = 56
         val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
         val c = android.graphics.Canvas(bmp)
@@ -1256,15 +1265,19 @@ class MapActivity : AppCompatActivity() {
         c.drawCircle(size / 2f, size / 2f, size / 2f - 3, p)
         p.style = android.graphics.Paint.Style.STROKE
         p.strokeWidth = 4f
-        p.color = red
+        p.color = if (anpr) amber else red
         c.drawCircle(size / 2f, size / 2f, size / 2f - 4, p)
         p.style = android.graphics.Paint.Style.FILL
+        val dy = if (anpr) -6f else 0f
         // a small camera body
-        c.drawRect(16f, 24f, 36f, 38f, p)
+        c.drawRect(16f, 24f + dy, 36f, 38f + dy, p)
         val lens = android.graphics.Path()
         lens.moveTo(36f, 27f); lens.lineTo(44f, 22f); lens.lineTo(44f, 40f); lens.lineTo(36f, 35f)
         lens.close()
+        lens.offset(0f, dy)
         c.drawPath(lens, p)
+        // the number plate it reads
+        if (anpr) c.drawRoundRect(17f, 37f, 39f, 44f, 2f, 2f, p)
         return bmp
     }
 
@@ -1535,6 +1548,7 @@ class MapActivity : AppCompatActivity() {
         val d = HudService.closureAheadM
         if (d in 0..ROADWORKS_SHOW_M) {
             roadworksChip.visibility = View.VISIBLE
+            setChipIcon(0)
             roadworksChip.setIfChanged(getString(R.string.closure_ahead, formatKm(d.toDouble())))
             return
         }
@@ -1547,7 +1561,27 @@ class MapActivity : AppCompatActivity() {
             else -> { roadworksChip.visibility = View.GONE; return }
         }
         roadworksChip.visibility = View.VISIBLE
+        // The sign itself, for the ones the icon pack has; a toll booth has none.
+        setChipIcon(when (f.feature.kind) {
+            RoadFeature.LEVEL_CROSSING -> R.drawable.ic_feat_crossing
+            RoadFeature.SPEED_BUMP -> R.drawable.ic_feat_bump
+            else -> 0
+        })
         roadworksChip.setIfChanged("$name · ${f.distanceM} m")
+    }
+
+    /** The drawable on the road-ahead chip, or 0. Set only when it changes:
+     *  this runs five times a second. */
+    private var chipIcon = 0
+
+    private fun setChipIcon(res: Int) {
+        if (res == chipIcon) return
+        chipIcon = res
+        val icon = if (res == 0) null else ContextCompat.getDrawable(this, res)?.apply {
+            val px = (24 * resources.displayMetrics.density).toInt()
+            setBounds(0, 0, px, px)
+        }
+        roadworksChip.setCompoundDrawablesRelative(icon, null, null, null)
     }
 
     private fun updateCameraAlert() {
@@ -2650,7 +2684,10 @@ class MapActivity : AppCompatActivity() {
     private fun drawCameras(s: Style, cams: List<SpeedCamera>) {
         val src = s.getSourceAs<GeoJsonSource>(CAM_SOURCE) ?: return
         if (cams.isEmpty()) { src.setGeoJson(FeatureCollectionEmpty); return }
-        val feats = cams.map { Feature.fromGeometry(Point.fromLngLat(it.lon, it.lat)) }
+        val feats = cams.map { cam ->
+            Feature.fromGeometry(Point.fromLngLat(cam.lon, cam.lat))
+                .also { it.addStringProperty("kind", cam.kind.name) }
+        }
         src.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(feats))
     }
 
