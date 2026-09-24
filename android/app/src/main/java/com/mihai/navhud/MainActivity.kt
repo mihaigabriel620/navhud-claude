@@ -48,6 +48,8 @@ class MainActivity : AppCompatActivity() {
 
     private val ui = Handler(Looper.getMainLooper())
 
+    private companion object { const val OFFLINE_ROADS_EVERY_MS = 5000L }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -332,7 +334,22 @@ class MainActivity : AppCompatActivity() {
         override fun run() { refresh(); ui.postDelayed(this, 400) }
     }
 
+    /**
+     * The offline-roads line lists a directory of hundreds of files. That ran
+     * on the main thread with every 400 ms poll; now on a worker, every 5 s.
+     */
+    @Volatile private var offlineRoads = "..."
+    private var offlineRoadsAtMs = -OFFLINE_ROADS_EVERY_MS
+
     private fun refresh() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - offlineRoadsAtMs >= OFFLINE_ROADS_EVERY_MS) {
+            offlineRoadsAtMs = now
+            kotlin.concurrent.thread(isDaemon = true, name = "navhud-cache-size") {
+                offlineRoads = "${com.mihai.navhud.nav.AreaCache.fileCount()} areas, " +
+                    "%.1f MB".format(com.mihai.navhud.nav.AreaCache.sizeBytes() / 1e6)
+            }
+        }
         // The driving screen shows only what a driver can act on, so the full
         // diagnostics live here.
         statusView.text = "${HudService.status}\nlink: ${HudService.linkInfo}" +
@@ -342,8 +359,7 @@ class MainActivity : AppCompatActivity() {
                           (HudService.country?.let { "\ncountry: $it" } ?: "") +
                           // Is the offline cache doing anything? Roads and cameras
                           // (Overpass answers on disk) and the map tiles ahead.
-                          "\noffline roads: ${com.mihai.navhud.nav.AreaCache.fileCount()} areas, " +
-                          "%.1f MB".format(com.mihai.navhud.nav.AreaCache.sizeBytes() / 1e6) +
+                          "\noffline roads: $offlineRoads" +
                           "\noffline map: ${com.mihai.navhud.map.OfflineRoutes.status}"
         // Which voice was picked is worth showing: if it says the offline one,
         // installing Google's high-quality French from the TTS settings is the
