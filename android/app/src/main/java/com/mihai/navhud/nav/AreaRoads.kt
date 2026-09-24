@@ -334,14 +334,67 @@ object AreaRoads {
         return Geo.destination(lat, lon, headingDeg, radiusM * 0.35)
     }
 
-    /** True when the cached area no longer covers where we are. */
+    /**
+     * True when the cached area no longer covers where we are.
+     *
+     * "Covers" is the car plus [1 - REFETCH_FRACTION] of the radius it wants,
+     * inside the window. For a window fetched at the radius wanted that is the
+     * old rule -- refetch past 45 % of the radius from the centre -- and it
+     * stays right when the window came from the cache at a different size.
+     */
     fun needsRefetch(area: Area?, lat: Double, lon: Double, wantRadiusM: Double): Boolean {
         if (area == null) return true
         // A big change in speed changes what we need to see.
         if (wantRadiusM > area.radiusM * 1.6 || wantRadiusM < area.radiusM * 0.5) return true
         val d = Geo.haversine(area.centreLat, area.centreLon, lat, lon)
-        return d > area.radiusM * REFETCH_FRACTION
+        return d + wantRadiusM * (1.0 - REFETCH_FRACTION) > area.radiusM
     }
+
+    // ---- windows along a route -----------------------------------------------
+    //
+    // On a route the window follows the route instead of the car's heading:
+    // circles centred on the line every ROUTE_WINDOW_STEP_M. The service asks
+    // for the one the car is in, and prefetches the ones ahead -- with the
+    // same centre and radius, so the live lookup is an exact cache hit and a
+    // dead zone ahead is already on disk when the car reaches it.
+
+    const val ROUTE_WINDOW_STEP_M = 2000.0
+    const val ROUTE_WINDOW_RADIUS_M = 2000.0
+
+    /** Keep the current window this far past its centre before moving on. */
+    const val ROUTE_WINDOW_KEEP_M = ROUTE_WINDOW_STEP_M / 2 + 200.0
+
+    class RouteWindow(val index: Int, val lat: Double, val lon: Double, val radiusM: Double)
+
+    fun routeWindowCount(r: Route): Int =
+        (r.totalDistanceM / ROUTE_WINDOW_STEP_M).toInt() + 1
+
+    fun routeWindowIndex(alongM: Double): Int =
+        Math.round(alongM / ROUTE_WINDOW_STEP_M).toInt().coerceAtLeast(0)
+
+    fun routeWindow(r: Route, index: Int): RouteWindow {
+        val p = Geo.pointAlong(r.pts, r.cum, index * ROUTE_WINDOW_STEP_M)
+        return RouteWindow(index, p[0], p[1], ROUTE_WINDOW_RADIUS_M)
+    }
+
+    /**
+     * The route windows to make sure of next, or null while enough is already
+     * ahead. [next] is the first window not yet made sure of; the car's own
+     * window if it has overtaken that. Tops up to [aheadM] past the car once
+     * less than [refillM] remains, so data arrives in chunks, not all at once.
+     */
+    fun prefetchRange(r: Route, alongM: Double, next: Int, aheadM: Double, refillM: Double): IntRange? {
+        val here = routeWindowIndex(alongM)
+        val from = maxOf(next, here)
+        val last = routeWindowCount(r) - 1
+        if (from > last || (from - here) * ROUTE_WINDOW_STEP_M >= refillM) return null
+        return from..minOf(last, routeWindowIndex(alongM + aheadM))
+    }
+
+    /** True while [area] still serves a car on a route: centred near enough. */
+    fun routeWindowStillGood(area: Area?, lat: Double, lon: Double): Boolean =
+        area != null && area.radiusM >= ROUTE_WINDOW_RADIUS_M - 1.0 &&
+            Geo.haversine(area.centreLat, area.centreLon, lat, lon) <= ROUTE_WINDOW_KEEP_M
 
     fun buildQuery(lat: Double, lon: Double, radiusM: Int): String = """
         [out:json][timeout:25];
@@ -368,23 +421,122 @@ object AreaRoads {
      * Only when there is nothing on disk at all does the failure reach the
      * caller, which is then a genuine "we have never seen this place".
      */
-    fun fetch(lat: Double, lon: Double, radiusM: Double, nowMs: Long): Area {
-        AreaCache.get(lat, lon, radiusM, AreaCache.FRESH_MS, nowMs)?.let {
-            return build(lat, lon, radiusM, it, nowMs, fromCache = true)
+    fun fetch(
+        lat: Double, lon: Double, radiusM: Double, nowMs: Long,
+        /**
+         * Wall clock for the cache's file ages. Not [nowMs]: the service's
+         * clock is elapsedRealtime, and against file modification times that
+         * made every cached file look fresh for ever.
+         */
+        wallMs: Long = System.currentTimeMillis()
+    ): Area {
+        AreaCache.get(lat, lon, radiusM, AreaCache.FRESH_MS, wallMs)?.let {
+            return build(it.lat, it.lon, it.radiusM, it.body, nowMs, fromCache = true)
         }
         // Only the network call is guarded. A body that comes back and then
         // fails to parse is a bug worth seeing, not a reason to quietly serve
         // last week's roads instead.
-        val (body, fromCache) = try {
-            val fresh = post(OVERPASS,
-                "data=" + java.net.URLEncoder.encode(buildQuery(lat, lon, radiusM.toInt()), "UTF-8"))
-            AreaCache.put(lat, lon, radiusM, fresh)
-            fresh to false
+        val fresh = try {
+            download(lat, lon, radiusM)
         } catch (e: Exception) {
-            (AreaCache.get(lat, lon, radiusM, Long.MAX_VALUE, nowMs) ?: throw e) to true
+            // Anything on disk, at any age: first a window that covers what
+            // was asked, then any window the point is inside at all. Each is
+            // labelled with the circle it really covers.
+            val h = AreaCache.get(lat, lon, radiusM, Long.MAX_VALUE, wallMs)
+                ?: AreaCache.nearest(lat, lon, Long.MAX_VALUE, wallMs)
+                ?: throw e
+            return build(h.lat, h.lon, h.radiusM, h.body, nowMs, fromCache = true)
         }
-        return build(lat, lon, radiusM, body, nowMs, fromCache)
+        return build(lat, lon, radiusM, fresh, nowMs, fromCache = false)
     }
+
+    /**
+     * Download a window into the cache without parsing it: the route prefetch.
+     * Throws on any failure, [OverpassBusy] included.
+     */
+    fun prefetch(lat: Double, lon: Double, radiusM: Double) {
+        download(lat, lon, radiusM)
+    }
+
+    private fun download(lat: Double, lon: Double, radiusM: Double): String {
+        val gate = fairUse
+        val wait = gate.waitMs(monoMs())
+        if (wait < 0) throw OverpassBusy("Overpass asked us to back off")
+        // Only the aux thread gets here, so this sleep delays nothing urgent.
+        if (wait > 0) Thread.sleep(wait)
+        gate.sent(monoMs())
+        val body = try {
+            transport(OVERPASS,
+                "data=" + java.net.URLEncoder.encode(buildQuery(lat, lon, radiusM.toInt()), "UTF-8"))
+        } catch (e: HttpStatus) {
+            gate.answered(e.code, monoMs())
+            throw e
+        }
+        gate.answered(200, monoMs())
+        // Overpass answers some failures with 200 and a remark instead of
+        // elements; caching that would serve an empty map for a week.
+        if (!body.trimStart().startsWith("{") || !body.contains("\"elements\"")) {
+            throw java.io.IOException("Overpass returned no data: ${body.take(120)}")
+        }
+        AreaCache.put(lat, lon, radiusM, body)
+        return body
+    }
+
+    // ---- fair use -------------------------------------------------------------
+
+    /** Overpass is refusing us for now; the caller should fall back to disk. */
+    class OverpassBusy(msg: String) : java.io.IOException(msg)
+
+    /**
+     * The public Overpass instance's etiquette: at most ~10,000 requests and
+     * ~1 GB a day, and 429 / 504 mean "too many" / "too busy" -- back off.
+     * https://dev.overpass-api.de/overpass-doc/en/preface/commons.html
+     *
+     * Every request here goes through one of these: a gap of [minGapMs]
+     * between requests, and after a 429 or 504 nothing at all for a back-off
+     * that doubles up to [maxBackoffMs] and resets on the next success.
+     */
+    class FairUse(
+        val minGapMs: Long = 3_000L,
+        val baseBackoffMs: Long = 30_000L,
+        val maxBackoffMs: Long = 600_000L
+    ) {
+        private var lastSentMs = Long.MIN_VALUE / 2
+        private var backoffMs = 0L
+        var busyUntilMs = Long.MIN_VALUE / 2
+            private set
+
+        /** How long to wait before sending, or -1 while backing off. */
+        @Synchronized fun waitMs(nowMs: Long): Long =
+            if (nowMs < busyUntilMs) -1L else maxOf(0L, lastSentMs + minGapMs - nowMs)
+
+        @Synchronized fun sent(nowMs: Long) { lastSentMs = nowMs }
+
+        /** @param code the HTTP status, or null when there was no answer at all */
+        @Synchronized fun answered(code: Int?, nowMs: Long) {
+            when (code) {
+                429, 504 -> {
+                    backoffMs = (backoffMs * 2).coerceIn(baseBackoffMs, maxBackoffMs)
+                    busyUntilMs = nowMs + backoffMs
+                }
+                in 200..299 -> backoffMs = 0L
+            }
+        }
+    }
+
+    /** Swappable for tests, which cannot wait three seconds a request. */
+    @Volatile internal var fairUse = FairUse()
+
+    /** A non-2xx answer, with its status, so 429 and 504 can be told apart. */
+    class HttpStatus(val code: Int, msg: String) : java.io.IOException(msg)
+
+    private fun monoMs() = System.nanoTime() / 1_000_000L
+
+    /**
+     * The HTTP round trip, swappable so the failure paths can be tested
+     * without a network. Returns the body of a 2xx; throws on anything else.
+     */
+    @Volatile internal var transport: (url: String, body: String) -> String = { u, b -> post(u, b) }
 
     /** Cached and fresh bodies go through exactly the same parser. */
     private fun build(
@@ -752,7 +904,7 @@ object AreaRoads {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader()?.use(BufferedReader::readText) ?: ""
-            if (code !in 200..299) throw RuntimeException("Overpass HTTP $code: ${text.take(160)}")
+            if (code !in 200..299) throw HttpStatus(code, "Overpass HTTP $code: ${text.take(160)}")
             return text
         } finally {
             conn.disconnect()

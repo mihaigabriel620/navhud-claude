@@ -146,6 +146,15 @@ class HudService : Service(), LocationListener {
         /** Floor on how often free drive may ask Overpass for road data. */
         private const val AREA_MIN_INTERVAL_MS = 20_000L
 
+        /** Road data kept on disk ahead of the car on a route, and when to top up. */
+        private const val PREFETCH_AHEAD_M = 100_000.0
+        private const val PREFETCH_REFILL_M = 50_000.0
+
+        /** Between prefetch requests; Overpass fair use. */
+        private const val PREFETCH_GAP_MS = 3_000L
+        private const val PREFETCH_RETRY_BASE_MS = 30_000L
+        private const val PREFETCH_RETRY_MAX_MS = 600_000L
+
         /** Re-check which country we are in after moving this far. */
         private const val COUNTRY_RECHECK_M = 25_000.0
 
@@ -649,6 +658,14 @@ class HudService : Service(), LocationListener {
      */
     @Volatile private var departure: DoubleArray? = null
     private val breadcrumb = Breadcrumb()
+
+    // Route prefetch state; see maybePrefetch. Worker and aux both touch it.
+    @Volatile private var prefetchRoute: Route? = null
+    @Volatile private var prefetchNext = 0
+    @Volatile private var prefetchUntil = -1
+    @Volatile private var prefetchRetryAtMs = 0L
+    @Volatile private var prefetchBackoffMs = 0L
+    private val prefetching = AtomicBoolean(false)
 
     /** The fix `alongM` was last published for; 0 to republish. */
     @Volatile private var alongFixAtMs = 0L
@@ -1821,6 +1838,7 @@ class HudService : Service(), LocationListener {
 
         maybeReroute(t)
         maybeRefreshCameras(t)
+        maybePrefetch(t, SystemClock.elapsedRealtime())
     }
 
     /**
@@ -1908,13 +1926,27 @@ class HudService : Service(), LocationListener {
      */
     private fun maybeFetchArea(fix: Location, speedMps: Double, heading: Double?, nowMs: Long) {
         if (areaFetching.get()) return
-        val want = AreaRoads.radiusFor(speedMps)
-        if (!AreaRoads.needsRefetch(freeArea, fix.latitude, fix.longitude, want)) return
+        val t = tracker
+        val r = currentRoute
+        val centre: DoubleArray
+        val want: Double
+        if (t != null && r != null && !t.offRoute) {
+            // On a route: the window of the route the car is in, the same
+            // centre and radius the prefetch stored -- so this is normally a
+            // disk hit, and with no signal it is the only thing that works.
+            if (AreaRoads.routeWindowStillGood(freeArea, fix.latitude, fix.longitude)) return
+            val w = AreaRoads.routeWindow(r, AreaRoads.routeWindowIndex(t.alongM))
+            centre = doubleArrayOf(w.lat, w.lon)
+            want = w.radiusM
+        } else {
+            want = AreaRoads.radiusFor(speedMps)
+            if (!AreaRoads.needsRefetch(freeArea, fix.latitude, fix.longitude, want)) return
+            centre = AreaRoads.centreFor(fix.latitude, fix.longitude, heading, want)
+        }
         // Don't hammer Overpass if it is refusing us.
         if (lastAreaFetchAtMs != 0L && nowMs - lastAreaFetchAtMs < AREA_MIN_INTERVAL_MS) return
         lastAreaFetchAtMs = nowMs
         areaFetching.set(true)
-        val centre = AreaRoads.centreFor(fix.latitude, fix.longitude, heading, want)
         aux.execute {
             try {
                 val a = AreaRoads.fetch(centre[0], centre[1], want, nowMs)
@@ -1925,14 +1957,87 @@ class HudService : Service(), LocationListener {
                 cameraOnRoute.clear()
                 cameraCount = a.cameras.size
                 camerasFetchedAtMs = System.currentTimeMillis()
-                setStatus("free drive · ${a.roads.size} roads, ${a.cameras.size} cameras " +
-                          "within ${(want / 1000).toInt()} km")
+                // On a route the status line belongs to the route.
+                if (tracker == null) {
+                    setStatus("free drive · ${a.roads.size} roads, ${a.cameras.size} cameras " +
+                              "within ${(want / 1000).toInt()} km")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "area fetch failed", e)
-                setStatus("free drive · road data unavailable (${e.message})")
+                if (tracker == null) setStatus("free drive · road data unavailable (${e.message})")
             } finally {
                 areaFetching.set(false)
             }
+        }
+    }
+
+    /**
+     * Keep the road data for the route ahead on disk, in rolling chunks.
+     *
+     * The route windows (AreaRoads.routeWindow) for roughly the next
+     * [PREFETCH_AHEAD_M] are downloaded into AreaCache, and topped up again
+     * whenever less than [PREFETCH_REFILL_M] of them is left ahead. A dead
+     * zone -- a valley, a border, a long tunnel approach -- is then already on
+     * disk when the car gets there, and the live lookup for the same window is
+     * a cache hit rather than a request.
+     *
+     * Rolling rather than all at once so a 2000 km trip holds ~100 km of
+     * Europe at a time, not the whole corridor: AreaCache's caps evict what
+     * is behind. One request at a time on `aux`, at least [PREFETCH_GAP_MS]
+     * apart and through AreaRoads' fair-use gate; windows already fresh on
+     * disk cost nothing. A failure -- offline, or Overpass saying 429/504 --
+     * stops the run and backs off, doubling to [PREFETCH_RETRY_MAX_MS]. A new
+     * route or a reroute starts over from where the car is.
+     */
+    private fun maybePrefetch(t: RouteTracker, nowMs: Long) {
+        val r = t.route
+        if (prefetchRoute !== r) {
+            prefetchRoute = r
+            prefetchNext = AreaRoads.routeWindowIndex(t.alongM)
+            prefetchUntil = -1
+            prefetchBackoffMs = 0L
+            prefetchRetryAtMs = 0L
+        }
+        if (prefetching.get() || nowMs < prefetchRetryAtMs) return
+        val todo = AreaRoads.prefetchRange(r, t.alongM, prefetchNext,
+                                           PREFETCH_AHEAD_M, PREFETCH_REFILL_M) ?: return
+        prefetchNext = todo.first
+        prefetchUntil = todo.last
+        prefetching.set(true)
+        continuePrefetch(r)
+    }
+
+    private fun continuePrefetch(r: Route) {
+        if (runCatching { aux.execute { prefetchStep(r) } }.isFailure) prefetching.set(false)
+    }
+
+    /** One request (after skipping what is already fresh), then yield `aux`. */
+    private fun prefetchStep(r: Route) {
+        var scheduled = false
+        try {
+            while (running && currentRoute === r && prefetchNext <= prefetchUntil) {
+                val w = AreaRoads.routeWindow(r, prefetchNext)
+                if (!AreaCache.covers(w.lat, w.lon, w.radiusM, AreaCache.FRESH_MS,
+                                      System.currentTimeMillis())) {
+                    AreaRoads.prefetch(w.lat, w.lon, w.radiusM)
+                    if (currentRoute === r) prefetchNext++
+                    prefetchBackoffMs = 0L
+                    scheduled = runCatching {
+                        handler.postDelayed({ continuePrefetch(r) }, PREFETCH_GAP_MS)
+                    }.getOrDefault(false)
+                    return
+                }
+                prefetchNext++
+            }
+        } catch (e: Exception) {
+            // Offline, or Overpass is busy. Not an error worth a status line:
+            // the live lookup falls back to disk on its own.
+            prefetchBackoffMs = (prefetchBackoffMs * 2)
+                .coerceIn(PREFETCH_RETRY_BASE_MS, PREFETCH_RETRY_MAX_MS)
+            prefetchRetryAtMs = SystemClock.elapsedRealtime() + prefetchBackoffMs
+            Log.i(TAG, "route prefetch paused ${prefetchBackoffMs / 1000} s: ${e.message}")
+        } finally {
+            if (!scheduled) prefetching.set(false)
         }
     }
 
