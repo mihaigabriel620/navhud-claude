@@ -46,6 +46,8 @@ class UsbSerialLink(
     private var permissionReceiver: BroadcastReceiver? = null
     private var reader: Thread? = null
     private var lastPermissionAskMs = 0L
+    /** The attached device whose permission request was refused; null if none. */
+    private var deniedDeviceId: Int? = null
     @Volatile private var readerStop = false
 
     override val isOpen: Boolean get() = port?.isOpen == true
@@ -68,6 +70,12 @@ class UsbSerialLink(
         val device = driver.device
 
         if (!manager.hasPermission(device)) {
+            // Refused: stop asking, or the dialog comes back over the map every
+            // retry. A replug gives the device a new id, and that asks again.
+            if (device.deviceId == deniedDeviceId) {
+                description = "USB permission refused. Unplug and replug the HUD to be asked again."
+                return false
+            }
             val now = System.currentTimeMillis()
             // closeLocked() above has just unregistered whatever receiver was
             // listening. If the throttle stops us registering a new one, the
@@ -120,7 +128,9 @@ class UsbSerialLink(
         } catch (e: Exception) {
             Log.w(TAG, "write failed, dropping port", e)
             description = "write failed: ${e.message}"
-            close()
+            // Not close(): this link is reopened by the service's retry, and
+            // close() retires it for good.
+            synchronized(lock) { closeLocked() }
         }
     }
 
@@ -151,7 +161,16 @@ class UsbSerialLink(
         }, "navhud-usb-read").also { it.isDaemon = true; it.start() }
     }
 
-    override fun close() = synchronized(lock) { closeLocked() }
+    /** Retires the link: the service builds a new one for the next start. */
+    override fun close(): Unit = synchronized(lock) {
+        closeLocked()
+        // A fresh link is constructed on every start, and each one that saw a
+        // permission broadcast left a live core thread behind otherwise. Here
+        // and not in closeLocked(): every open starts with closeLocked(), so
+        // the opener was shut before any permission answer could use it.
+        openerDown = true
+        runCatching { opener.shutdown() }
+    }
 
     private fun closeLocked() {
         readerStop = true
@@ -164,10 +183,6 @@ class UsbSerialLink(
         if (t != null && t !== Thread.currentThread()) runCatching { t.join(400) }
         permissionReceiver?.let { runCatching { ctx.unregisterReceiver(it) } }
         permissionReceiver = null
-        // A fresh link is constructed on every start, and each one that saw a
-        // permission broadcast left a live core thread behind otherwise.
-        openerDown = true
-        runCatching { opener.shutdown() }
     }
 
     /**
@@ -193,10 +208,15 @@ class UsbSerialLink(
             override fun onReceive(c: Context?, i: Intent?) {
                 if (i?.action != ACTION_PERMISSION) return
                 runCatching { ctx.unregisterReceiver(this) }
+                // Asked of the manager, not the intent: the PendingIntent is
+                // immutable, so the system cannot add EXTRA_PERMISSION_GRANTED.
+                val granted = runCatching { manager.hasPermission(device) }.getOrDefault(false)
                 synchronized(lock) {
                     if (permissionReceiver === this) permissionReceiver = null
-                    lastPermissionAskMs = 0L            // answered: retry at once
+                    if (granted) lastPermissionAskMs = 0L   // granted: open at once
+                    else deniedDeviceId = device.deviceId
                 }
+                if (!granted) return
                 // A BroadcastReceiver runs on the main thread and openLocked()
                 // does blocking USB control transfers with multi-second driver
                 // timeouts, inside the lock -- an ANR on a marginal cable, and
@@ -206,7 +226,7 @@ class UsbSerialLink(
                 // killed the process. Android holds the permission dialog open
                 // for as long as it takes someone to read it; if the link is
                 // closed in that window -- the service restarting, the activity
-                // going away, the cable being pulled -- closeLocked() shuts the
+                // going away, the cable being pulled -- close() shuts the
                 // executor down, and then the answer arrives and posts to a
                 // terminated pool. RejectedExecutionException thrown out of
                 // onReceive is not an error the framework catches: it comes
