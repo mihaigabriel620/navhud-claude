@@ -431,6 +431,9 @@ class MapActivity : AppCompatActivity() {
     private val red = Color.parseColor("#FF3B20")
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // A recreation (night mode flipping at dusk) is not opening the app:
+        // after Stop, it must not switch the service back on.
+        firstResume = savedInstanceState == null
         // MapLibre must be initialised before any MapView is inflated.
         MapLibre.getInstance(this)
         // ...and the cache limit before the file source starts serving tiles.
