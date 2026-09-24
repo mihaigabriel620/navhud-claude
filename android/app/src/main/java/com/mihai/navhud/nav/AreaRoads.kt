@@ -808,12 +808,16 @@ object AreaRoads {
      * car's, and a nudge towards the more important road when two are equally
      * close -- which is what stops a motorway reading as its own hard shoulder.
      */
-    fun match(area: Area, lat: Double, lon: Double, headingDeg: Double?): Match? {
+    fun match(
+        area: Area, lat: Double, lon: Double, headingDeg: Double?,
+        /** Wider for the map's road lock (map/RoadLock), which must find *a* road. */
+        limitM: Double = MATCH_LIMIT_M
+    ): Match? {
         var best: Match? = null
         var bestCost = Double.MAX_VALUE
 
         // Only the roads whose bounding box comes near us, from the grid.
-        for (r in area.roadsNear(lat, lon, MATCH_LIMIT_M + Area.CELL_M)) {
+        for (r in area.roadsNear(lat, lon, limitM + Area.CELL_M)) {
             val n = nearestOn(r.pts, lat, lon) ?: continue
             val cross = n.first
             val brg = n.second
@@ -821,7 +825,7 @@ object AreaRoads {
             // this far and then re-check at the end, so a motorway 40 m away
             // could out-score a residential road 34 m away, win, fail the
             // final check, and take the legitimate match down with it.
-            if (cross > MATCH_LIMIT_M) continue
+            if (cross > limitM) continue
 
             var cost = cross
             // The direction we are *travelling* along this road, which is not

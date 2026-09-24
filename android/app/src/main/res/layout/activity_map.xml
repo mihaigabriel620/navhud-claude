@@ -32,6 +32,24 @@
         android:textSize="@dimen/text_caption"
         android:visibility="gone" />
 
+    <!-- No GPS fix yet, or lost for longer than the arrow may coast: this
+         instead of an arrow at a guessed position. -->
+    <TextView
+        android:id="@+id/waitingForGps"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_warn_chip"
+        android:elevation="6dp"
+        android:paddingStart="@dimen/space_wide"
+        android:paddingEnd="@dimen/space_wide"
+        android:paddingTop="@dimen/space"
+        android:paddingBottom="@dimen/space"
+        android:text="@string/waiting_for_gps"
+        android:textColor="@color/amber_bright"
+        android:textSize="@dimen/text_heading"
+        android:visibility="gone" />
+
     <!-- next turn, top left. Hidden whole when there is no route: an arrow
          pointing straight on reads as guidance, and there is none. -->
     <LinearLayout
@@ -253,13 +271,18 @@
       distinguish at a glance while driving. One corner slab plus one dial is
       the entire interface, and everything else moved into a sheet you open
       deliberately.
+
+      Flush against the left edge (1.29), squared off on that side: a gap
+      there read as a floating chip, and the owner wanted it stuck to the edge.
+      The OpenStreetMap (i) sits just above it, see MapActivity.placeAttribution.
     -->
     <LinearLayout
         android:id="@+id/tripPill"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|start"
-        android:layout_margin="@dimen/space_wide"
+        android:layout_marginStart="0dp"
+        android:layout_marginBottom="@dimen/space_wide"
         android:background="@drawable/bg_trip_pill"
         android:elevation="10dp"
         android:gravity="center_vertical"

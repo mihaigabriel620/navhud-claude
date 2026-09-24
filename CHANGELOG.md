@@ -1,5 +1,39 @@
 # Changelog
 
+## App 1.29 — the arrow stays on the road
+
+Fixes for what the owner saw with 1.28 parked at home (free drive, indoors).
+Firmware unchanged.
+
+**Arrow**
+- Why it slid off the road: the map only kept the arrow on a road while the
+  service trusted a road match within 35 m, decided again at every fix. The
+  debug line showed "RAW · cross 0 m · trusted no" with speed "--": the
+  service had no usable fix or road at that moment, so the map fell back to
+  its own raw fix beside the road.
+- Now the map locks the arrow to a road itself. It picks the nearest road
+  within 150 m and keeps it: each GPS fix only moves the arrow forwards or
+  backwards along that road. Standing still (under ~2.5 km/h) the arrow does
+  not move at all, whatever the GPS does. It changes road only while driving
+  (over 7 km/h) when another road is clearly nearer (8 m, two fixes in a row),
+  at once when you drive off the end of the road at a junction onto a road
+  going your way, or when the GPS is more than 100 m from the locked road.
+  With a route, the arrow stays on the route line as in 1.28; off the line it
+  uses this lock. The raw GPS point is only used with no road within 150 m
+  or no road data yet. Tunnels coast along the locked road as before.
+- No GPS, no arrow: until the first real GPS fix (the last known position and
+  cell/wifi positions do not count), and again once GPS has been lost for
+  longer than the arrow may coast (30 s in free drive, longer on a route),
+  the arrow is hidden and "Waiting for GPS" shows in the middle of the map.
+- The arrow debug line now says LOCK and the road name (and "held" when
+  standing still), RAW and why (no road data / no road within 150 m), WAIT
+  when there is no GPS, and the fix provider (gps / network).
+
+**Screen**
+- The "Where to?" pill sits flush against the left edge (square on that side).
+- The OpenStreetMap (i) credit moved just above the pill, so it no longer
+  covers the pill's corner.
+
 ## App 1.28 — the 1.27 test drive
 
 Fixes for what the owner found driving 1.27. Firmware unchanged.

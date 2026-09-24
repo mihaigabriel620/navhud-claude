@@ -327,6 +327,13 @@ class HudService : Service(), LocationListener {
         @Volatile var roadPts: Array<DoubleArray>? = null; private set
         @Volatile var crossTrackM: Double = 0.0; private set
 
+        /**
+         * The last OSM road window fetched, for the map's road lock
+         * (map/RoadLock). Kept when the service drops its own copy to force a
+         * refetch, or stops: the roads are still where they were.
+         */
+        @Volatile var roadArea: Area? = null; private set
+
         /** Plain-language GPS quality, for the Setup screen. */
         @Volatile var fixQuality: String = "no fix"; private set
 
@@ -2068,6 +2075,7 @@ class HudService : Service(), LocationListener {
             try {
                 val a = AreaRoads.fetch(centre[0], centre[1], want, nowMs)
                 freeArea = a
+                roadArea = a
                 areaRoadCount = a.roads.size
                 // A new road network means every cached "is this camera on our
                 // road" answer was computed against a different set of roads.

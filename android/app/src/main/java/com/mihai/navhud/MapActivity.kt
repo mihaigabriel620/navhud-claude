@@ -39,6 +39,7 @@ import com.mihai.navhud.nav.AreaRoads
 import com.mihai.navhud.map.NavCamera
 import com.mihai.navhud.map.FreeDriveMotion
 import com.mihai.navhud.map.PuckMotion
+import com.mihai.navhud.map.RoadLock
 import com.mihai.navhud.map.RouteLine
 import com.mihai.navhud.nav.RoadSigns
 import com.mihai.navhud.nav.RoadFeature
@@ -284,6 +285,7 @@ class MapActivity : AppCompatActivity() {
     private lateinit var statusChip: TextView
     private lateinit var perfOverlay: TextView
     private lateinit var arrowDebugView: TextView
+    private lateinit var waitingGpsView: View
 
     // ---- frame timing, for when "it stutters" needs to become a number ----
     private var frameCount = 0
@@ -412,8 +414,17 @@ class MapActivity : AppCompatActivity() {
     private val freeMotion = FreeDriveMotion(COAST_FREE_MS / 1000.0, FreeTracker.SNAP_TRUST_M)
     /** The route [routeMotion]'s distances belong to. */
     private var motionRoute: Route? = null
-    /** The last matched road, kept for coasting after the service drops it. */
-    private var coastRoad: Array<DoubleArray>? = null
+    /** The road the arrow is on off the route line; fed one GPS fix at a time. */
+    private val roadLock = RoadLock()
+    /** The fix [roadLock] last saw. */
+    private var lockedFixNs = 0L
+    /** Whether the fix being drawn came from GPS, and when the last fresh one did. */
+    private var fixIsGps = false
+    private var lastGpsAtMs = 0L
+    /** "Waiting for GPS" is up: no fix worth drawing an arrow at. */
+    private var waitingForGps = false
+    /** What the puck layer's visibility was last set to; null = not since the style loaded. */
+    private var puckHidden: Boolean? = null
 
     private val amber = Color.parseColor("#FF9D00")
     private val amberDim = Color.parseColor("#C07200")
@@ -456,6 +467,7 @@ class MapActivity : AppCompatActivity() {
         statusChip = findViewById(R.id.statusChip)
         perfOverlay = findViewById(R.id.perfOverlay)
         arrowDebugView = findViewById(R.id.arrowDebugLine)
+        waitingGpsView = findViewById(R.id.waitingForGps)
         followButton = findViewById(R.id.follow)
         voiceButton = findViewById(R.id.voiceButton)
         voiceLabel = findViewById(R.id.voiceState)
@@ -465,6 +477,10 @@ class MapActivity : AppCompatActivity() {
         tripSub = findViewById(R.id.tripSub)
         quickScrim = findViewById(R.id.quickScrim)
         tripPill = findViewById(R.id.tripPill)
+        // The map's OSM credit sits on the pill's top edge, wherever layout puts it.
+        tripPill.addOnLayoutChangeListener { _, _, top, _, _, _, oldTop, _, _ ->
+            if (top != oldTop) placeAttribution()
+        }
         cancelRouteButton = findViewById(R.id.cancelRoute)
         instructionCard = findViewById(R.id.instructionCard)
         junctionBox = findViewById(R.id.junction)
@@ -576,11 +592,8 @@ class MapActivity : AppCompatActivity() {
                 isCompassEnabled = false
                 isAttributionEnabled = true
                 isLogoEnabled = false
-                // Lift it clear of the bottom strip, which is opaque and would
-                // otherwise bury the OpenStreetMap credit completely.
-                val d = resources.displayMetrics.density
-                setAttributionMargins((8 * d).toInt(), 0, 0, (56 * d).toInt())
             }
+            placeAttribution()
             // A two-finger drag could flatten the map to a plan view, and once
             // it was flat there was no obvious way back. The gesture stays --
             // some people want a shallower view on a motorway and a steeper
@@ -1071,6 +1084,7 @@ class MapActivity : AppCompatActivity() {
         // not a degraded mode, it is a broken one. Fall back to the old symbol.
         puckFallback = if (puckLayer == null) installFallbackPuck(s) else null
         puckShownDot = null
+        puckHidden = null
 
         verifyStyle(s)
     }
@@ -1984,7 +1998,7 @@ class MapActivity : AppCompatActivity() {
     private fun cameraFrame() {
         val m = map ?: return
         val now = SystemClock.elapsedRealtime()
-        val loc = currentFix(now) ?: return
+        val loc = currentFix(now) ?: run { showWaitingForGps(true); return }
 
         val dt = if (lastCamFrameMs == 0L) 0.033
                  else (now - lastCamFrameMs).coerceIn(10L, 200L) / 1000.0
@@ -2007,6 +2021,11 @@ class MapActivity : AppCompatActivity() {
             updateDeclination(loc.latitude, loc.longitude, loc.altitude)
             learnMountingOffset(gpsBrg, speed)
             lastFusedFixNs = fixNs
+            // A real GPS fix, and a fresh one: the last-known position handed
+            // over at start-up and cell/wifi fixes do not count (1.29).
+            fixIsGps = Fixes.of(loc, now).isGps
+            val ageMs = now - fixNs / 1_000_000L
+            if (fixIsGps && ageMs in 0..FIX_HOLD_MS) lastGpsAtMs = fixNs / 1_000_000L
         }
         // The HUD's own IMU when one is fitted and reporting, the phone's own
         // when it is not, and plain GPS heading when the device has no
@@ -2103,9 +2122,26 @@ class MapActivity : AppCompatActivity() {
         val onRouteSnap = snapWanted && route != null && trusted && onLine
         // Free drive snaps too, to the road network rather than to a route
         // line, so the marker never sits in somebody's living room -- and so
-        // does a route, once the car is off its line (see HudService).
-        val freeSnap = snapWanted && trusted && !onLine
-        val snapped = onRouteSnap || freeSnap
+        // does a route, once the car is off its line. Since 1.29 that road is
+        // the map's own lock (map/RoadLock), set below, not the service's
+        // per-fix match: that one let go when a parked fix wandered.
+        var freeSnap = false
+
+        // ---- no GPS, no arrow (1.29) ----------------------------------------
+        // Before the first real GPS fix the arrow was drawn at the last-known
+        // or cell position, in the wrong street; and once GPS is gone for
+        // longer than the arrow may coast, it is a guess again. Say so instead.
+        // A tunnel keeps its arrow: coasting counts as a position.
+        val coastMs = if (route == null) COAST_FREE_MS
+            else if (HudService.carSpeedMps != null) COAST_ON_ROUTE_MS
+            else RouteTracker.COAST_NO_BUS_MAX_MS
+        val noGps = lastGpsAtMs == 0L || now - lastGpsAtMs > FIX_HOLD_MS + coastMs
+        if (!noGps && waitingForGps) {
+            // GPS is back: put the arrow on it rather than glide it from the guess.
+            routeMotion.reset()
+            freeMotion.reset()
+        }
+        showWaitingForGps(noGps)
 
         // ---- where to draw the car ------------------------------------------
         var lat: Double
@@ -2141,30 +2177,41 @@ class MapActivity : AppCompatActivity() {
             val p = Geo.pointAlong(route.pts, route.cum, puckAlong)
             lat = p[0]; lon = p[1]
             roadBrg = Geo.bearingAlong(route.pts, route.cum, puckAlong)
-            // Free motion picks up from here if the car leaves the line.
+            // Free motion picks up from here if the car leaves the line, and
+            // the road lock picks its road afresh.
             freeMotion.reset(lat, lon)
+            roadLock.reset()
+            lockedFixNs = 0L
         } else {
             // Free driving, or off the route: the same rubber band, run along
-            // the heading -- or along the matched road, which is where the
+            // the heading -- or along the locked road, which is where the
             // marker is put back last. See FreeDriveMotion.
             routeMotion.reset()
             puckAlong = Double.NaN
-            val live = fixAgeMs <= FIX_HOLD_MS
-            if (freeSnap) roadBrg = HudService.roadBearing
-            // The service forgets the road a few seconds into an underpass,
-            // which is exactly when the coast wants it; so keep our own copy.
-            val road = when {
-                freeSnap -> HudService.roadPts.also { coastRoad = it }
-                live -> { coastRoad = null; null }
-                else -> coastRoad
+            // GPS only: a cell fix is no position to draw or to lock on to.
+            val live = fixAgeMs <= FIX_HOLD_MS && fixIsGps
+            if (!snapWanted) roadLock.reset()
+            else if (live && fixNs != lockedFixNs) {
+                lockedFixNs = fixNs
+                roadLock.update(HudService.roadArea, loc.latitude, loc.longitude,
+                    HudService.carSpeedMps ?: speed, gpsBrg, fusion.heading)
             }
+            // Kept through an underpass, which is exactly when the coast
+            // wants it: the lock only changes on a live fix.
+            val road = roadLock.road
+            freeSnap = road != null
+            if (road != null) roadBrg = roadLock.bearingDeg
+            // Standing still, the lock holds the position; so must the band,
+            // or it runs ahead on the GPS speed's wander.
+            val held = live && roadLock.holding
             val p = freeMotion.step(dt,
-                if (freeSnap) HudService.snapLat else loc.latitude,
-                if (freeSnap) HudService.snapLon else loc.longitude,
-                fixAgeMs / 1000.0, refSpeed, live,
-                fusion.heading ?: gpsBrg ?: roadBrg, road)
+                if (road != null) roadLock.lat else loc.latitude,
+                if (road != null) roadLock.lon else loc.longitude,
+                fixAgeMs / 1000.0, if (held) 0.0 else refSpeed, live,
+                fusion.heading ?: gpsBrg ?: roadBrg, road?.pts)
             lat = p[0]; lon = p[1]
         }
+        val snapped = onRouteSnap || freeSnap
 
         // ---- which way it points --------------------------------------------
         //
@@ -2232,8 +2279,7 @@ class MapActivity : AppCompatActivity() {
         }
 
         updatePuck(lat, lon, puckBearing)
-        if (arrowDebug) showArrowDebug(now, if (onRouteSnap) "ROUTE" else if (freeSnap) "ROAD" else "RAW",
-            trusted, loc)
+        if (arrowDebug) showArrowDebug(now, onRouteSnap, freeSnap, noGps, trusted, loc)
         // The route line starts under the arrow: from the arrow's own distance
         // while it runs on the line, else from the service's projection.
         maybeDrawRouteLine(route, if (onRouteSnap) puckAlong else HudService.alongM,
@@ -2277,6 +2323,19 @@ class MapActivity : AppCompatActivity() {
             .padding(0.0, topPad.toDouble(), 0.0, botPad.toDouble())
             .build()
         m.moveCamera(CameraUpdateFactory.newCameraPosition(pos))
+    }
+
+    /**
+     * The (i) is the OpenStreetMap credit the licence requires, so it stays --
+     * but it sat on the trip pill's top-left corner. Now just above the pill,
+     * at the screen edge: clear of the pill, the dial and the cards (1.29).
+     */
+    private fun placeAttribution() {
+        val m = map ?: return
+        if (tripPill.height == 0) return
+        val d = resources.displayMetrics.density
+        m.uiSettings.setAttributionMargins((4 * d).toInt(), 0, 0,
+            mapView.height - tripPill.top + (4 * d).toInt())
     }
 
     /**
@@ -2452,16 +2511,30 @@ class MapActivity : AppCompatActivity() {
 
     /**
      * One line on the map saying why the arrow is where it is: on the route
-     * line, on an OSM road, or on the raw fix -- with the distance from the
-     * route, the service's trust flag and the fix accuracy -- and the camera
+     * line, LOCKed to an OSM road (which, and whether held still), or on the
+     * raw fix and why -- with the distance from that line or road, the
+     * service's trust flag, the fix provider and accuracy -- and the camera
      * alert, to catch a late warning in the act. Twice a second.
      */
-    private fun showArrowDebug(now: Long, mode: String, trusted: Boolean, loc: Location) {
+    private fun showArrowDebug(
+        now: Long, onRoute: Boolean, locked: Boolean, noGps: Boolean, trusted: Boolean,
+        loc: Location
+    ) {
         if (now - arrowDebugAtMs < 500L) return
         arrowDebugAtMs = now
         arrowDebugView.visibility = View.VISIBLE
-        arrowDebugView.text = "%s · cross %.0f m · trusted %s · acc %s".format(
-            mode, HudService.crossTrackM, if (trusted) "yes" else "no",
+        val r = roadLock.road
+        val mode = when {
+            onRoute -> "ROUTE"
+            locked && r != null -> "LOCK " + r.label.ifBlank { "#${r.id}" } +
+                (if (roadLock.holding) " held" else "")
+            HudService.roadArea == null -> "RAW no road data"
+            else -> "RAW no road ≤${RoadLock.PICK_M.toInt()} m"
+        }
+        arrowDebugView.text = "%s%s · cross %.0f m · trusted %s · %s acc %s".format(
+            if (noGps) "WAIT no GPS · " else "", mode,
+            if (locked) roadLock.crossM else HudService.crossTrackM,
+            if (trusted) "yes" else "no", loc.provider ?: "?",
             if (loc.hasAccuracy()) "%.0f m".format(loc.accuracy) else "?") +
             // Which camera the alert is on, how far, which stage: a late
             // warning shows up here as the id changing close in.
@@ -2569,6 +2642,24 @@ class MapActivity : AppCompatActivity() {
     /** Set instead of [puckLayer] when the indicator layer is unavailable. */
     private var puckFallback: GeoJsonSource? = null
 
+    /**
+     * No GPS worth drawing: hide the arrow and say "Waiting for GPS" in the
+     * middle of the map, rather than show a car at a guessed position (1.29).
+     * The layer is looked up by id, so the fallback symbol puck hides too.
+     */
+    private fun showWaitingForGps(waiting: Boolean) {
+        waitingForGps = waiting
+        val v = if (waiting) View.VISIBLE else View.GONE
+        if (waitingGpsView.visibility != v) waitingGpsView.visibility = v
+        if (puckHidden == waiting) return
+        val layer = map?.style?.getLayer(PUCK_LAYER) ?: return
+        runCatching {
+            layer.setProperties(PropertyFactory.visibility(
+                if (waiting) Property.NONE else Property.VISIBLE))
+            puckHidden = waiting
+        }.onFailure { android.util.Log.e(TAG, "puck visibility failed", it) }
+    }
+
     private fun updatePuck(lat: Double, lon: Double, bearing: Double) {
         if (puckLayer == null && puckFallback == null) return
         // Setting a layer property marks the map dirty, and MapLibre renders
@@ -2614,6 +2705,7 @@ class MapActivity : AppCompatActivity() {
             map?.style?.let { s ->
                 runCatching { s.removeLayer(layer) }
                 puckFallback = installFallbackPuck(s)
+                puckHidden = null
             }
         }
         puckFallback?.let { src ->
