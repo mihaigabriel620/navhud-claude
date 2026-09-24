@@ -634,6 +634,13 @@ class HudService : Service(), LocationListener {
     private var offRouteSinceMs = 0L
     /** Start of the current unbroken run of RerouteRule.turnedOff, 0 if none. */
     private var turnedOffSinceMs = 0L
+
+    /**
+     * Where the car last was on the route, and what it drove since: what
+     * RouteChoice needs to turn down a reroute that loops back. Worker thread.
+     */
+    @Volatile private var departure: DoubleArray? = null
+    private val breadcrumb = Breadcrumb()
     private var lastRerouteMs = 0L
     private var lastCountryCheck: LatLon? = null
     private var lastCameraFetchMs = 0L
@@ -1191,6 +1198,9 @@ class HudService : Service(), LocationListener {
         lastFix = used
         lastLocation = used
         lastFixAtMs = SystemClock.elapsedRealtime()
+        // GPS only: a cell-tower fix is hundreds of metres wide, and a track
+        // through it would put the car on roads it never drove.
+        if (f.isGps) breadcrumb.add(used.latitude, used.longitude)
 
         // Which way the car is pointing, and remembering it for next time.
         // The restore gets exactly one attempt, on the first usable fix of the
@@ -1427,7 +1437,11 @@ class HudService : Service(), LocationListener {
 
     // ---- routing -----------------------------------------------------------
 
-    private fun requestRoute(reason: String) {
+    /**
+     * @param back on a reroute, what the car just did -- so a way back to the
+     *             line it left can be turned down. Null for a first route.
+     */
+    private fun requestRoute(reason: String, back: RouteChoice.Backtrack? = null) {
         val dest = destination ?: return
         val prov = provider ?: return
         if (!rerouting.compareAndSet(false, true)) return
@@ -1439,14 +1453,16 @@ class HudService : Service(), LocationListener {
                 if (fix == null) {
                     setStatus("waiting for a GPS fix before routing")
                     rerouting.set(false)
-                    handler.postDelayed({ requestRoute(reason) }, 3000)
+                    handler.postDelayed({ requestRoute(reason, back) }, 3000)
                     return@execute
                 }
                 val from = LatLon(fix.latitude, fix.longitude)
                 // Route away from where the car is pointing, not from whichever
-                // carriageway happens to be nearest the fix.
-                val heading = if (fix.hasBearing() && fix.hasSpeed() && fix.speed > 2f)
-                    fix.bearing.toDouble() else null
+                // carriageway happens to be nearest the fix -- whenever it is
+                // moving, and the bus knows that better than a GPS speed does.
+                val moving = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f,
+                                          SystemClock.elapsedRealtime()) > 2f
+                val heading = if (fix.hasBearing() && moving) fix.bearing.toDouble() else null
                 val found = prov.routes(from, dest, alternatives = true, headingDeg = heading)
                 // Still wanted? The driver may have pressed X, or searched for
                 // somewhere else, while this was in the air.
@@ -1463,7 +1479,7 @@ class HudService : Service(), LocationListener {
                 // useless advice -- RouteChoice prefers a forward alternative
                 // when one exists within a tolerance of the fastest, and falls
                 // back to the fastest when none does.
-                adoptRoute(RouteChoice.pick(found) ?: found.first(), reason)
+                adoptRoute(RouteChoice.pick(found, back) ?: found.first(), reason)
                 fetchZones(found, gen)
             } catch (e: Exception) {
                 if (gen != routeGen) { rerouting.set(false); return@execute }
@@ -1477,7 +1493,7 @@ class HudService : Service(), LocationListener {
                 setStatus("routing failed: ${e.message}. Retrying in ${wait / 1000} s")
                 rerouting.set(false)
                 handler.postDelayed({
-                    if (running && destination != null) requestRoute(reason)
+                    if (running && destination != null) requestRoute(reason, back)
                 }, wait)
                 return@execute
             }
@@ -1531,6 +1547,7 @@ class HudService : Service(), LocationListener {
         routeAttempt = 0
         offRouteSinceMs = 0L
         turnedOffSinceMs = 0L
+        departure = null
         free.resetAnnouncements()
         // Force a fresh area fetch: the route's camera list is not the same as
         // the one free drive wants, which is everything around us.
@@ -1567,6 +1584,7 @@ class HudService : Service(), LocationListener {
         // likely to miss the first turn.
         offRouteSinceMs = 0L
         turnedOffSinceMs = 0L
+        departure = null
         lastLanesSent = null
         // The cached "is this camera on our road" answers were computed against
         // the previous route's geometry. Keep them and a camera correctly
@@ -1672,6 +1690,10 @@ class HudService : Service(), LocationListener {
             } else doubleArrayOf(fix.latitude, fix.longitude)
             frame = t.update(lead[0], lead[1], v, brg, hasFix = true, night = night)
             bearing = brg?.toDouble()
+            // Still on the line: this is where a wrong turn would have left it.
+            if (age <= REROUTE_FIX_MAX_AGE_MS && t.lastCrossM <= RerouteRule.TURNED_OFF_CROSS_M) {
+                departure = doubleArrayOf(t.snappedLat, t.snappedLon)
+            }
         }
 
         lastFrame = frame
@@ -2018,7 +2040,8 @@ class HudService : Service(), LocationListener {
         ) return
         lastRerouteMs = now
         voice?.announceReroute()
-        requestRoute("off route by ${t.lastCrossM.toInt()} m")
+        requestRoute("off route by ${t.lastCrossM.toInt()} m",
+            RouteChoice.Backtrack(departure, breadcrumb.snapshot()))
     }
 
     private fun isNight(): Boolean {

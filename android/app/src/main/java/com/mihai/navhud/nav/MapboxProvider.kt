@@ -48,11 +48,14 @@ class MapboxProvider(
             // and jams; both need the driving-traffic profile.
             append("&annotations=maxspeed,duration,congestion,closure")
             if (headingDeg != null) {
-                // "this way, +-60 degrees" for the start point, nothing imposed
-                // on the destination. Without it a reroute on a dual
-                // carriageway happily snaps you to the opposite side.
+                // "this way, +-45 degrees" for the start point, nothing imposed
+                // on the destination (the empty slot after the ';'). Without
+                // it a reroute on a dual carriageway happily snaps you to the
+                // opposite side. Mapbox recommends 45 or 90; 45 is the one
+                // that keeps a reroute going the way the car already is.
+                // https://docs.mapbox.com/api/navigation/directions/
                 val h = (((headingDeg % 360.0) + 360.0) % 360.0).toInt()
-                append("&bearings=").append(h).append(",60;")
+                append("&bearings=").append(h).append(",45;")
             }
             append("&language=").append(language)
             append("&access_token=").append(token)
