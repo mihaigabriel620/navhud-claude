@@ -255,9 +255,12 @@ class HudService : Service(), LocationListener {
          */
         @Volatile var featureAhead: RoadAhead.Hit? = null; private set
         @Volatile var lastLocation: Location? = null; private set
+        /**
+         * Distance along the route of the last *real* fix -- never a coasted
+         * or led-forward position -- and the elapsedRealtime() that fix was
+         * taken at, so the map can extrapolate it and knows when to coast.
+         */
         @Volatile var alongM: Double = 0.0; private set
-
-        /** Monotonic time `alongM` was computed, so the map can extrapolate it. */
         @Volatile var alongAtMs: Long = 0L; private set
 
         /**
@@ -646,6 +649,10 @@ class HudService : Service(), LocationListener {
      */
     @Volatile private var departure: DoubleArray? = null
     private val breadcrumb = Breadcrumb()
+
+    /** The fix `alongM` was last published for; 0 to republish. */
+    @Volatile private var alongFixAtMs = 0L
+    private var lastRouteTickMs = 0L
     private var lastRerouteMs = 0L
     private var lastCountryCheck: LatLon? = null
     private var lastCameraFetchMs = 0L
@@ -1553,6 +1560,7 @@ class HudService : Service(), LocationListener {
         offRouteSinceMs = 0L
         turnedOffSinceMs = 0L
         departure = null
+        alongFixAtMs = 0L
         free.resetAnnouncements()
         // Force a fresh area fetch: the route's camera list is not the same as
         // the one free drive wants, which is everything around us.
@@ -1624,6 +1632,7 @@ class HudService : Service(), LocationListener {
         offRouteSinceMs = 0L
         turnedOffSinceMs = 0L
         departure = null
+        alongFixAtMs = 0L
         lastLanesSent = null
         // The cached "is this camera on our road" answers were computed against
         // the previous route's geometry. Keep them and a camera correctly
@@ -1716,10 +1725,26 @@ class HudService : Service(), LocationListener {
         val frame: HudFrame
         val bearing: Double?
 
+        val now = SystemClock.elapsedRealtime()
         val fix = lastFix
-        val age = SystemClock.elapsedRealtime() - lastFixAtMs
-        if (fix == null || age > 8000) {
+        val age = now - lastFixAtMs
+        // Real time since the last route tick, for coasting. Capped, so a
+        // stalled looper cannot throw the car a kilometre up the road.
+        val tickS = if (lastRouteTickMs == 0L) 0.0
+                    else (now - lastRouteTickMs).coerceIn(0L, 1000L) / 1000.0
+        lastRouteTickMs = now
+        if (fix == null) {
             frame = t.update(0.0, 0.0, 0f, null, hasFix = false, night = night)
+            bearing = null
+        } else if (age > 8000) {
+            // A tunnel. Keep running along the route at the car's speed -- or
+            // the last GPS speed, held -- so the HUD keeps counting down to
+            // the exit instead of freezing; the tracker gives up after
+            // RouteTracker.COAST_MAX_MS. alongM/alongAtMs deliberately stay
+            // on the last real fix: the map coasts from that on its own.
+            val v = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f, now)
+            val shown = carLink.rawSpeedMps(now)?.let { Math.round(it * 3.6).toInt() } ?: -1
+            frame = t.coast(v * tickS, shown, age, night)
             bearing = null
         } else {
             val dt = age / 1000.0
@@ -1736,11 +1761,19 @@ class HudService : Service(), LocationListener {
             if (age <= REROUTE_FIX_MAX_AGE_MS && t.lastCrossM <= RerouteRule.TURNED_OFF_CROSS_M) {
                 departure = doubleArrayOf(t.snappedLat, t.snappedLon)
             }
+            // Where the *real* fix sits on the route, and when it was taken --
+            // once per fix. The tracker was fed a point led forward in time,
+            // and stamping that with the tick's clock told the map it had a
+            // fresh position four times a second through a tunnel, so the
+            // map's own coasting never engaged.
+            if (lastFixAtMs != alongFixAtMs) {
+                alongM = t.alongOf(fix.latitude, fix.longitude, v, brg)
+                alongAtMs = lastFixAtMs
+                alongFixAtMs = lastFixAtMs
+            }
         }
 
         lastFrame = frame
-        alongM = t.alongM
-        alongAtMs = SystemClock.elapsedRealtime()
         // Null while a route is running. This used to keep whatever road free
         // drive matched before the trip started -- possibly the origin, three
         // hundred kilometres back -- and the moment anything cleared the route

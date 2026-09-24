@@ -102,13 +102,68 @@ class SnapTest {
         assertFalse("must not claim to be on the route at 60 m out", t.snapTrusted)
     }
 
-    @Test fun `losing the fix drops the snap rather than freezing it on the road`() {
+    /**
+     * Was "losing the fix drops the snap". In a tunnel that froze the marker
+     * and the HUD countdown at the entrance; the route is still the best
+     * guess of where the car went, so the tracker now runs along it -- for
+     * three minutes, and then gives up exactly as before.
+     */
+    @Test fun `losing the fix coasts along the route, then drops the snap after 180 s`() {
+        val t = RouteTracker(route)
+        val p = Geo.pointAlong(route.pts, route.cum, 3000.0)
+        t.update(p[0], p[1], 30f, headingAt(3000.0).toFloat(), hasFix = true)
+        assertTrue(t.snapTrusted)
+        val before = t.update(p[0], p[1], 30f, headingAt(3000.0).toFloat(), hasFix = true)
+
+        // 30 s into the tunnel at 30 m/s, a quarter-second tick at a time.
+        var f = before
+        var ms = 8_000L
+        while (ms <= 30_000L) { f = t.coast(30.0 * 0.25, 108, ms); ms += 250 }
+        assertTrue("kept on the road while moving", t.snapTrusted)
+        assertEquals(3000.0 + 30.0 * 0.25 * 89, t.alongM, 1.0)
+        assertTrue("the countdown kept falling",
+            f.remainingM < before.remainingM - 600)
+        assertEquals(108, f.speedKph)
+        assertEquals("no GPS, and the HUD must say so", 0, f.flags and HudFrame.FLAG_GPS_OK)
+        assertTrue(f.flags and HudFrame.FLAG_ROUTE != 0)
+        val onRoad = Geo.project(route.pts, route.cum, t.snappedLat, t.snappedLon,
+                                 fromIdx = 0, searchAll = true).cross
+        assertTrue(onRoad < 0.5)
+
+        // Three minutes on: the old behaviour.
+        t.coast(7.5, 108, RouteTracker.COAST_MAX_MS + 1)
+        assertFalse(t.snapTrusted)
+        // ...and it stays dropped until a fix comes back.
+        t.coast(7.5, 108, 10_000L)
+        assertFalse(t.snapTrusted)
+    }
+
+    @Test fun `a car that was already off the route does not coast along it`() {
+        val t = RouteTracker(route)
+        val p = Geo.pointAlong(route.pts, route.cum, 100.0)
+        val off = Geo.destination(p[0], p[1], headingAt(100.0) + 90.0, 60.0)
+        t.update(off[0], off[1], 14f, headingAt(100.0).toFloat(), hasFix = true)
+        assertFalse(t.snapTrusted)
+        t.coast(5.0, 50, 9_000L)
+        assertFalse(t.snapTrusted)
+    }
+
+    @Test fun `losing the fix with no way to coast drops the snap`() {
         val t = RouteTracker(route)
         val p = Geo.pointAlong(route.pts, route.cum, 100.0)
         t.update(p[0], p[1], 14f, headingAt(100.0).toFloat(), hasFix = true)
         assertTrue(t.snapTrusted)
         t.update(0.0, 0.0, 0f, null, hasFix = false)
         assertFalse(t.snapTrusted)
+    }
+
+    @Test fun `alongOf places a fix without moving the tracker`() {
+        val t = RouteTracker(route)
+        val p = Geo.pointAlong(route.pts, route.cum, 500.0)
+        t.update(p[0], p[1], 14f, headingAt(500.0).toFloat(), hasFix = true)
+        val q = Geo.pointAlong(route.pts, route.cum, 480.0)
+        assertEquals(480.0, t.alongOf(q[0], q[1], 14f, headingAt(480.0).toFloat()), 1.0)
+        assertEquals(500.0, t.alongM, 1.0)
     }
 
     // ---- road direction -----------------------------------------------------

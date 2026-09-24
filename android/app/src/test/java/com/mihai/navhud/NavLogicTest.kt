@@ -191,6 +191,23 @@ class NavLogicTest {
         assertEquals(0, lost.flags and HudFrame.FLAG_GPS_OK)
     }
 
+    @Test fun `the maneuver after the next one is exposed for "then"`() {
+        val r = DemoDrive.buildRoute()
+        val t = RouteTracker(r)
+        // Just after departing: next is the right turn onto Rue de la Loi,
+        // then the roundabout.
+        val p = Geo.pointAlong(r.pts, r.cum, 100.0)
+        t.update(p[0], p[1], 10f, null, hasFix = true)
+        assertEquals(r.maneuvers[1], t.nextManeuver)
+        assertEquals(r.maneuvers[2], t.thenManeuver)
+        assertEquals(Man.ROUNDABOUT, t.thenManeuver!!.code)
+        // On the final leg there is no "then".
+        val q = Geo.pointAlong(r.pts, r.cum, r.maneuvers.last().alongM - 100.0)
+        t.update(q[0], q[1], 10f, null, hasFix = true)
+        assertEquals(r.maneuvers.last(), t.nextManeuver)
+        assertEquals(null, t.thenManeuver)
+    }
+
     @Test fun `the frame shows the display speed, not the positioning one`() {
         // Scaled bus speed places the car; the raw bus speed is what the HUD
         // draws, so it is what the frame and the over-limit flag must carry.

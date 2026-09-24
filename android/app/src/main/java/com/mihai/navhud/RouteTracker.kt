@@ -69,6 +69,15 @@ class RouteTracker(val route: Route) {
          * and pinning the marker to the route would be a lie.
          */
         const val SNAP_TRUST_M = 25.0
+
+        /**
+         * How long [coast] keeps the car running along the route with no fix.
+         * Three minutes covers the long Belgian tunnels (Leopold II, Kennedy)
+         * and the Alpine ones on the way east at motorway speed, while a car
+         * that has genuinely left the route in the dark is not pinned to it
+         * for ever. The map's COAST_ON_ROUTE_MS is the same figure.
+         */
+        const val COAST_MAX_MS = 180_000L
     }
 
     private var lastSegIdx = 0
@@ -137,7 +146,7 @@ class RouteTracker(val route: Route) {
         return 0
     }
 
-    /** Metres travelled along the route at the last fix. */
+    /** Metres along the route at the last fix, or where [coast] has taken it. */
     var alongM = 0.0
         private set
 
@@ -174,6 +183,14 @@ class RouteTracker(val route: Route) {
      * it repeat itself.
      */
     var nextManeuver: ManeuverPoint? = null
+        private set
+
+    /**
+     * The maneuver after [nextManeuver], or null when that is the last one.
+     * Its [ManeuverPoint.alongM] minus the next one's is the gap between the
+     * two -- what "then turn left" needs to decide whether to be said at all.
+     */
+    var thenManeuver: ManeuverPoint? = null
         private set
 
     /**
@@ -249,42 +266,99 @@ class RouteTracker(val route: Route) {
         offRoute = offLine && offLineSeen && nowMs - offLineSinceMs >= OFF_ROUTE_MS
 
         // ---- where to draw the car -----------------------------------------
-        val sp = Geo.pointAlong(route.pts, route.cum, snap.along)
-        snappedLat = sp[0]
-        snappedLon = sp[1]
-        roadBearing = Geo.bearingAlong(route.pts, route.cum, snap.along)
+        placeAt(snap.along)
         snapTrusted = snap.cross <= SNAP_TRUST_M && !offRoute
 
         // ---- speed limit ----------------------------------------------------
         val limit = limitAt(snap.segIndex, snap.along, lat, lon, heading)
-        var lowConf = limitLowConf
-        if (offRoute) { lowConf = true }
+        val lowConf = limitLowConf || offRoute
 
-        // ---- next maneuver --------------------------------------------------
-        val next: ManeuverPoint? = route.maneuvers.firstOrNull {
-            it.alongM > snap.along + MANEUVER_PASSED_M
+        val nearPin = route.destination.let {
+            Geo.haversine(lat, lon, it.lat, it.lon) < ARRIVED_NEAR_M
         }
+        return frameAt(snap.along, (displayMps * 3.6f).roundToInt(), limit, lowConf,
+                       gpsOk = true, night = night, nearPin = nearPin)
+    }
+
+    /**
+     * No fix: carry on along the route instead of giving up on it.
+     *
+     * A tunnel, a covered junction, an underground stretch of ring road: the
+     * route is still the best information there is about where the car went,
+     * and the car's own speed (or the last GPS one) says how far. So the
+     * position runs on along the line, the countdown to the next maneuver
+     * keeps falling, and the snap stays trusted -- for [COAST_MAX_MS]. After
+     * that, or when the car was not on the route when the fix went, this is
+     * exactly the no-fix frame [update] gives.
+     *
+     * @param advanceM   metres travelled since the last call
+     * @param displayKph speed to show, or -1 when only GPS knew it
+     * @param sinceFixMs how long since the last real fix
+     */
+    fun coast(advanceM: Double, displayKph: Int, sinceFixMs: Long, night: Boolean = false): HudFrame {
+        if (sinceFixMs > COAST_MAX_MS || !snapTrusted || offRoute) {
+            return update(0.0, 0.0, 0f, null, hasFix = false, night = night)
+        }
+        // As on losing the fix: an off-line run does not survive the outage.
+        offLineSeen = false
+        offLine = false
+        lastCrossM = 0.0
+        val along = minOf(route.totalDistanceM, alongM + max(0.0, advanceM))
+        while (lastSegIdx < route.cum.size - 2 && route.cum[lastSegIdx + 1] <= along) lastSegIdx++
+        alongM = along
+        placeAt(along)
+        val limit = limitAt(lastSegIdx, along, snappedLat, snappedLon, roadBearing)
+        // Not GPS_OK: the HUD says NO GPS, and the distances are an estimate.
+        return frameAt(along, displayKph, limit, lowConf = true, gpsOk = false,
+                       night = night, nearPin = false)
+    }
+
+    /**
+     * Where along the route a fix projects, without moving the tracker. The
+     * service publishes this for the *real* fix while the tracker itself is
+     * fed a position led forward in time.
+     */
+    fun alongOf(lat: Double, lon: Double, speedMps: Float, bearingDeg: Float?): Double =
+        Geo.project(
+            route.pts, route.cum, lat, lon,
+            fromIdx = lastSegIdx,
+            windowMeters = max(400.0, speedMps * 20.0),
+            headingDeg = if (speedMps > 2.0f) bearingDeg?.toDouble() else null
+        ).along
+
+    private fun placeAt(along: Double) {
+        val sp = Geo.pointAlong(route.pts, route.cum, along)
+        snappedLat = sp[0]
+        snappedLon = sp[1]
+        roadBearing = Geo.bearingAlong(route.pts, route.cum, along)
+    }
+
+    private fun frameAt(
+        along: Double, speedKph: Int, limit: Int, lowConf: Boolean,
+        gpsOk: Boolean, night: Boolean, nearPin: Boolean
+    ): HudFrame {
+        // ---- next maneuver --------------------------------------------------
+        val nextIdx = route.maneuvers.indexOfFirst { it.alongM > along + MANEUVER_PASSED_M }
+        val next: ManeuverPoint? = route.maneuvers.getOrNull(nextIdx)
         nextManeuver = next
+        thenManeuver = if (nextIdx >= 0) route.maneuvers.getOrNull(nextIdx + 1) else null
         currentRoadName = route.maneuvers
-            .lastOrNull { it.alongM <= snap.along + MANEUVER_PASSED_M }
+            .lastOrNull { it.alongM <= along + MANEUVER_PASSED_M }
             ?.name?.takeIf { it.isNotBlank() }
 
-        val remaining = max(0.0, route.totalDistanceM - snap.along)
-        val arrived = remaining < ARRIVED_M ||
-            (remaining < ARRIVED_NEAR_REMAINING_M && route.destination.let {
-                Geo.haversine(lat, lon, it.lat, it.lon) < ARRIVED_NEAR_M
-            })
+        val remaining = max(0.0, route.totalDistanceM - along)
+        val arrived = remaining < ARRIVED_M || (remaining < ARRIVED_NEAR_REMAINING_M && nearPin)
 
         val etaS = if (route.totalDistanceM > 1.0) {
             (route.totalDurationS * (remaining / route.totalDistanceM)).roundToInt()
         } else 0
 
-        val speedKph = (displayMps * 3.6f).roundToInt()
         val over = limit > 0 && speedKph > limit + OVER_LIMIT_TOLERANCE_KPH
 
         // This tracker exists only because there is a route, so the bit is
         // unconditional here. It is what tells the HUD it may draw a maneuver.
-        var flags = HudFrame.FLAG_GPS_OK or HudFrame.FLAG_ROUTE
+        var flags = HudFrame.FLAG_ROUTE
+        if (gpsOk) flags = flags or HudFrame.FLAG_GPS_OK
         if (over) flags = flags or HudFrame.FLAG_OVER_LIMIT
         if (offRoute) flags = flags or HudFrame.FLAG_OFF_ROUTE
         if (arrived) flags = flags or HudFrame.FLAG_ARRIVED
@@ -300,7 +374,7 @@ class RouteTracker(val route: Route) {
             roundaboutExit = if (next?.code == Man.ROUNDABOUT) next.exit else 0,
             roundaboutBearing =
                 if (next?.code == Man.ROUNDABOUT) next.exitBearing else null,
-            distToManeuverM = if (next != null) (next.alongM - snap.along).roundToInt() else 0,
+            distToManeuverM = if (next != null) (next.alongM - along).roundToInt() else 0,
             etaSeconds = etaS,
             remainingM = remaining.roundToInt(),
             flags = flags,
