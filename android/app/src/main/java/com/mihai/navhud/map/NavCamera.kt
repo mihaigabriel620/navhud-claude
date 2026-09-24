@@ -59,6 +59,9 @@ class NavCamera {
         const val TILT_MIN = 28.0
         const val TILT_MAX = 58.0
 
+        /** How far a pinch may move the zoom off the speed curve, levels. */
+        const val MAX_USER_ZOOM_OFFSET = 4.0
+
         /** Below this a *GPS* heading is not trustworthy, m/s (~7 km/h). */
         const val HEADING_MIN_SPEED = 2.0
 
@@ -174,6 +177,34 @@ class NavCamera {
     private var started = false
 
     /**
+     * What a pinch or a two-finger tilt left behind, while following.
+     *
+     * The gesture no longer drops out of follow mode -- only a one-finger pan
+     * does, as in Waze -- so its result has to outlive the next frame: the tilt
+     * replaces [TILT], and the zoom becomes an offset on the speed-based zoom,
+     * so a driver who likes it closer keeps it closer at every speed. Cleared
+     * by [reset], i.e. by recentring.
+     */
+    var userTilt: Double? = null
+        private set
+    var userZoomOffset = 0.0
+        private set
+
+    /** A tilt gesture ended at [deg]; keep it (clamped) from now on. */
+    fun setUserTilt(deg: Double) {
+        val t = deg.coerceIn(TILT_MIN, TILT_MAX)
+        userTilt = t
+        tilt = t
+    }
+
+    /** A pinch ended at map zoom [actual]; keep the difference from here on. */
+    fun setUserZoom(actual: Double) {
+        userZoomOffset = (userZoomOffset + actual - zoom)
+            .coerceIn(-MAX_USER_ZOOM_OFFSET, MAX_USER_ZOOM_OFFSET)
+        zoom = actual
+    }
+
+    /**
      * @param speedMps  current speed
      * @param rawBearing GPS heading, or null when there isn't a usable one
      * @return true if anything moved enough to be worth animating
@@ -190,12 +221,13 @@ class NavCamera {
         val kph = speedMps * 3.6
 
         val targetZoom = if (overview) 13.0
-                         else zoomForSpeed(kph) + maneuverZoomBoost(maneuverDistM, speedMps)
+                         else zoomForSpeed(kph) + maneuverZoomBoost(maneuverDistM, speedMps) +
+                             userZoomOffset
         // Not zero: the map's own pitch is clamped to [TILT_MIN, TILT_MAX] so
         // a gesture cannot flatten it, and asking for a pitch the map will
         // refuse would leave this filter's idea of the tilt and the map's
         // permanently disagreeing.
-        val targetTilt = if (overview) TILT_MIN else TILT
+        val targetTilt = if (overview) TILT_MIN else userTilt ?: TILT
 
         // Freeze the heading when we are barely moving; keep the last good one.
         val minSpeed = if (headingTrusted) HEADING_MIN_SPEED_TRUSTED else HEADING_MIN_SPEED
@@ -230,6 +262,8 @@ class NavCamera {
         bearing = 0.0
         zoom = ZOOM.first()
         tilt = TILT
+        userTilt = null
+        userZoomOffset = 0.0
     }
 
     /**

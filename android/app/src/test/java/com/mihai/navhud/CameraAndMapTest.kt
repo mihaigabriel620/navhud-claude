@@ -289,6 +289,33 @@ class CameraAndMapTest {
         assertTrue(NavCamera.TILT_MIN > 15.0)
     }
 
+    @Test fun `a pinch while following is kept as an offset on the speed zoom`() {
+        val c = NavCamera()
+        repeat(60) { c.update(10.0, 0.0) }
+        val auto = c.zoom
+        c.setUserZoom(auto + 1.0)                 // pinched in one level
+        repeat(200) { c.update(10.0, 0.0) }
+        assertEquals("the pinch must survive the next frames", auto + 1.0, c.zoom, 0.01)
+        // ...and still applies after speeding up.
+        repeat(400) { c.update(30.0, 0.0) }
+        assertEquals(NavCamera.zoomForSpeed(108.0) + 1.0, c.zoom, 0.01)
+        c.reset()
+        assertEquals(0.0, c.userZoomOffset, 1e-9)
+    }
+
+    @Test fun `a tilt gesture while following is kept, inside the allowed range`() {
+        val c = NavCamera()
+        c.setUserTilt(50.0)
+        repeat(100) { c.update(20.0, 0.0) }
+        assertEquals(50.0, c.tilt, 0.01)
+        c.setUserTilt(5.0)
+        repeat(100) { c.update(20.0, 0.0) }
+        assertEquals(NavCamera.TILT_MIN, c.tilt, 0.01)
+        c.reset()
+        repeat(100) { c.update(20.0, 0.0) }
+        assertEquals("recentring goes back to the standard tilt", NavCamera.TILT, c.tilt, 0.01)
+    }
+
     @Test fun `facing a bearing takes effect at once, without easing`() {
         val c = NavCamera()
         repeat(20) { c.update(0.0, 10.0) }

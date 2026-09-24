@@ -312,6 +312,9 @@ class MapActivity : AppCompatActivity() {
     private var drawnRoute: Route? = null
     private var drawnCameras: List<SpeedCamera> = emptyList()
     private var following = true
+    /** A pinch / two-finger tilt is in progress: the frame loop leaves the camera alone. */
+    private var scaling = false
+    private var shoving = false
     private var voiceOn = true
 
     // ---- the map is a moving map whether or not a route is running ---------
@@ -529,16 +532,6 @@ class MapActivity : AppCompatActivity() {
         }
         findViewById<ImageView>(R.id.routePickerClose).setOnClickListener { hideRoutePicker() }
 
-        // Any finger on the map drops follow mode immediately. The camera-move
-        // listener alone is not reliable while moveCamera runs every frame.
-        mapView.setOnTouchListener { _, ev ->
-            if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN && following) {
-                following = false
-                updateFollowButton()
-            }
-            false
-        }
-
         voiceOn = Prefs.voice(this)
         HudService.voiceEnabled = voiceOn
         updateFollowButton()
@@ -568,7 +561,8 @@ class MapActivity : AppCompatActivity() {
             // a slow SoC. One level up is the one that actually helps.
             runCatching { m.prefetchZoomDelta = 1 }
             m.uiSettings.apply {
-                isRotateGesturesEnabled = true
+                // Only once follow mode is off; see the gesture listeners below.
+                isRotateGesturesEnabled = !following
                 isTiltGesturesEnabled = true
                 isCompassEnabled = false
                 isAttributionEnabled = true
@@ -585,14 +579,50 @@ class MapActivity : AppCompatActivity() {
             // is designed for.
             m.setMinPitchPreference(NavCamera.TILT_MIN)
             m.setMaxPitchPreference(NavCamera.TILT_MAX)
-            // Any manual gesture drops out of follow mode, as every nav app does.
-            m.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE &&
-                    following) {
-                    following = false
-                    updateFollowButton()
+            // Follow mode, the Waze way. Any finger on the map used to drop it
+            // -- a pinch to see a little further, a tap near the arrow -- and
+            // then the map sat still while the car drove off it. Now only a
+            // one-finger pan leaves follow mode. A pinch or a two-finger tilt
+            // while following adjusts the view and is kept (NavCamera's user
+            // zoom offset and tilt); the frame loop stays off the camera while
+            // one is in progress so the two do not fight. Rotation is off
+            // while following, since the map turns with the car.
+            m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
+                override fun onMoveBegin(d: org.maplibre.android.gestures.MoveGestureDetector) {
+                    if (d.pointersCount == 1 && following) {
+                        following = false
+                        updateFollowButton()
+                    }
                 }
-            }
+                override fun onMove(d: org.maplibre.android.gestures.MoveGestureDetector) {}
+                override fun onMoveEnd(d: org.maplibre.android.gestures.MoveGestureDetector) {}
+            })
+            m.addOnShoveListener(object : MapLibreMap.OnShoveListener {
+                override fun onShoveBegin(d: org.maplibre.android.gestures.ShoveGestureDetector) {
+                    shoving = true
+                }
+                override fun onShove(d: org.maplibre.android.gestures.ShoveGestureDetector) {}
+                override fun onShoveEnd(d: org.maplibre.android.gestures.ShoveGestureDetector) {
+                    shoving = false
+                    if (following) {
+                        navCamera.setUserTilt(m.cameraPosition.tilt)
+                        forgetDrawnCamera()
+                    }
+                }
+            })
+            m.addOnScaleListener(object : MapLibreMap.OnScaleListener {
+                override fun onScaleBegin(d: org.maplibre.android.gestures.StandardScaleGestureDetector) {
+                    scaling = true
+                }
+                override fun onScale(d: org.maplibre.android.gestures.StandardScaleGestureDetector) {}
+                override fun onScaleEnd(d: org.maplibre.android.gestures.StandardScaleGestureDetector) {
+                    scaling = false
+                    if (following) {
+                        navCamera.setUserZoom(m.cameraPosition.zoom)
+                        forgetDrawnCamera()
+                    }
+                }
+            })
             val json = resources.openRawResource(R.raw.style_e60)
                 .bufferedReader().use { it.readText() }
             m.setStyle(Style.Builder().fromJson(json)) { s ->
@@ -707,6 +737,9 @@ class MapActivity : AppCompatActivity() {
         snapToRoad = Prefs.snapToRoad(this)
         lastCamFrameMs = 0L
         lastFrameNanos = 0L
+        // A gesture cut off by the pause never delivered its end.
+        scaling = false
+        shoving = false
         // A window that started before a five-minute pause would publish
         // "vsync 0 Hz" on the first frame back, which reads as a hang.
         frameWindowStartNs = 0L
@@ -2118,7 +2151,8 @@ class MapActivity : AppCompatActivity() {
         maybeDrawRouteLine(route, if (onRouteSnap) puckAlong else HudService.alongM,
             System.nanoTime())
         HudService.headingSource = fusion.describe()
-        if (!following) return
+        // A pinch or tilt in progress owns the camera until it ends.
+        if (!following || scaling || shoving) return
 
         val manDist = HudService.lastFrame
             ?.takeIf { it.distToManeuverM > 0 }?.distToManeuverM?.toDouble() ?: -1.0
@@ -2688,6 +2722,8 @@ class MapActivity : AppCompatActivity() {
         // Colour only. Fading the whole view took the chip's background and
         // border with it, so one button looked unlike its four neighbours.
         followButton.setColorFilter(if (following) amberDim else amber)
+        // Every change of `following` comes through here.
+        map?.uiSettings?.isRotateGesturesEnabled = !following
     }
 
     private fun updateVoiceButton() {
