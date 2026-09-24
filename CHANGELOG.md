@@ -1,5 +1,10 @@
 # Changelog
 
+## App 1.29.2 — search box a little closer to the edge
+
+- The gap between the screen edge and the search box is halved (16 → 8 dp);
+  the box keeps its rounded ends and its distance from the bottom.
+
 ## App 1.29.1 — the search button, not the box
 
 - 1.29 moved the whole search box against the screen edge and squared off
