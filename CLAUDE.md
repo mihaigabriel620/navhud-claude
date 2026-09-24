@@ -14,10 +14,14 @@ Waze / Google Maps everywhere.
   to it, push `main`, and delete that branch (local and remote) when done.
 - **Cloud sessions are preferred** (the owner has cloud-session credits):
   at the start and end of a session, report remaining usage/credits if visible.
-- **Every new APK goes to GitHub Releases.** Bump `versionCode`/`versionName`
-  in `android/app/build.gradle.kts`, add a `## App X.Y` section at the top of
-  `CHANGELOG.md`, push, then push tag `vX.Y` — the Actions workflow builds the
-  signed APK and publishes the release (see `.github/workflows/android.yml`).
+- **Every new APK goes to GitHub Releases, automatically.** Bump
+  `versionCode`/`versionName` in `android/app/build.gradle.kts`, add a
+  `## App X.Y` section at the top of `CHANGELOG.md`, push to `main`. When CI
+  passes it publishes "NavHUD X.Y" (tag `vX.Y`) with the signed APK — no tag
+  push needed (see `.github/workflows/android.yml`). Cloud sessions cannot push
+  tags or delete remote branches: never tell the owner to do those by hand;
+  the workflow covers releases, and leftover session branches are cleaned up
+  from the owner's PC session.
 - **Chat short**: act, don't narrate; only important info, questions, results.
   Full detail only when asked for status. Big logs go to files, not chat.
 - **Thorough and correct beats fast.** Research online (docs, OSM wiki, laws)
