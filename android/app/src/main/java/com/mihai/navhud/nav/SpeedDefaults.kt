@@ -128,16 +128,101 @@ object SpeedDefaults {
      */
     fun forRoad(road: RoadWay, area: Area?, country: String?, localHour: Int): Int? {
         val (tagRegion, tagUrban) = fromSchemeTag(road.schemeTag)
-        // Nothing names a country: there is no law to fall back on, and the
-        // only honest answer is silence.
-        val region = tagRegion ?: area?.regionCode ?: country ?: return null
+        // The window's vote only counts inside the country we are in: near a
+        // border it can be won by the neighbour's roads, and Flanders' 70
+        // does not apply to a Dutch lane.
+        val cc = (tagRegion ?: country)?.uppercase()?.substringBefore('-')
+        val vote = area?.regionCode?.takeIf { cc == null || it.startsWith("$cc-") }
+        // A bare country tag ("BE:rural") names less than the window does.
+        val region = tagRegion?.takeIf { it.contains('-') || vote == null }
+            ?: vote ?: tagRegion ?: country
+            // Nothing names a country: there is no law to fall back on, and
+            // the only honest answer is silence.
+            ?: return null
 
         // `lit` last, because it is the weakest of the three: street lighting
         // is a strong hint at a built-up area and not a legal definition of one.
         val urban = tagUrban ?: impliedUrban(road.kind) ?: road.lit
 
-        val d = implied(region, road.kind, urban, localHour = localHour)
+        // Romania: a national road carrying a European number is 100, like an
+        // expressway (OUG 195/2002 art. 49), and OSM maps many as `primary`.
+        val kind = if (region.uppercase().startsWith("RO") && road.intRef.contains(E_ROAD)) "trunk"
+                   else road.kind
+        // Physically separated, two lanes each way: the class several
+        // countries give its own rural limit (BE 120, FR 110, DE none, PL 100).
+        // Needs `lanes` because in Belgium one lane each way stays at 70/90.
+        val dual = road.onewayDir != 0 && road.lanes >= 2 &&
+            (kind == "trunk" || kind == "primary")
+
+        val d = implied(region, kind, urban, dual, localHour)
         return if (d.known) d.kph else null
+    }
+
+    private val E_ROAD = Regex("\\bE ?\\d")
+
+    /** A matched road's limit, and whether it came from the law rather than a sign. */
+    class RoadLimit(val kph: Int, val derived: Boolean)
+
+    /**
+     * The limit on a road the matcher found: its own `maxspeed`, else the
+     * legal default. Null when neither says anything.
+     *
+     * The one derivation both trackers use. Free drive calls it on the road
+     * it matched; a route calls it through [limitAt] wherever the router has
+     * no limit for the segment -- which used to go blank on exactly the
+     * untagged half of the network this file exists for.
+     */
+    fun limitOf(road: RoadWay, area: Area?, country: String?, localHour: Int): RoadLimit? {
+        if (road.limitKph != 0) return RoadLimit(road.limitKph, derived = false)
+        return forRoad(road, area, country, localHour)?.let { RoadLimit(it, derived = true) }
+    }
+
+    /**
+     * [limitOf] for a position rather than a road: 0 when there is no road
+     * data here or no answer on the road that is. -1 is derestricted.
+     */
+    fun limitAt(
+        area: Area?, lat: Double, lon: Double, headingDeg: Double?,
+        country: String?, localHour: Int
+    ): Int {
+        val a = area ?: return UNKNOWN
+        val m = AreaRoads.match(a, lat, lon, headingDeg) ?: return UNKNOWN
+        return limitOf(m.road, a, country, localHour)?.kph ?: UNKNOWN
+    }
+
+    /**
+     * The km/h an implicit OSM `maxspeed` value stands for: "BE-VLG:rural",
+     * "RO:urban", "DE:motorway", "BE:zone30"... Null when the code is not one
+     * we know, or when it cannot be answered without knowing more -- a bare
+     * "BE:rural" is 70 in Flanders and 90 in Wallonia, so the road keeps no
+     * number and [forRoad] settles it with the window's region.
+     * https://wiki.openstreetmap.org/wiki/Key:maxspeed#Implicit_maxspeed_values
+     */
+    fun zoneLimit(code: String): Int? {
+        val s = code.trim().uppercase()
+        if (!s.contains(':')) return null
+        val region = s.substringBefore(':')
+        val zone = s.substringAfter(':').lowercase()
+        val country = region.substringBefore('-')
+        Regex("^zone:?(\\d+)$").find(zone)?.let { return it.groupValues[1].toInt() }
+        val law = LAWS[region] ?: LAWS[country] ?: return null
+        return when (zone) {
+            "living_street" -> law.living.takeIf { it != UNKNOWN }
+            "bicycle_road", "cyclestreet", "bicycle_street" -> 30
+            "motorway" -> if (country == "NL") null else law.motorway   // clock-dependent
+            "urban_motorway", "motorway_urban" -> law.urbanMotorway
+            "urban_trunk" -> if (country == "CZ") 80 else law.urban
+            "urban" -> if (region == "BE") null else law.urban
+            "rural" -> if (region == "BE") null else law.rural
+            "trunk" -> law.trunk
+            else -> null
+        }
+    }
+
+    /** True for an implicit code [zoneLimit] leaves for the window to settle. */
+    fun deferredZone(code: String): Boolean {
+        val s = code.trim().uppercase()
+        return s.startsWith("BE:") && s.substringAfter(':').lowercase() in setOf("urban", "rural")
     }
 
     /**
