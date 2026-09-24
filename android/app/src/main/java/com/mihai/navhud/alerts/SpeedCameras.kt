@@ -1,6 +1,7 @@
 package com.mihai.navhud.alerts
 
 import com.mihai.navhud.Geo
+import com.mihai.navhud.nav.AreaCache
 import com.mihai.navhud.nav.Route
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -22,7 +23,12 @@ data class SpeedCamera(
     /** How far the camera sits from the route line, metres. */
     val crossM: Double = 0.0
 ) {
-    enum class Kind { FIXED, AVERAGE, TRAFFIC_LIGHT, UNKNOWN }
+    /**
+     * ANPR: a number-plate camera (`surveillance:type=ALPR`). No speed limit,
+     * but part of section controls and of the police network, and Waze warns
+     * of them in Belgium. Added last so existing ordinals do not move.
+     */
+    enum class Kind { FIXED, AVERAGE, TRAFFIC_LIGHT, UNKNOWN, ANPR }
 }
 
 /**
@@ -57,13 +63,17 @@ object SpeedCameras {
      * How far off the route a camera may be and still be treated as on it.
      *
      * A camera is mounted at the roadside, so a few metres off the centreline
-     * is normal and up to about fifteen covers a dual carriageway with a verge.
-     * This was 28, and 28 metres is the width of a city block's worth of back
-     * street: it let the camera watching the road *parallel* to yours snap onto
-     * your route and announce itself at zero metres, which is exactly the
-     * complaint. Fifteen is the widest that is still defensible.
+     * is normal, and a routed polyline is itself a generalisation that sits
+     * 5-12 m off the carriageway it follows. Fifteen, measured against that
+     * line, threw away cameras genuinely on our road -- a gantry over the far
+     * lanes of a motorway, the far side of a dual carriageway with a verge.
+     *
+     * Thirty-five does let the camera on a street running parallel through
+     * the corridor, which is what the 28 m value was blamed for. That is no
+     * longer this constant's job: [onOurRoad] asks which road in the loaded
+     * network the camera is actually nearest to, and rejects it there.
      */
-    internal const val MATCH_TOLERANCE_M = 15.0
+    internal const val MATCH_TOLERANCE_M = 35.0
 
     /**
      * ...and a second, better test on top of the distance.
@@ -118,11 +128,17 @@ object SpeedCameras {
         // second is the usual tagging for section control, and filtering on
         // the first alone would have missed exactly the thing the relation
         // query was added for.
+        //
+        // And number-plate cameras, which the OSM wiki maps as
+        // `man_made=surveillance` + `surveillance:type=ALPR` (the documented
+        // value; "ANPR" is the British/Belgian name and turns up too, so the
+        // match is a case-insensitive regex).
         return """
             [out:json][timeout:60];
             (
               node(around:$CORRIDOR_M,$coords)["highway"="speed_camera"];
               node(around:$CORRIDOR_M,$coords)["enforcement"="maxspeed"];
+              node(around:$CORRIDOR_M,$coords)["man_made"="surveillance"]["surveillance:type"~"^(alpr|anpr)$",i];
               rel(around:$CORRIDOR_M,$coords)["type"="enforcement"]["enforcement"~"^(maxspeed|average_speed)$"];
             )->.e;
             .e out body;
@@ -145,10 +161,73 @@ object SpeedCameras {
         return out
     }
 
-    /** Blocking network call; run it off the main thread. */
-    fun fetch(route: Route): List<SpeedCamera> {
-        val body = post(OVERPASS, "data=" + java.net.URLEncoder.encode(buildQuery(route), "UTF-8"))
+    /**
+     * Where a route's raw response is kept in [AreaCache]: not a radius but a
+     * bucket AreaRoads never asks for (its windows are 1-6 km), so a camera
+     * body can never be served as a road network or the other way round.
+     */
+    internal const val CACHE_BUCKET_M = 999_000.0
+
+    /**
+     * Blocking network call; run it off the main thread.
+     *
+     * With [cache], each good response is kept on disk keyed on the route's
+     * *destination*, and read back -- at any age -- when the network fails.
+     * A reroute or a restart on the way to the same place, in a tunnel or out
+     * of coverage, then still has its cameras: the cached body is parsed
+     * against the route actually being driven, so only cameras on it survive.
+     * Throws only when there is neither a network answer nor a cached one, and
+     * the caller keeps whatever list it had.
+     */
+    fun fetch(route: Route, cache: AreaCache? = null): List<SpeedCamera> =
+        fetchWith(route, cache) { post(OVERPASS, it) }
+
+    /** [fetch] with the transport swappable, for tests. */
+    internal fun fetchWith(
+        route: Route, cache: AreaCache?, transport: (String) -> String
+    ): List<SpeedCamera> {
+        val dest = route.pts.last()
+        val body = try {
+            transport("data=" + java.net.URLEncoder.encode(buildQuery(route), "UTF-8")).also {
+                checkComplete(it)
+                cache?.put(dest[0], dest[1], CACHE_BUCKET_M, it)
+            }
+        } catch (e: Exception) {
+            cache?.get(dest[0], dest[1], CACHE_BUCKET_M, Long.MAX_VALUE, System.currentTimeMillis())
+                ?: throw e
+        }
         return parse(body, route)
+    }
+
+    /**
+     * Overpass answers a query that ran out of time or memory with HTTP 200,
+     * a `remark` and whatever it had found so far -- often nothing. Taken at
+     * face value that is "no cameras on this route", and it replaced a good
+     * list; it is a failure, and is treated as one.
+     */
+    private fun checkComplete(body: String) {
+        val remark = JSONObject(body).optString("remark")
+        if (remark.contains("error", ignoreCase = true) ||
+            remark.contains("timed out", ignoreCase = true)) {
+            throw java.io.IOException("Overpass incomplete: ${remark.take(160)}")
+        }
+    }
+
+    /**
+     * Pins cameras already known onto another route: the reroute case, where
+     * waiting a minute for Overpass would leave the first cameras unguarded.
+     * Same corridor as [parse]; cameras the new route does not pass are
+     * dropped.
+     */
+    fun reproject(cameras: List<SpeedCamera>, route: Route): List<SpeedCamera> {
+        val out = ArrayList<SpeedCamera>(cameras.size)
+        for (c in cameras) {
+            val snap = Geo.project(route.pts, route.cum, c.lat, c.lon, searchAll = true)
+            if (snap.cross > MATCH_TOLERANCE_M) continue
+            out.add(c.copy(alongM = snap.along, crossM = snap.cross))
+        }
+        out.sortBy { it.alongM }
+        return out
     }
 
     /**
@@ -255,8 +334,14 @@ object SpeedCameras {
         // A relation's device member is sometimes tagged only this way.
         return tags.optString("camera:type").isNotBlank() ||
                tags.optString("man_made").lowercase() == "surveillance" &&
-               tags.optString("surveillance:type").lowercase() == "camera"
+               tags.optString("surveillance:type").lowercase() == "camera" ||
+               isAnpr(tags)
     }
+
+    /** A number-plate camera: `man_made=surveillance` + `surveillance:type=ALPR`. */
+    internal fun isAnpr(tags: JSONObject): Boolean =
+        tags.optString("man_made").lowercase() == "surveillance" &&
+            tags.optString("surveillance:type").lowercase().let { it == "alpr" || it == "anpr" }
 
     private fun kindOf(tags: JSONObject): SpeedCamera.Kind {
         val t = tags.optString("camera:type").lowercase()
@@ -268,6 +353,10 @@ object SpeedCameras {
             tags.optString("highway") == "traffic_signals" ||
                 enf.contains("traffic_signals") -> SpeedCamera.Kind.TRAFFIC_LIGHT
             tags.optString("highway") == "speed_camera" -> SpeedCamera.Kind.FIXED
+            // Only a *plain* ANPR: one that also enforces a speed is a speed
+            // camera, and a section-control device gets its kind from the
+            // relation before this is ever asked.
+            enf.isBlank() && isAnpr(tags) -> SpeedCamera.Kind.ANPR
             else -> SpeedCamera.Kind.UNKNOWN
         }
     }
@@ -407,8 +496,11 @@ data class CameraAlert(
  * can be tested against a simulated drive.
  */
 class CameraWatcher(
-    private val cameras: List<SpeedCamera>,
-    private val policy: CameraPolicy
+    /** Pinned to the route this watcher was made for, nearest first. */
+    val cameras: List<SpeedCamera>,
+    private val policy: CameraPolicy,
+    /** Stage keys already spoken, carried over from a predecessor. */
+    announcedBefore: Collection<Long> = emptyList()
 ) {
     companion object {
         /**
@@ -502,7 +594,26 @@ class CameraWatcher(
     }
 
     /** (cameraId, stage) pairs already spoken. */
-    private val announced = HashSet<Long>()
+    private val announced = HashSet<Long>(announcedBefore)
+
+    /**
+     * A watcher for a new route, from the cameras already known, re-pinned to
+     * it -- so a reroute has camera cover at once instead of after the next
+     * Overpass round trip -- and remembering what was already said about each
+     * camera, so the one just announced is not announced again.
+     */
+    fun rebase(route: Route): CameraWatcher = successor(SpeedCameras.reproject(cameras, route))
+
+    /**
+     * A watcher for a fresh camera list on the same trip (the fetch that
+     * follows a reroute, the periodic refresh, a policy change) that keeps the
+     * "already announced" memory for the cameras still in it. A brand-new
+     * watcher repeated the stage the car was in the middle of.
+     */
+    fun successor(cameras: List<SpeedCamera>, policy: CameraPolicy = this.policy): CameraWatcher {
+        val ids = cameras.mapTo(HashSet()) { it.id }
+        return CameraWatcher(cameras, policy, announced.filter { it / 8L in ids })
+    }
 
     /** The alert to show, or null. */
     /**

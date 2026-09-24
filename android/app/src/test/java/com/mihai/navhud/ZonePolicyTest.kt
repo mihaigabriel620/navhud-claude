@@ -58,11 +58,12 @@ class ZonePolicyTest {
 
     @Test
     fun `the countries checked against a source are the ones treated as known`() {
-        for (c in listOf("BE", "FR", "DE", "CH", "AT", "HU")) {
+        for (c in listOf("BE", "FR", "DE", "CH", "AT", "HU", "RO")) {
             assertTrue(c, CountryRules.isVerified(c))
         }
-        // Romania has no verified rule, so it gets the cautious default.
-        assertEquals(CameraPolicy.ZONE, CountryRules.policyFor("RO"))
+        // Slovakia has no verified rule, so it gets the cautious default.
+        // (Romania used to be the example; ADAC lists only jammers as banned.)
+        assertEquals(CameraPolicy.ZONE, CountryRules.policyFor("SK"))
         assertEquals(CameraPolicy.ZONE, CountryRules.policyFor(null))
     }
 
