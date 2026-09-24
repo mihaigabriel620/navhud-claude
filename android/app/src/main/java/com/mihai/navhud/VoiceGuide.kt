@@ -66,6 +66,23 @@ class VoiceGuide internal constructor(
         internal val SLOW   = intArrayOf(200, 60)    // town
 
         /**
+         * Motorway exits and forks get three calls, like Waze and Google Maps:
+         * a lane change at 120 km/h needs warning well before the gore, and a
+         * single "in 800 metres" was forgotten by the time the exit came. The
+         * same seconds ahead at every speed, so the bands scale down.
+         */
+        internal val FAST_EXIT   = intArrayOf(1200, 500, 200)   // >= 90 km/h
+        internal val MEDIUM_EXIT = intArrayOf(700, 300, 120)    // >= 50 km/h
+        internal val SLOW_EXIT   = intArrayOf(300, 120, 50)     // town
+
+        /** Exits, slip roads and forks: the maneuvers that get three calls. */
+        internal fun isExit(maneuver: Int): Boolean = when (maneuver) {
+            Man.RAMP_LEFT, Man.RAMP_RIGHT, Man.FORK_LEFT, Man.FORK_RIGHT,
+            Man.KEEP_LEFT, Man.KEEP_RIGHT -> true
+            else -> false
+        }
+
+        /**
          * Say something about a closure from this far out. Roughly a minute at
          * motorway speed, which is enough to take the exit before it rather
          * than sit in the queue after it.
@@ -148,10 +165,13 @@ class VoiceGuide internal constructor(
             internal set
 
         /** Which stage distances apply at this speed. */
-        internal fun thresholdsFor(speedKph: Int): IntArray = when {
-            speedKph >= 90 -> FAST
-            speedKph >= 50 -> MEDIUM
-            else -> SLOW
+        internal fun thresholdsFor(speedKph: Int, maneuver: Int = Man.NONE): IntArray {
+            val exit = isExit(maneuver)
+            return when {
+                speedKph >= 90 -> if (exit) FAST_EXIT else FAST
+                speedKph >= 50 -> if (exit) MEDIUM_EXIT else MEDIUM
+                else -> if (exit) SLOW_EXIT else SLOW
+            }
         }
 
         /**
@@ -208,7 +228,7 @@ class VoiceGuide internal constructor(
     }
 
     private var tts: TextToSpeech? = null
-    private var ready = testSpeaker != null
+    @Volatile private var ready = testSpeaker != null
     private val audio = ctx?.getSystemService(Context.AUDIO_SERVICE) as AudioManager?
     private var focusRequest: AudioFocusRequest? = null
 
@@ -241,7 +261,9 @@ class VoiceGuide internal constructor(
         val c = ctx
         if (c != null && testSpeaker == null) tts = TextToSpeech(c) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                ready = true
+                // `ready` is set last, below: a line spoken before the audio
+                // attributes are in place goes out as plain media, and a head
+                // unit takes a new media source as a reason to stop the music.
                 applyLanguage()
                 tts?.setSpeechRate(1.05f)
                 // Called on a binder thread; the queue is synchronized. An
@@ -278,6 +300,7 @@ class VoiceGuide internal constructor(
                     tts?.addEarcon(EARCON_WARN, c.packageName, R.raw.beep_warn)
                     tts?.addEarcon(EARCON_CAMERA, c.packageName, R.raw.beep_camera)
                 }
+                ready = true
             } else {
                 Log.w(TAG, "TTS init failed: $status")
             }
@@ -417,7 +440,7 @@ class VoiceGuide internal constructor(
         }
 
         if (maneuverKey == null || f.distToManeuverM <= 0) return
-        val thresholds = thresholdsFor(f.speedKph)
+        val thresholds = thresholdsFor(f.speedKph, f.maneuver)
 
         if (rerouted) carryAcrossReroute(f, maneuverKey, thresholds, nowMs)
         // Already folded into the previous "now" call as "..., then turn left":
@@ -481,11 +504,16 @@ class VoiceGuide internal constructor(
     /** Camera warnings go to the front of the queue: they are time-critical. */
     fun announceCamera(alert: CameraAlert) {
         if (!enabled || !ready) return
+        // The stage's round number, never the live distance; right on top of
+        // the camera there is no number worth saying ("in 13 metres").
+        val near = alert.spokenM < com.mihai.navhud.alerts.CameraWatcher.SPOKEN_MIN_M
+        val anpr = alert.camera.kind == com.mihai.navhud.alerts.SpeedCamera.Kind.ANPR
         val text = when {
             alert.zoneMode -> phrases.dangerZone()
-            alert.camera.kind == com.mihai.navhud.alerts.SpeedCamera.Kind.ANPR ->
-                phrases.anprAhead(phrases.distance(alert.distanceM))
-            else -> phrases.cameraAhead(phrases.distance(alert.distanceM), alert.camera.limitKph)
+            anpr && near -> phrases.anprHere()
+            anpr -> phrases.anprAhead(phrases.distance(alert.spokenM))
+            near -> phrases.cameraHere(alert.camera.limitKph)
+            else -> phrases.cameraAhead(phrases.distance(alert.spokenM), alert.camera.limitKph)
         }
         say(text, Priority.HIGH, TTL_ALERT_MS, earcon = EARCON_CAMERA)
     }
@@ -657,6 +685,11 @@ class VoiceGuide internal constructor(
         override fun start(item: VoiceQueue.Item, id: String): Boolean {
             val t = tts ?: return false
             holdFocus()
+            // Watchdog: an engine that never reports the end of a line never
+            // makes the queue idle, and the music stayed ducked (or paused, on
+            // a head unit) with nothing left to say. releaseFocus asks the
+            // queue, which writes a stuck line off after STUCK_MS.
+            main.postDelayed(releaseFocus, VoiceQueue.STUCK_MS + 1_000L)
             val earcon = item.earcon
             if (earcon != null) {
                 val chimeId = if (item.text.isEmpty()) id else id + CHIME_SUFFIX

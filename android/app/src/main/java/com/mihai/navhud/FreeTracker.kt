@@ -386,7 +386,8 @@ class FreeTracker {
             camera = c,
             distanceM = shown,
             zoneMode = zone,
-            stage = CameraWatcher.stageFor(raw, speedKph)
+            stage = CameraWatcher.stageFor(raw, speedKph),
+            spokenM = CameraWatcher.spokenDistance(raw, speedKph)
         )
     }
 

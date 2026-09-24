@@ -157,13 +157,12 @@ class CameraAndMapTest {
     }
 
     @Test fun `the stages sit where a driver would want them`() {
-        // Motorway: the first call is a long way out so you can lift off
-        // rather than brake, and the last one lands about 150 m before.
-        assertEquals("no warning beyond the first stage", -1, stageOrNone(1600, 120))
-        assertEquals("first warning at 1500 m", 0, CameraWatcher.stageFor(1500, 120))
-        assertEquals("still stage 0 at a kilometre", 0, CameraWatcher.stageFor(1000, 120))
-        assertEquals("reminder at 700 m", 1, CameraWatcher.stageFor(700, 120))
-        assertEquals("last reminder at 150 m", 2, CameraWatcher.stageFor(150, 120))
+        // Motorway: 1000 / 500 / 200 m, like Waze -- the owner's choice in 1.28.
+        assertEquals("no warning beyond the first stage", -1, stageOrNone(1100, 120))
+        assertEquals("first warning at 1000 m", 0, CameraWatcher.stageFor(1000, 120))
+        assertEquals("still stage 0 at 600 m", 0, CameraWatcher.stageFor(600, 120))
+        assertEquals("reminder at 500 m", 1, CameraWatcher.stageFor(500, 120))
+        assertEquals("last reminder at 200 m", 2, CameraWatcher.stageFor(200, 120))
         assertEquals("and right on top of it", 2, CameraWatcher.stageFor(0, 120))
     }
 
@@ -172,17 +171,17 @@ class CameraAndMapTest {
         if (d > CameraWatcher.warnDistance(kph)) -1 else CameraWatcher.stageFor(d, kph)
 
     @Test fun `the last motorway reminder is early enough to be useful`() {
-        // 150 m at 130 km/h is about four seconds -- time to glance down, not
+        // 200 m at 130 km/h is about six seconds -- time to glance down, not
         // time to stamp on the brakes. Anything under 100 m would be startling.
-        assertEquals("not yet the final stage at 160 m", 1, CameraWatcher.stageFor(160, 130))
-        assertEquals("final stage lands at 150 m", 2, CameraWatcher.stageFor(150, 130))
+        assertEquals("not yet the final stage at 210 m", 1, CameraWatcher.stageFor(210, 130))
+        assertEquals("final stage lands at 200 m", 2, CameraWatcher.stageFor(200, 130))
     }
 
     @Test fun `warnings come earlier the faster you are going`() {
         assertTrue(CameraWatcher.warnDistance(120) > CameraWatcher.warnDistance(70))
         assertTrue(CameraWatcher.warnDistance(70) > CameraWatcher.warnDistance(30))
         // ...and every band still gives a genuine head start in seconds.
-        for ((kph, minSeconds) in listOf(130 to 30.0, 70 to 30.0, 50 to 20.0)) {
+        for ((kph, minSeconds) in listOf(130 to 25.0, 70 to 25.0, 50 to 20.0)) {
             val seconds = CameraWatcher.warnDistance(kph) / (kph / 3.6)
             assertTrue("only ${"%.0f".format(seconds)} s of warning at $kph km/h",
                 seconds >= minSeconds)
@@ -199,6 +198,23 @@ class CameraAndMapTest {
             }
             assertEquals("every band ends on the final stage", 2, prev)
         }
+    }
+
+    @Test fun `the voice quotes the stage distance, never the live one`() {
+        // The drive: the last call said "in 13 m". A stage quotes its own round
+        // number; a stage reached late is rounded; under 50 m, no number.
+        assertEquals(1000, CameraWatcher.spokenDistance(987, 120))
+        assertEquals(500, CameraWatcher.spokenDistance(463, 120))
+        assertEquals(200, CameraWatcher.spokenDistance(181, 120))
+        assertEquals("reached late: rounded, not the stage's 200", 100,
+            CameraWatcher.spokenDistance(88, 120))
+        assertEquals(50, CameraWatcher.spokenDistance(55, 120))
+        assertEquals("too close for a number", 0, CameraWatcher.spokenDistance(13, 120))
+        assertEquals(0, CameraWatcher.spokenDistance(49, 30))
+        val cam = SpeedCamera(7, 0.0, 0.0, 5000.0, 70, null, SpeedCamera.Kind.FIXED)
+        val a = CameraWatcher(listOf(cam), CameraPolicy.EXACT).update(4987.0, 120, null)
+        assertEquals(0, a!!.spokenM)
+        assertEquals("the HUD still shows the live distance", 13, a.distanceM)
     }
 
     // ---- map camera --------------------------------------------------------

@@ -115,7 +115,7 @@ class CameraRouteTest {
 
     @Test fun `a reroute keeps the cameras it can and remembers what it said`() {
         val w = CameraWatcher(SpeedCameras.reproject(listOf(c1, c2), north), CameraPolicy.EXACT)
-        val first = w.update(150.0, 70, null)!!                // c1 about 850 m ahead
+        val first = w.update(150.0, 120, null)!!                // c1 about 850 m ahead
         assertEquals(1L, first.camera.id)
         assertEquals(0, first.stage)
         assertTrue(w.shouldAnnounce(first))
@@ -123,25 +123,25 @@ class CameraRouteTest {
         val w2 = w.rebase(detour)
         assertEquals("c2 is not on the new route", listOf(1L), w2.cameras.map { it.id })
         assertEquals(945.0, w2.cameras[0].alongM, 15.0)
-        val again = w2.update(60.0, 70, null)!!
+        val again = w2.update(60.0, 120, null)!!
         assertEquals(0, again.stage)
         assertFalse("the warning just given is not given again", w2.shouldAnnounce(again))
         // A fresh watcher, which is what a reroute used to build, repeats it.
         assertTrue(CameraWatcher(w2.cameras, CameraPolicy.EXACT).shouldAnnounce(again))
         // The next stage still comes.
-        val closer = w2.update(600.0, 70, null)!!
+        val closer = w2.update(600.0, 120, null)!!
         assertEquals(1, closer.stage)
         assertTrue(w2.shouldAnnounce(closer))
     }
 
     @Test fun `a refreshed list keeps the memory for cameras still in it`() {
         val w = CameraWatcher(SpeedCameras.reproject(listOf(c1, c2), north), CameraPolicy.EXACT)
-        val a = w.update(150.0, 70, null)!!
+        val a = w.update(150.0, 120, null)!!
         w.shouldAnnounce(a)
         val w2 = w.successor(SpeedCameras.reproject(listOf(c1, c2), north))
-        assertFalse(w2.shouldAnnounce(w2.update(150.0, 70, null)!!))
+        assertFalse(w2.shouldAnnounce(w2.update(150.0, 120, null)!!))
         val w3 = w.successor(SpeedCameras.reproject(listOf(c2), north))
-        assertNull("c1 left the list", w3.update(150.0, 70, null))
+        assertNull("c1 left the list", w3.update(150.0, 120, null))
     }
 
     // ---- losing the network ------------------------------------------------

@@ -490,7 +490,13 @@ data class CameraAlert(
     val distanceM: Int,
     val zoneMode: Boolean,
     /** 0 = first warning, 1 = closing, 2 = right on top of it. */
-    val stage: Int = 0
+    val stage: Int = 0,
+    /**
+     * The distance the voice quotes: the stage's own round number, never the
+     * live one (see [CameraWatcher.spokenDistance]). 0 = too close for a
+     * number, just "Radar".
+     */
+    val spokenM: Int = distanceM
 )
 
 /**
@@ -516,16 +522,17 @@ class CameraWatcher(
          * Now they are written out, because the right answer is a *time*
          * budget and the bands make that explicit:
          *
-         *   motorway  1500 / 700 / 150 m  ~= 41 / 19 / 4 s at 130 km/h
-         *   main road  900 / 450 / 150 m  ~= 45 / 22 / 7 s at 70 km/h
+         *   motorway  1000 / 500 / 200 m  ~= 28 / 14 / 6 s at 130 km/h
+         *   main road  600 / 300 / 150 m  ~= 31 / 15 / 8 s at 70 km/h
          *   town       400 / 200 / 100 m  ~= 29 / 14 / 7 s at 50 km/h
          *
          * The first call is early enough to lift off rather than brake, the
-         * second confirms it, and the last lands about 150 m out on a fast
+         * second confirms it, and the last lands about 200 m out on a fast
          * road — enough to check the speedometer once more before the gantry.
+         * (1.28: the owner's choice, like Waze; 1500 m was too early to matter.)
          */
-        private val STAGES_FAST = intArrayOf(1500, 700, 150)   // >= 90 km/h
-        private val STAGES_MID = intArrayOf(900, 450, 150)     // >= 50 km/h
+        private val STAGES_FAST = intArrayOf(1000, 500, 200)   // >= 90 km/h
+        private val STAGES_MID = intArrayOf(600, 300, 150)     // >= 50 km/h
         private val STAGES_SLOW = intArrayOf(400, 200, 100)    // town
 
         fun stages(speedKph: Int): IntArray = when {
@@ -593,6 +600,27 @@ class CameraWatcher(
             for (i in s.indices) if (distanceM <= s[i]) stage = i
             return stage
         }
+
+        /** Below this no number is spoken, only "Radar". */
+        const val SPOKEN_MIN_M = 50
+
+        /**
+         * What the voice says for a camera [distanceM] ahead: the stage's own
+         * distance ("radar dans deux cents mètres"), not the live one. The live
+         * one is what said "in 13 m": a stage first reached right under the
+         * camera (the alert was on another camera until then, or the camera
+         * only just passed the on-our-road test) quoted the metres left.
+         *
+         * A stage reached late, less than half its distance out, would make the
+         * round number a lie, so that one is rounded to 50 m instead. Under
+         * [SPOKEN_MIN_M] it is 0: no number at all.
+         */
+        fun spokenDistance(distanceM: Int, speedKph: Int): Int {
+            if (distanceM < SPOKEN_MIN_M) return 0
+            val at = stages(speedKph)[stageFor(distanceM, speedKph)]
+            if (distanceM * 2 >= at) return at
+            return maxOf(SPOKEN_MIN_M, (distanceM + 25) / 50 * 50)
+        }
     }
 
     /**
@@ -654,7 +682,8 @@ class CameraWatcher(
             camera = next,
             distanceM = dist,
             zoneMode = zone,
-            stage = stageFor(raw, speedKph)
+            stage = stageFor(raw, speedKph),
+            spokenM = spokenDistance(raw, speedKph)
         )
     }
 
