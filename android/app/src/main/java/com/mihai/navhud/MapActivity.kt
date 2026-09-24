@@ -37,6 +37,8 @@ import com.mihai.navhud.map.Compass
 import com.mihai.navhud.map.MapIds
 import com.mihai.navhud.nav.AreaRoads
 import com.mihai.navhud.map.NavCamera
+import com.mihai.navhud.map.FreeDriveMotion
+import com.mihai.navhud.map.PuckMotion
 import com.mihai.navhud.nav.RoadSigns
 import com.mihai.navhud.nav.RoadFeature
 import com.mihai.navhud.nav.Route
@@ -230,19 +232,20 @@ class MapActivity : AppCompatActivity() {
         private const val IMU_TIMEOUT_MS = 1500L
 
         /**
-         * Stop moving the marker once the fix is this old.
+         * A fix older than this is gone, and the marker coasts.
          *
          * Three seconds is three missed fixes at 1 Hz: long enough that a
-         * single dropped one does not visibly stall the marker, short enough
-         * that pulling into a multi-storey stops it before it has invented
-         * much. Only used for the unsnapped marker -- see Prefs.snapToRoad.
+         * single dropped one is still extrapolated through, short enough that
+         * a tunnel switches to running on the car's speed promptly. Until then
+         * the marker is extrapolated from the fix continuously -- see
+         * PuckMotion.
          */
         private const val FIX_HOLD_MS = 3000L
 
         /**
          * How long to keep the marker moving on nothing but the car's speed.
          *
-         * Freezing after FIX_HOLD_MS is the honest answer in a car park. It is
+         * Freezing when the fix goes is the honest answer in a car park. It is
          * the wrong one in a tunnel, where the car is demonstrably still doing
          * 80 and the driver still needs to know which exit is coming. So the
          * marker coasts instead, and the two numbers differ because the two
@@ -251,37 +254,16 @@ class MapActivity : AppCompatActivity() {
          * - on a route there is a line to run along, so the only unknown is
          *   how far -- three minutes covers the Mont Blanc tunnel and most of
          *   what Europe has under a mountain;
-         * - free driving there is no line, only the last heading, so every
-         *   bend is error that never comes back. Thirty seconds is an
-         *   underpass or a covered junction, and past that the marker has
-         *   invented enough.
+         * - free driving there is at best the last matched road, and past its
+         *   end only the last heading, so every bend is error that never
+         *   comes back. Thirty seconds is an underpass or a covered junction,
+         *   and past that the marker has invented enough.
+         *
+         * Catching up afterwards, and the 300 m past which the marker simply
+         * jumps, live in PuckMotion.
          */
         const val COAST_ON_ROUTE_MS = 180_000L
         const val COAST_FREE_MS = 30_000L
-
-        /**
-         * Time constant for easing back onto the fix after coasting, seconds.
-         *
-         * Reacquisition is a step, not a drift: the receiver comes back with
-         * a position that can be a couple of hundred metres from where the
-         * marker has coasted to. Snapping there is a teleport and looks like a
-         * fault. This is deliberately faster than the 0.5-0.6 s used for
-         * ordinary GPS noise -- the gap is real and known, so the only thing
-         * the easing is buying is that the eye can follow it.
-         */
-        const val CATCHUP_TAU_S = 0.35
-
-        /**
-         * Past this gap, stop easing and place the marker, metres.
-         *
-         * Three hundred metres of easing at the constant above takes about a
-         * second, which is the most that still reads as motion rather than as
-         * the map being wrong. Beyond it -- a long tunnel, a ferry, a cold
-         * start next to a stale marker -- there is no line to draw between the
-         * two positions that means anything, so the marker simply appears
-         * where the car is.
-         */
-        const val CATCHUP_SNAP_M = 300.0
     }
 
     private lateinit var mapView: MapView
@@ -418,9 +400,13 @@ class MapActivity : AppCompatActivity() {
 
     /** Smoothed drawing state, so the marker glides instead of stepping. */
     private var puckAlong = Double.NaN
-    private var puckLat = Double.NaN
-    private var puckLon = Double.NaN
     private var puckBearing = Double.NaN
+    private val routeMotion = PuckMotion(COAST_ON_ROUTE_MS / 1000.0)
+    private val freeMotion = FreeDriveMotion(COAST_FREE_MS / 1000.0, FreeTracker.SNAP_TRUST_M)
+    /** The route [routeMotion]'s distances belong to. */
+    private var motionRoute: Route? = null
+    /** The last matched road, kept for coasting after the service drops it. */
+    private var coastRoad: Array<DoubleArray>? = null
 
     private val amber = Color.parseColor("#FF9D00")
     private val amberDim = Color.parseColor("#C07200")
@@ -2020,16 +2006,8 @@ class MapActivity : AppCompatActivity() {
             HudService.routeInitialBearing?.let { navCamera.faceBearing(it); forgetDrawnCamera() }
         }
 
-        val ageS = ((now - fixNs / 1_000_000L).coerceIn(0L, 1500L)) / 1000.0
         val route = HudService.currentRoute
         // Both snaps are on by default again (1.27) -- see Prefs.snapToRoad.
-        //
-        // Unsnapped, the marker only moves while there IS a fix. Drawing an unsnapped marker
-        // from a stale or absent position is the one case where snapping was
-        // genuinely covering for something: the road line held the marker
-        // still while the receiver wandered. Without it, the marker has to
-        // freeze on its own, or it drifts around the car park on multipath
-        // and looks like the car is moving when it is parked.
         val snapWanted = snapToRoad
         val onRouteSnap = snapWanted && route != null && HudService.snapTrusted
         // Free drive snaps too, to the road network rather than to a route
@@ -2042,124 +2020,53 @@ class MapActivity : AppCompatActivity() {
         var lon: Double
         var roadBrg: Double? = null
 
+        // The car's own speed in preference to the GPS one, because in a
+        // tunnel the GPS speed is as stale as the position it came with, while
+        // the bus keeps reporting. Falls back to the fix's speed on a phone,
+        // where there is no bus -- and with the fix gone that is its last one.
+        val refSpeed = HudService.carSpeedMps ?: speed
+        val fixAgeMs = (now - fixNs / 1_000_000L).coerceAtLeast(0L)
+
         if (onRouteSnap && route != null) {
             // Move *along the route*, not across open ground. This is the fix
             // for the marker sitting beside the road: the position drawn is a
             // point on the road geometry by construction, so a fix that lands
             // in the building next door cannot move it off the tarmac.
-            val alongAge = now - HudService.alongAtMs
-            // The car's own speed in preference to the GPS one, because in a
-            // tunnel the GPS speed is as stale as the position it came with,
-            // while the bus keeps reporting. Falls back to the fix's speed on
-            // a phone, where there is no bus.
-            val coastSpeed = HudService.carSpeedMps ?: speed
-            if (alongAge > FIX_HOLD_MS && alongAge < COAST_ON_ROUTE_MS && coastSpeed > 1.0) {
-                // Coasting. There is a route line to run along, so this is not
-                // guesswork about direction -- only about distance, and the
-                // distance comes from the car. The marker keeps advancing
-                // through the tunnel and the maneuver countdown with it.
-                if (puckAlong.isNaN()) puckAlong = HudService.alongM
-                puckAlong += coastSpeed * dt
-            } else {
-                var target = HudService.alongM +
-                    speed * (alongAge.coerceIn(0L, 1500L) / 1000.0)
-                if (!puckAlong.isNaN() &&
-                    kotlin.math.abs(target - puckAlong) <= CATCHUP_SNAP_M) {
-                    val predicted = puckAlong + speed * dt
-                    // Ordinary GPS noise is a few metres and gets the gentle
-                    // constant; anything larger is the tunnel case -- a real,
-                    // known gap -- and is worth closing faster.
-                    val tau = if (kotlin.math.abs(target - puckAlong) <= 60.0) 0.5
-                              else CATCHUP_TAU_S
-                    target = predicted + (target - predicted) * (1.0 - kotlin.math.exp(-dt / tau))
-                }
-                puckAlong = target
-            }
+            //
+            // A new route is a new set of distances; carrying the old drawn
+            // position over would leave the marker waiting kilometres ahead.
+            if (route !== motionRoute) { routeMotion.reset(); motionRoute = route }
+            val alongAgeMs = (now - HudService.alongAtMs).coerceAtLeast(0L)
+            // Stale either way means a tunnel: coast along the line on the
+            // car's speed. See PuckMotion.
+            puckAlong = routeMotion.step(dt, HudService.alongM, alongAgeMs / 1000.0, refSpeed,
+                fixAvailable = alongAgeMs <= FIX_HOLD_MS && fixAgeMs <= FIX_HOLD_MS)
             val p = Geo.pointAlong(route.pts, route.cum, puckAlong)
             lat = p[0]; lon = p[1]
             roadBrg = Geo.bearingAlong(route.pts, route.cum, puckAlong)
-            puckLat = lat; puckLon = lon
+            // Free motion picks up from here if the car leaves the line.
+            freeMotion.reset(lat, lon)
         } else {
-            // Free driving, or off the route: dead-reckon from the raw fix and
-            // ease onto it, so a jumpy fix does not yank the marker.
+            // Free driving, or off the route: the same rubber band, run along
+            // the heading -- or along the matched road, which is where the
+            // marker is put back last. See FreeDriveMotion.
+            routeMotion.reset()
             puckAlong = Double.NaN
-            val h = fusion.heading ?: gpsBrg
-            // ...but if the road matcher found a road under us, draw on it.
-            var tLat = if (freeSnap) HudService.snapLat else loc.latitude
-            var tLon = if (freeSnap) HudService.snapLon else loc.longitude
+            val live = fixAgeMs <= FIX_HOLD_MS
             if (freeSnap) roadBrg = HudService.roadBearing
-            if (h != null && speed > 1.0) {
-                val p = Geo.destination(tLat, tLon, h, speed * ageS)
-                tLat = p[0]; tLon = p[1]
+            // The service forgets the road a few seconds into an underpass,
+            // which is exactly when the coast wants it; so keep our own copy.
+            val road = when {
+                freeSnap -> HudService.roadPts.also { coastRoad = it }
+                live -> { coastRoad = null; null }
+                else -> coastRoad
             }
-            // No usable fix: coast for a while, then hold. Never ease toward
-            // a stale or invented target.
-            //
-            // The easing mattered less when the marker was snapped -- the road
-            // line pinned it while the receiver wandered. Unsnapped, a parked
-            // car on multipath walks its own marker around the car park, so
-            // the old answer was to freeze the moment the fix went stale.
-            // That is right in a car park and wrong in an underpass, where the
-            // car is still moving and there is a speed on the bus that says
-            // so. So: dead-reckon while the car is demonstrably moving and the
-            // reckoning is still young, and freeze after that rather than
-            // drift along a heading that stopped meaning anything at the first
-            // bend. The status line already says WAITING FOR GPS either way.
-            val fixAgeMs = now - fixNs / 1_000_000L
-            val stale = fixAgeMs > FIX_HOLD_MS && !puckLat.isNaN()
-            // As on the route: the car's speed outlives the fix that would
-            // otherwise be carrying it.
-            val coastSpeed = HudService.carSpeedMps ?: speed
-            if (stale && fixAgeMs < COAST_FREE_MS && coastSpeed > 1.0 && h != null) {
-                // Coasting, off-route: dead reckoning with no line to follow,
-                // so every bend is error that never comes back. Worth doing
-                // anyway for the underpass and the covered junction, and
-                // bounded hard because of the bend -- see COAST_FREE_MS.
-                val step = Geo.destination(puckLat, puckLon, h, coastSpeed * dt)
-                puckLat = step[0]; puckLon = step[1]
-            } else if (stale) {
-                // Coasted as far as it is honest to, or the car has stopped,
-                // or there is no heading to coast along. Hold: falls through
-                // to `lat = puckLat` below, so the marker stops where it was.
-            } else if (puckLat.isNaN() ||
-                Geo.haversine(puckLat, puckLon, tLat, tLon) > CATCHUP_SNAP_M) {
-                puckLat = tLat; puckLon = tLon
-            } else {
-                if (h != null && speed > 1.0) {
-                    val step = Geo.destination(puckLat, puckLon, h, speed * dt)
-                    puckLat = step[0]; puckLon = step[1]
-                }
-                // Same split as on the route: the gentle constant for GPS
-                // noise, the faster one for closing a real gap after a tunnel.
-                val gap = Geo.haversine(puckLat, puckLon, tLat, tLon)
-                val a = 1.0 - kotlin.math.exp(-dt / if (gap <= 60.0) 0.6 else CATCHUP_TAU_S)
-                puckLat += (tLat - puckLat) * a
-                puckLon += (tLon - puckLon) * a
-            }
-
-            // Put it back on the road, *last*.
-            //
-            // Snapping at the moment of the fix and then dead-reckoning and
-            // easing on top of it undoes the snap: a second of travel along the
-            // heading, plus a smoothing lag, is ten or twenty metres of drift,
-            // and on a bend all of it is sideways. The result was a marker
-            // sitting in the gardens beside a road whose name the app was
-            // confidently printing at the bottom of the screen. Projecting after
-            // all the motion means whatever the dead reckoning does, the marker
-            // ends up on the tarmac.
-            // ...but only while the answer is still honest. `snapWithin`
-            // refuses when the dead-reckoned point has drifted too far from
-            // this road to belong to it, and when the projection has clamped
-            // to an end vertex — OSM splits ways at junctions, so without that
-            // second test the marker pins itself to the junction and sits
-            // there while the car drives into the side street, then jumps.
-            if (freeSnap) {
-                HudService.roadPts?.let { pts ->
-                    AreaRoads.snapWithin(pts, puckLat, puckLon, FreeTracker.SNAP_TRUST_M)
-                        ?.let { onRoad -> puckLat = onRoad[0]; puckLon = onRoad[1] }
-                }
-            }
-            lat = puckLat; lon = puckLon
+            val p = freeMotion.step(dt,
+                if (freeSnap) HudService.snapLat else loc.latitude,
+                if (freeSnap) HudService.snapLon else loc.longitude,
+                fixAgeMs / 1000.0, refSpeed, live,
+                fusion.heading ?: gpsBrg ?: roadBrg, road)
+            lat = p[0]; lon = p[1]
         }
 
         // ---- which way it points --------------------------------------------
