@@ -74,7 +74,8 @@ class PuckMotion(private val coastLimitS: Double) {
      * @param refSpeed     the car's speed: the bus when it is talking, else the
      *                     fix's -- which, with the fix gone, is its last value
      * @param fixAvailable false once the fix has gone stale: coast on
-     *                     [refSpeed] until [coastLimitS], then hold
+     *                     [refSpeed] until [limitS], then hold
+     * @param limitS       how long to coast; shorter on a held GPS speed
      * @return the drawn position
      */
     fun step(
@@ -82,7 +83,8 @@ class PuckMotion(private val coastLimitS: Double) {
         fixAlongM: Double,
         fixAgeS: Double,
         refSpeed: Double,
-        fixAvailable: Boolean
+        fixAvailable: Boolean,
+        limitS: Double = coastLimitS
     ): Double {
         val v = max(0.0, refSpeed)
         if (along.isNaN()) {
@@ -102,7 +104,7 @@ class PuckMotion(private val coastLimitS: Double) {
                 return along
             }
             max(0.0, v + correction(err))
-        } else if (fixAgeS < coastLimitS) {
+        } else if (fixAgeS < limitS) {
             v
         } else {
             // Coasted as far as is honest.

@@ -122,6 +122,18 @@ class PuckMotionTest {
         assertEquals("holds once the coast limit is reached", atLimit, m.along, 1e-9)
     }
 
+    @Test fun `on a held GPS speed it coasts at that constant speed for a minute only`() {
+        val m = PuckMotion(180.0)
+        drive(m, 10.0, 25.0, 0.0)
+        val start = m.along
+        var age = 3.1
+        while (age < 60.0) { m.step(dt, 0.0, age, 25.0, false, limitS = 60.0); age += dt }
+        assertEquals("constant 25 m/s until the minute is up", start + 25.0 * (60.0 - 3.1), m.along, 5.0)
+        val atLimit = m.along
+        repeat(100) { m.step(dt, 0.0, age, 25.0, false, limitS = 60.0); age += dt }
+        assertEquals(atLimit, m.along, 1e-9)
+    }
+
     @Test fun `coming out of the tunnel it converges without a jump`() {
         val m = PuckMotion(180.0)
         drive(m, 10.0, 20.0, 0.0)

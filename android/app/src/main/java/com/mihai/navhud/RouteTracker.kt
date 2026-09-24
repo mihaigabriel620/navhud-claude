@@ -78,6 +78,13 @@ class RouteTracker(val route: Route) {
          * for ever. The map's COAST_ON_ROUTE_MS is the same figure.
          */
         const val COAST_MAX_MS = 180_000L
+
+        /**
+         * The same with no car bus, on the last GPS speed held constant: that
+         * speed is only right while the car keeps it, so the estimate is given
+         * a minute rather than three. The map uses the same figure.
+         */
+        const val COAST_NO_BUS_MAX_MS = 60_000L
     }
 
     private var lastSegIdx = 0
@@ -294,9 +301,17 @@ class RouteTracker(val route: Route) {
      * @param advanceM   metres travelled since the last call
      * @param displayKph speed to show, or -1 when only GPS knew it
      * @param sinceFixMs how long since the last real fix
+     * @param maxMs      [COAST_MAX_MS] on the car's own speed, and
+     *                   [COAST_NO_BUS_MAX_MS] on a held GPS one
+     *
+     * Never arrives: a coasted position is an estimate, and ending the route
+     * on one threw it away in a tunnel or an underground car park.
      */
-    fun coast(advanceM: Double, displayKph: Int, sinceFixMs: Long, night: Boolean = false): HudFrame {
-        if (sinceFixMs > COAST_MAX_MS || !snapTrusted || offRoute) {
+    fun coast(
+        advanceM: Double, displayKph: Int, sinceFixMs: Long, night: Boolean = false,
+        maxMs: Long = COAST_MAX_MS
+    ): HudFrame {
+        if (sinceFixMs > maxMs || !snapTrusted || offRoute) {
             return update(0.0, 0.0, 0f, null, hasFix = false, night = night)
         }
         // As on losing the fix: an off-line run does not survive the outage.
@@ -310,7 +325,7 @@ class RouteTracker(val route: Route) {
         val limit = limitAt(lastSegIdx, along, snappedLat, snappedLon, roadBearing)
         // Not GPS_OK: the HUD says NO GPS, and the distances are an estimate.
         return frameAt(along, displayKph, limit, lowConf = true, gpsOk = false,
-                       night = night, nearPin = false)
+                       night = night, nearPin = false, canArrive = false)
     }
 
     /**
@@ -335,7 +350,7 @@ class RouteTracker(val route: Route) {
 
     private fun frameAt(
         along: Double, speedKph: Int, limit: Int, lowConf: Boolean,
-        gpsOk: Boolean, night: Boolean, nearPin: Boolean
+        gpsOk: Boolean, night: Boolean, nearPin: Boolean, canArrive: Boolean = true
     ): HudFrame {
         // ---- next maneuver --------------------------------------------------
         val nextIdx = route.maneuvers.indexOfFirst { it.alongM > along + MANEUVER_PASSED_M }
@@ -347,7 +362,8 @@ class RouteTracker(val route: Route) {
             ?.name?.takeIf { it.isNotBlank() }
 
         val remaining = max(0.0, route.totalDistanceM - along)
-        val arrived = remaining < ARRIVED_M || (remaining < ARRIVED_NEAR_REMAINING_M && nearPin)
+        val arrived = canArrive &&
+            (remaining < ARRIVED_M || (remaining < ARRIVED_NEAR_REMAINING_M && nearPin))
 
         val etaS = if (route.totalDistanceM > 1.0) {
             (route.totalDurationS * (remaining / route.totalDistanceM)).roundToInt()

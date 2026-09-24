@@ -1794,6 +1794,8 @@ class HudService : Service(), LocationListener {
         val tickS = if (lastRouteTickMs == 0L) 0.0
                     else (now - lastRouteTickMs).coerceIn(0L, 1000L) / 1000.0
         lastRouteTickMs = now
+        // A coasted "now" without the bus would be said on a guess; see onFrame.
+        var finalCallOk = true
         if (fix == null) {
             frame = t.update(0.0, 0.0, 0f, null, hasFix = false, night = night)
             bearing = null
@@ -1801,11 +1803,15 @@ class HudService : Service(), LocationListener {
             // A tunnel. Keep running along the route at the car's speed -- or
             // the last GPS speed, held -- so the HUD keeps counting down to
             // the exit instead of freezing; the tracker gives up after
-            // RouteTracker.COAST_MAX_MS. alongM/alongAtMs deliberately stay
-            // on the last real fix: the map coasts from that on its own.
-            val v = bestSpeedMps(if (fix.hasSpeed()) fix.speed else 0f, now)
+            // RouteTracker.COAST_MAX_MS, or COAST_NO_BUS_MAX_MS on the held
+            // GPS speed. alongM/alongAtMs deliberately stay on the last real
+            // fix: the map coasts from that on its own, with the same limits.
+            val bus = carLink.speedMps(now)
+            val v = bus?.toFloat() ?: if (fix.hasSpeed()) fix.speed else 0f
             val shown = carLink.rawSpeedMps(now)?.let { Math.round(it * 3.6).toInt() } ?: -1
-            frame = t.coast(v * tickS, shown, age, night)
+            frame = t.coast(v * tickS, shown, age, night,
+                maxMs = if (bus != null) RouteTracker.COAST_MAX_MS else RouteTracker.COAST_NO_BUS_MAX_MS)
+            finalCallOk = bus != null
             bearing = null
         } else {
             val dt = age / 1000.0
@@ -1860,7 +1866,8 @@ class HudService : Service(), LocationListener {
         val then = t.thenManeuver
         voice?.onFrame(frame, next?.alongM?.toLong(),
             thenManeuver = then?.code,
-            thenGapM = if (next != null && then != null) (then.alongM - next.alongM).toInt() else null)
+            thenGapM = if (next != null && then != null) (then.alongM - next.alongM).toInt() else null,
+            allowFinal = finalCallOk)
 
         currentRoadName = t.currentRoadName
         // The road network is worth having with a route as well as without

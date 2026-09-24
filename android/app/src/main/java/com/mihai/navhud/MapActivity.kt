@@ -2048,7 +2048,10 @@ class MapActivity : AppCompatActivity() {
         // tunnel the GPS speed is as stale as the position it came with, while
         // the bus keeps reporting. Falls back to the fix's speed on a phone,
         // where there is no bus -- and with the fix gone that is its last one.
-        val refSpeed = HudService.carSpeedMps ?: speed
+        // The service's fix first: in a tunnel it holds the last GPS one, where
+        // our own may by then be a cell fix with a made-up speed.
+        val refSpeed = HudService.carSpeedMps
+            ?: HudService.lastLocation?.takeIf { it.hasSpeed() }?.speed?.toDouble() ?: speed
         val fixAgeMs = (now - fixNs / 1_000_000L).coerceAtLeast(0L)
 
         if (onRouteSnap && route != null) {
@@ -2062,9 +2065,11 @@ class MapActivity : AppCompatActivity() {
             if (route !== motionRoute) { routeMotion.reset(); motionRoute = route }
             val alongAgeMs = (now - HudService.alongAtMs).coerceAtLeast(0L)
             // Stale either way means a tunnel: coast along the line on the
-            // car's speed. See PuckMotion.
+            // car's speed, for as long as the service does. See PuckMotion.
             puckAlong = routeMotion.step(dt, HudService.alongM, alongAgeMs / 1000.0, refSpeed,
-                fixAvailable = alongAgeMs <= FIX_HOLD_MS && fixAgeMs <= FIX_HOLD_MS)
+                fixAvailable = alongAgeMs <= FIX_HOLD_MS && fixAgeMs <= FIX_HOLD_MS,
+                limitS = (if (HudService.carSpeedMps != null) COAST_ON_ROUTE_MS
+                          else RouteTracker.COAST_NO_BUS_MAX_MS) / 1000.0)
             val p = Geo.pointAlong(route.pts, route.cum, puckAlong)
             lat = p[0]; lon = p[1]
             roadBrg = Geo.bearingAlong(route.pts, route.cum, puckAlong)

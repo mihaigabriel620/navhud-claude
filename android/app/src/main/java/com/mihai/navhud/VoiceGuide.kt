@@ -373,8 +373,15 @@ class VoiceGuide internal constructor(
      *                    along the route works, and survives GPS jitter.
      * @param thenManeuver the maneuver after that one, if known
      * @param thenGapM     metres between the two
+     * @param allowFinal   false while coasting on a held GPS speed: the
+     *                     distance is an estimate, and a "now" said early uses
+     *                     up the call the real junction needed. It waits for
+     *                     the first real fix instead.
      */
-    fun onFrame(f: HudFrame, maneuverKey: Long?, thenManeuver: Int? = null, thenGapM: Int? = null) {
+    fun onFrame(
+        f: HudFrame, maneuverKey: Long?, thenManeuver: Int? = null, thenGapM: Int? = null,
+        allowFinal: Boolean = true
+    ) {
         if (!enabled || !ready) return
 
         if (f.flags and HudFrame.FLAG_ARRIVED != 0) {
@@ -425,6 +432,7 @@ class VoiceGuide internal constructor(
         val done = spoken[maneuverKey] ?: 0
         val stage = stageFor(done, f.distToManeuverM, thresholds)
         if (stage == done) return
+        if (!allowFinal && stage >= thresholds.size) return
         // Trim *before* recording, not after: clearing the map right after
         // putting this maneuver in it threw away the record of the very
         // announcement about to be made, so the next tick recomputed the same

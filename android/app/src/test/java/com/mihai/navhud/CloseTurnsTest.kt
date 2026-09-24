@@ -48,6 +48,14 @@ class CloseTurnsTest {
         assertEquals(listOf("Turn right, then turn left.", "Turn left."), speaker.texts)
     }
 
+    @Test fun `a coasted frame without the bus never says now, and the real fix still does`() {
+        val g = guide()
+        g.onFrame(frame(55, kph = 40), 5_000L, allowFinal = false)
+        assertEquals(emptyList<String>(), speaker.texts)
+        g.onFrame(frame(55, kph = 40), 5_000L)
+        assertEquals(listOf("Turn right."), speaker.texts)
+    }
+
     @Test fun `a turn far enough away keeps its own calls`() {
         val g = guide()
         // 60 km/h: eight seconds is 133 m, so the floor of 150 m applies.

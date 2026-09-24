@@ -148,6 +148,20 @@ class SnapTest {
         assertFalse(t.snapTrusted)
     }
 
+    @Test fun `a coast never arrives, and on a held GPS speed it gives up after a minute`() {
+        val t = RouteTracker(route)
+        val at = route.totalDistanceM - 200.0
+        val p = Geo.pointAlong(route.pts, route.cum, at)
+        t.update(p[0], p[1], 30f, headingAt(at).toFloat(), hasFix = true)
+        assertTrue(t.snapTrusted)
+        // Well past the pin on the estimate: the route is not ended on it.
+        val f = t.coast(500.0, -1, 9_000L, maxMs = RouteTracker.COAST_NO_BUS_MAX_MS)
+        assertEquals(0, f.flags and HudFrame.FLAG_ARRIVED)
+        assertTrue(t.snapTrusted)
+        t.coast(7.5, -1, RouteTracker.COAST_NO_BUS_MAX_MS + 1, maxMs = RouteTracker.COAST_NO_BUS_MAX_MS)
+        assertFalse(t.snapTrusted)
+    }
+
     @Test fun `losing the fix with no way to coast drops the snap`() {
         val t = RouteTracker(route)
         val p = Geo.pointAlong(route.pts, route.cum, 100.0)
