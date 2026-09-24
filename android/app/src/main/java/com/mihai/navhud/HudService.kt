@@ -700,6 +700,8 @@ class HudService : Service(), LocationListener {
     private var lastCountryCheck: LatLon? = null
     private var lastCameraFetchMs = 0L
     private var lastLanesSent: LaneGuidance? = null
+    /** Blank the HUD's camera bar and lane strip on the next tick the link is open. */
+    @Volatile private var hudClearPending = false
 
     /**
      * camera id -> is it on our road?
@@ -988,6 +990,11 @@ class HudService : Service(), LocationListener {
             alternatives = emptyList()
             routeZones = emptyList()
             lastFrame = null
+            // As clearRoute does, and for the same reason: both are
+            // edge-triggered, so forgetting them without blanking the HUD left
+            // the old camera bar and lane strip painted there. The link may be
+            // mid-(re)open here, so the tick sends the clears once it is up.
+            if (cameraAlert != null || lanes != null || lastLanesSent != null) hudClearPending = true
             cameraAlert = null
             lanes = null
             watcher = null
@@ -1815,6 +1822,16 @@ class HudService : Service(), LocationListener {
                     try { openLink(l) } finally { linkOpening.set(false) }
                 }
             }
+        }
+        if (hudClearPending && l?.isOpen == true) {
+            hudClearPending = false
+            runCatching {
+                l.write(HudFrame.wrap("CAM,0,0,0"))
+                l.write(HudFrame.wrap("LANE,0,0"))
+            }
+            // Here, on the tick thread that owns it: lanes the new route has
+            // already sent must go out again after this clear.
+            lastLanesSent = null
         }
 
         refreshCarState(SystemClock.elapsedRealtime())
