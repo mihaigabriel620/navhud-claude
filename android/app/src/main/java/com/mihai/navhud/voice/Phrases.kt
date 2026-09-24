@@ -31,6 +31,15 @@ interface Phrases {
      */
     fun immediate(instruction: String): String
 
+    /**
+     * The final call with the next maneuver folded in, when the two are too
+     * close to announce separately: "Turn right, then turn left."
+     */
+    fun immediateThen(instruction: String, next: String): String
+
+    /** The next maneuver as a few words, no street: what follows "then". */
+    fun brief(maneuver: Int): String
+
     fun arrived(): String
     fun willArrive(): String
 
@@ -142,6 +151,13 @@ object English : Phrases {
 
     override fun advance(distance: String, instruction: String) = "In $distance, $instruction."
     override fun immediate(instruction: String) = Phrases.capitalise(instruction) + "."
+    override fun immediateThen(instruction: String, next: String) =
+        Phrases.capitalise(instruction) + ", then $next."
+    override fun brief(maneuver: Int): String = when (maneuver) {
+        Man.ROUNDABOUT -> "enter the roundabout"
+        Man.ARRIVE -> willArrive()
+        else -> instruction(maneuver, 0, "")
+    }
     override fun arrived() = "You have arrived."
     override fun willArrive() = "you will arrive at your destination"
     override fun cameraAhead(distance: String, limitKph: Int) =
@@ -232,6 +248,14 @@ open class FrenchBase(
     // No "maintenant": by the time the voice has said it you are in the
     // junction. The instruction on its own is the whole message.
     override fun immediate(instruction: String) = Phrases.capitalise(instruction) + "."
+
+    override fun immediateThen(instruction: String, next: String) =
+        Phrases.capitalise(instruction) + ", puis $next."
+    override fun brief(maneuver: Int): String = when (maneuver) {
+        Man.ROUNDABOUT -> "prenez le rond-point"
+        Man.ARRIVE -> willArrive()
+        else -> instruction(maneuver, 0, "")
+    }
 
     override fun arrived() = "Vous êtes arrivé à destination."
     override fun willArrive() = "vous arriverez à destination"

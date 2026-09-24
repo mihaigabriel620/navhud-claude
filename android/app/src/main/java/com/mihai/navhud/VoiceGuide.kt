@@ -15,6 +15,7 @@ import com.mihai.navhud.voice.Phrases
 import com.mihai.navhud.voice.VoiceQueue
 import com.mihai.navhud.voice.VoiceQueue.Priority
 import com.mihai.navhud.voice.VoiceRegions
+import kotlin.math.abs
 
 /**
  * Spoken guidance.
@@ -120,6 +121,21 @@ class VoiceGuide internal constructor(
 
         /** How long the arrival flag must stay clear before "arrived" re-arms. */
         private const val ARRIVAL_RELATCH_MS = 10_000L
+
+        /**
+         * "Turn right, then turn left": the second maneuver is folded into the
+         * first one's "now" call when it follows within this many metres, or
+         * this many seconds at the current speed, whichever is further.
+         */
+        private const val THEN_MIN_M = 150
+        private const val THEN_SECONDS = 8.0
+        /** Rounding slack when matching the folded maneuver's key. */
+        private const val THEN_KEY_SLACK_M = 15L
+
+        /** How long a reroute remembers the last turn it announced. */
+        private const val REROUTE_MEMORY_MS = 120_000L
+        /** GPS slack when deciding a rerouted turn is the one already announced. */
+        private const val REROUTE_SLACK_M = 30
 
         /**
          * The two chimes, played *by the TTS engine* as earcons rather than by
@@ -368,8 +384,10 @@ class VoiceGuide internal constructor(
     /**
      * @param maneuverKey stable identity of the upcoming maneuver -- its distance
      *                    along the route works, and survives GPS jitter.
+     * @param thenManeuver the maneuver after that one, if known
+     * @param thenGapM     metres between the two
      */
-    fun onFrame(f: HudFrame, maneuverKey: Long?) {
+    fun onFrame(f: HudFrame, maneuverKey: Long?, thenManeuver: Int? = null, thenGapM: Int? = null) {
         if (!enabled || !ready) return
 
         if (f.flags and HudFrame.FLAG_ARRIVED != 0) {
@@ -395,8 +413,27 @@ class VoiceGuide internal constructor(
 
         chimeIfSpeeding(f)
 
+        // Keys are distances along the *old* route and mean nothing on the new
+        // one, so they go -- but what they recorded is carried across below.
+        val rerouted = rerouteRequested
+        if (rerouted) {
+            rerouteRequested = false
+            spoken.clear()
+            thenCovered = null
+        }
+
         if (maneuverKey == null || f.distToManeuverM <= 0) return
         val thresholds = thresholdsFor(f.speedKph)
+
+        if (rerouted) carryAcrossReroute(f, maneuverKey, thresholds, nowMs)
+        // Already folded into the previous "now" call as "..., then turn left":
+        // its prepare call would only say it again.
+        thenCovered?.let { (key, man) ->
+            if (man == f.maneuver && abs(maneuverKey - key) <= THEN_KEY_SLACK_M &&
+                spoken[maneuverKey] == null) {
+                spoken[maneuverKey] = 1
+            }
+        }
 
         val done = spoken[maneuverKey] ?: 0
         val stage = stageFor(done, f.distToManeuverM, thresholds)
@@ -408,6 +445,9 @@ class VoiceGuide internal constructor(
         // junction.
         if (spoken.size > 64) spoken.clear()
         spoken[maneuverKey] = stage
+        // Said or deliberately skipped, this stage is used up; a reroute that
+        // hands the same turn back under a new key must know that.
+        lastTurn = Announced(maneuverKey, signature(f), stage, f.distToManeuverM, nowMs)
 
         val isFinal = stage >= thresholds.size
 
@@ -421,8 +461,13 @@ class VoiceGuide internal constructor(
 
         val instruction = if (f.maneuver == Man.ARRIVE) phrases.willArrive()
                           else phrases.instruction(f.maneuver, f.roundaboutExit, f.street)
-        val text = if (isFinal) phrases.immediate(instruction)
-                   else phrases.advance(phrases.distance(thresholds[stage - 1]), instruction)
+        val merge = isFinal && shouldMergeThen(thenManeuver, thenGapM, f.speedKph)
+        val text = when {
+            merge -> phrases.immediateThen(instruction, phrases.brief(thenManeuver!!))
+            isFinal -> phrases.immediate(instruction)
+            else -> phrases.advance(phrases.distance(thresholds[stage - 1]), instruction)
+        }
+        if (merge) thenCovered = (maneuverKey + thenGapM!!) to thenManeuver!!
         if (isFinal) {
             // What the next maneuver's prepare call has to keep clear of.
             lastFinalKey = maneuverKey
@@ -458,6 +503,73 @@ class VoiceGuide internal constructor(
         spoken.clear()
         arrivalSpoken = false
         wasOver = false
+        thenCovered = null
+        lastTurn = null
+    }
+
+    /**
+     * A new route replaced the old one mid-drive. Unlike [reset], this must not
+     * make the voice repeat itself: the router re-plans from where the car is,
+     * so the new route usually starts with the very turn that was just
+     * announced, under a new key, and reset() had it said all over again.
+     *
+     * Safe from any thread: the work is done on the next [onFrame].
+     */
+    fun onReroute() {
+        rerouteRequested = true
+    }
+
+    // -----------------------------------------------------------------------
+
+    /** What was last said about a maneuver, to recognise it on a new route. */
+    private data class Announced(
+        val key: Long, val signature: String, val stage: Int, val distM: Int, val atMs: Long
+    )
+
+    @Volatile private var rerouteRequested = false
+    private var lastTurn: Announced? = null
+    /** The key and code of the maneuver folded into the last "then" call. */
+    private var thenCovered: Pair<Long, Int>? = null
+
+    private fun signature(f: HudFrame) = "${f.maneuver}/${f.roundaboutExit}/${f.street}"
+
+    /**
+     * First frame on a new route. Two things are true of its first maneuver:
+     *
+     *  - If it is the turn just announced -- same instruction, and no further
+     *    away than when it was announced -- it keeps the stage it had reached,
+     *    so neither call is repeated. A turn that was *missed* reappears
+     *    further away than that, and is announced afresh, as it should be.
+     *  - If we are already inside its prepare distance, "in 400 metres" is
+     *    stale before it is said; the "now" call is the one that matters.
+     */
+    private fun carryAcrossReroute(f: HudFrame, key: Long, thresholds: IntArray, nowMs: Long) {
+        val prev = lastTurn
+        val same = prev != null && prev.signature == signature(f) &&
+            nowMs - prev.atMs <= REROUTE_MEMORY_MS &&
+            f.distToManeuverM <= prev.distM + REROUTE_SLACK_M
+        val carried = if (same) prev!!.stage else 0
+        val inside = if (f.distToManeuverM <= thresholds[0]) 1 else 0
+        val stage = maxOf(carried, inside)
+        if (stage > 0) spoken[key] = stage
+        if (same) {
+            // The suppression rules compare keys; follow the turn to its new one.
+            if (lastSpokeKey == prev!!.key) lastSpokeKey = key
+            if (lastFinalKey == prev.key) lastFinalKey = key
+        }
+    }
+
+    /**
+     * Fold the next maneuver into this "now" call when there will be no time
+     * to announce it on its own: within 150 m, or eight seconds at this speed
+     * on a fast road. Continuing straight on is not worth a "then".
+     */
+    private fun shouldMergeThen(thenManeuver: Int?, thenGapM: Int?, speedKph: Int): Boolean {
+        if (thenManeuver == null || thenGapM == null || thenGapM <= 0) return false
+        if (thenManeuver == Man.NONE || thenManeuver == Man.STRAIGHT ||
+            thenManeuver == Man.DEPART) return false
+        val reachM = maxOf(THEN_MIN_M, (speedKph.coerceAtLeast(0) / 3.6 * THEN_SECONDS).toInt())
+        return thenGapM <= reachM
     }
 
     /**
