@@ -473,9 +473,12 @@ class VoiceGuide internal constructor(
     /** Camera warnings go to the front of the queue: they are time-critical. */
     fun announceCamera(alert: CameraAlert) {
         if (!enabled || !ready) return
-        val text = if (alert.zoneMode) phrases.dangerZone()
-                   else phrases.cameraAhead(phrases.distance(alert.distanceM),
-                                            alert.camera.limitKph)
+        val text = when {
+            alert.zoneMode -> phrases.dangerZone()
+            alert.camera.kind == com.mihai.navhud.alerts.SpeedCamera.Kind.ANPR ->
+                phrases.anprAhead(phrases.distance(alert.distanceM))
+            else -> phrases.cameraAhead(phrases.distance(alert.distanceM), alert.camera.limitKph)
+        }
         say(text, Priority.HIGH, TTL_ALERT_MS, earcon = EARCON_CAMERA)
     }
 

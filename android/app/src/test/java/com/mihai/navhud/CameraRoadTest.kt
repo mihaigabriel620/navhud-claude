@@ -73,8 +73,11 @@ class CameraRoadTest {
     }
 
     @Test
-    fun `the route tolerance no longer spans a city block`() {
-        assertTrue("28 m let the parallel street in",
-            SpeedCameras.MATCH_TOLERANCE_M <= 15.0)
+    fun `the route corridor fits a generalised route line, not a city block`() {
+        // Was capped at 15 m, which dropped cameras on our own road: a routed
+        // polyline sits 5-12 m off its carriageway. At 35 m the street next
+        // door can get into the corridor -- and the first test above shows
+        // onOurRoad rejecting it there, which is now where that job is done.
+        assertTrue(SpeedCameras.MATCH_TOLERANCE_M in 30.0..40.0)
     }
 }

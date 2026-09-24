@@ -46,6 +46,9 @@ interface Phrases {
     /** Camera warning, exact position known. */
     fun cameraAhead(distance: String, limitKph: Int): String
 
+    /** A number-plate (ANPR) camera, exact position known. No limit to quote. */
+    fun anprAhead(distance: String): String
+
     /** Camera warning, France-style zone with no precise position. */
     fun dangerZone(): String
 
@@ -163,6 +166,7 @@ object English : Phrases {
     override fun cameraAhead(distance: String, limitKph: Int) =
         if (limitKph > 0) "Speed camera in $distance, limit $limitKph."
         else "Speed camera in $distance."
+    override fun anprAhead(distance: String) = "Number-plate camera in $distance."
     override fun dangerZone() = "Entering a danger zone."
     override fun reroute() = "Recalculating."
     override fun overLimit(limitKph: Int) = "Speed limit $limitKph."
@@ -262,6 +266,7 @@ open class FrenchBase(
     override fun cameraAhead(distance: String, limitKph: Int) =
         if (limitKph > 0) "Radar dans $distance, limite ${num(limitKph)}."
         else "Radar dans $distance."
+    override fun anprAhead(distance: String) = "Caméra ANPR dans $distance."
     override fun dangerZone() = "Vous entrez dans une zone de danger."
     override fun reroute() = "Recalcul de l'itinéraire."
     override fun overLimit(limitKph: Int) = "Vitesse limitée à ${num(limitKph)}."
