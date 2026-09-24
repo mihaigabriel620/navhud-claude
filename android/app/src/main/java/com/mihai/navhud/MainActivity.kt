@@ -81,13 +81,25 @@ class MainActivity : AppCompatActivity() {
                 toast("That does not look like a Mapbox token. They start with pk.")
             }
             Prefs.setMapboxToken(this, t)
+            // Into the running service now, as the other settings are: its
+            // router was built with the old token.
+            HudService.applyPrefs(this)
             toast(if (t.isBlank()) "Token cleared" else "Token saved")
         }
         voiceBox.setOnCheckedChangeListener { _, on ->
             Prefs.setVoice(this, on)
             HudService.voiceEnabled = on
         }
-        btBox.setOnCheckedChangeListener { _, on -> Prefs.setUseBluetooth(this, on) }
+        btBox.setOnCheckedChangeListener { _, on ->
+            Prefs.setUseBluetooth(this, on)
+            // The link is chosen on a start, so a running service needs one to
+            // switch transport now rather than on the next trip.
+            if (HudService.running) runCatching {
+                startService(Intent(this, HudService::class.java)
+                    .setAction(HudService.ACTION_START)
+                    .putExtra(HudService.EXTRA_USE_BT, on))
+            }
+        }
 
         findViewById<Button>(R.id.stop).setOnClickListener {
             // Stop means stop: the map screen checks HudService.userStopped
