@@ -2453,7 +2453,8 @@ class MapActivity : AppCompatActivity() {
     /**
      * One line on the map saying why the arrow is where it is: on the route
      * line, on an OSM road, or on the raw fix -- with the distance from the
-     * route, the service's trust flag and the fix accuracy. Twice a second.
+     * route, the service's trust flag and the fix accuracy -- and the camera
+     * alert, to catch a late warning in the act. Twice a second.
      */
     private fun showArrowDebug(now: Long, mode: String, trusted: Boolean, loc: Location) {
         if (now - arrowDebugAtMs < 500L) return
@@ -2461,7 +2462,13 @@ class MapActivity : AppCompatActivity() {
         arrowDebugView.visibility = View.VISIBLE
         arrowDebugView.text = "%s · cross %.0f m · trusted %s · acc %s".format(
             mode, HudService.crossTrackM, if (trusted) "yes" else "no",
-            if (loc.hasAccuracy()) "%.0f m".format(loc.accuracy) else "?")
+            if (loc.hasAccuracy()) "%.0f m".format(loc.accuracy) else "?") +
+            // Which camera the alert is on, how far, which stage: a late
+            // warning shows up here as the id changing close in.
+            (HudService.cameraAlert?.let {
+                "\ncam #${it.camera.id} ${it.distanceM} m stage ${it.stage + 1}" +
+                    (if (it.passed) " passed" else "")
+            } ?: "\ncam none")
     }
 
     private fun perfSummary(): String = buildString {

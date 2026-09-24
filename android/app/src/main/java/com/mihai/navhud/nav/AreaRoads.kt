@@ -547,7 +547,8 @@ object AreaRoads {
         body: String, nowMs: Long, fromCache: Boolean
     ): Area {
         val (roads, cams) = parse(body)
-        return Area(lat, lon, radiusM, roads, cams, nowMs, parseFeatures(body), fromCache).also {
+        return Area(lat, lon, radiusM, roads, SpeedCameras.dedupeByPosition(cams), nowMs,
+                    parseFeatures(body), fromCache).also {
             // Build the grid here, on the thread that did the fetch, rather
             // than lazily on the first lookup -- which would be the 4 Hz tick.
             it.warmIndex()

@@ -20,6 +20,15 @@ Fixes for what the owner found driving 1.27. Firmware unchanged.
   at 50-89 km/h, 400 / 200 / 100 m in town). The voice says the round stage
   distance, never the live one, so no more "in 13 m": under 50 m it just
   says "Radar". The HUD still shows the exact distance.
+- Why the last call came at 13 m: the warning itself was late, not just
+  worded wrong. The alert stayed on a camera until the car was 40 m past it,
+  so a second camera just after it got its last call almost on top of it --
+  and OpenStreetMap often has the same camera twice. Now the next camera
+  ahead takes over the moment one is passed (a passed camera is never
+  spoken), and two cameras within 50 m of each other, facing the same way
+  and of the same kind, are merged into one: no more double warnings.
+- The arrow debug line also shows the camera alert (which camera, distance,
+  stage), so a late warning can be caught on the next drive.
 - Music: the voice is only marked ready once it is set up as navigation audio,
   so no line can go out as normal media (a head unit stops the music for a new
   media source). If the speech engine never reports the end of a line, the

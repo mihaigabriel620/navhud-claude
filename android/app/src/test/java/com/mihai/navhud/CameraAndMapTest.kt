@@ -217,6 +217,75 @@ class CameraAndMapTest {
         assertEquals("the HUD still shows the live distance", 13, a.distanceM)
     }
 
+    // ---- duplicates and the camera after the one just passed ----------------
+
+    private fun cam(id: Long, along: Double, dir: Double? = null,
+                    kind: SpeedCamera.Kind = SpeedCamera.Kind.FIXED, limit: Int = 70,
+                    lat: Double = 0.0, lon: Double = 0.0) =
+        SpeedCamera(id, lat, lon, along, limit, dir, kind)
+
+    @Test fun `two cameras 30 m apart facing the same way are one camera, warned once`() {
+        // OSM often has the same device twice. It gave two sets of warnings,
+        // and the second one's last call came under the camera: "in 13 m".
+        val w = CameraWatcher(listOf(cam(1, 5000.0), cam(2, 5030.0, limit = 0)), CameraPolicy.EXACT)
+        assertEquals("merged into one", listOf(1L), w.cameras.map { it.id })
+        assertEquals("the limit survives the merge", 70, w.cameras[0].limitKph)
+
+        val said = ArrayList<Pair<Int, Int>>()          // stage, spoken metres
+        var d = 3800.0
+        while (d < 5300.0) {
+            w.update(d, 120, null)?.let { if (w.shouldAnnounce(it)) said.add(it.stage to it.spokenM) }
+            d += 5.0
+        }
+        assertEquals("warn, remind, last call -- once each", listOf(0, 1, 2), said.map { it.first })
+        assertEquals(listOf(1000, 500, 200), said.map { it.second })
+    }
+
+    @Test fun `cameras 30 m apart that are not the same device are both kept`() {
+        // One for each direction of a dual carriageway.
+        assertEquals(2, CameraWatcher(listOf(cam(1, 5000.0, dir = 0.0), cam(2, 5030.0, dir = 180.0)),
+            CameraPolicy.EXACT).cameras.size)
+        // Tagged and untagged: the untagged one may watch the other direction.
+        assertEquals(2, CameraWatcher(listOf(cam(1, 5000.0, dir = 0.0), cam(2, 5030.0)),
+            CameraPolicy.EXACT).cameras.size)
+        // A number-plate camera is a different warning from a speed camera.
+        assertEquals(2, CameraWatcher(listOf(cam(1, 5000.0),
+            cam(2, 5030.0, kind = SpeedCamera.Kind.ANPR)), CameraPolicy.EXACT).cameras.size)
+        // Same direction, but 60 m apart: two cameras.
+        assertEquals(2, CameraWatcher(listOf(cam(1, 5000.0, dir = 10.0), cam(2, 5060.0, dir = 30.0)),
+            CameraPolicy.EXACT).cameras.size)
+        assertEquals(1, CameraWatcher(listOf(cam(1, 5000.0, dir = 10.0), cam(2, 5030.0, dir = 30.0)),
+            CameraPolicy.EXACT).cameras.size)
+    }
+
+    @Test fun `the next camera takes over the moment the last one is passed`() {
+        val w = CameraWatcher(listOf(cam(1, 5000.0), cam(2, 5150.0)), CameraPolicy.EXACT)
+        val a = w.update(5001.0, 120, null)!!
+        assertEquals("not held on the camera just passed", 2L, a.camera.id)
+        assertFalse(a.passed)
+        assertTrue(w.shouldAnnounce(a))
+        assertEquals(200, a.spokenM)
+    }
+
+    @Test fun `a camera just passed is still shown but never spoken`() {
+        val w = CameraWatcher(listOf(cam(1, 5000.0)), CameraPolicy.EXACT)
+        val a = w.update(5010.0, 120, null)!!
+        assertTrue(a.passed)
+        assertFalse("never announced behind the car", w.shouldAnnounce(a))
+        assertNull(w.update(5041.0, 120, null))
+    }
+
+    @Test fun `free drive merges duplicates by position`() {
+        // 30 m north of each other: 30 / 111320 degrees of latitude.
+        val north30 = 30.0 / 111_320.0
+        val merged = SpeedCameras.dedupeByPosition(listOf(
+            cam(1, 0.0, lat = 50.8, lon = 4.35), cam(2, 0.0, lat = 50.8 + north30, lon = 4.35)))
+        assertEquals(listOf(1L), merged.map { it.id })
+        val apart = SpeedCameras.dedupeByPosition(listOf(
+            cam(1, 0.0, lat = 50.8, lon = 4.35), cam(2, 0.0, lat = 50.8 + 2 * north30, lon = 4.35)))
+        assertEquals(2, apart.size)
+    }
+
     // ---- map camera --------------------------------------------------------
 
     @Test fun `zoom pulls back as speed rises`() {

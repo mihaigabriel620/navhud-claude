@@ -100,6 +100,63 @@ object SpeedCameras {
      */
     internal const val DIRECTION_TOLERANCE_DEG = 70.0
 
+    /**
+     * Two cameras closer than this, facing the same way, are one camera.
+     * OpenStreetMap often has the same device twice (a `highway=speed_camera`
+     * node on the road and the enforcement relation's `device` node beside
+     * it), which gave two sets of warnings, and the second one's last call
+     * only came once the first had been passed: "radar dans 13 mètres".
+     */
+    const val DUPLICATE_M = 50.0
+
+    /**
+     * The same device, as far as a driver can tell: same kind of warning
+     * (an ANPR camera and a speed camera are two different things to say),
+     * and facing the same way -- both untagged, or tagged within
+     * [DIRECTION_TOLERANCE_DEG]. One tagged and one not is left alone: the
+     * untagged one may be the camera for the other direction.
+     */
+    internal fun sameDevice(a: SpeedCamera, b: SpeedCamera): Boolean {
+        if ((a.kind == SpeedCamera.Kind.ANPR) != (b.kind == SpeedCamera.Kind.ANPR)) return false
+        val da = a.directionDeg
+        val db = b.directionDeg
+        if (da == null || db == null) return da == null && db == null
+        return Geo.bearingDelta(da, db) <= DIRECTION_TOLERANCE_DEG
+    }
+
+    /** Keep the first; take the limit and kind from the duplicate if it knows them. */
+    private fun mergeInto(keep: SpeedCamera, dup: SpeedCamera): SpeedCamera = keep.copy(
+        limitKph = if (keep.limitKph > 0) keep.limitKph else dup.limitKph,
+        kind = if (keep.kind == SpeedCamera.Kind.UNKNOWN || keep.kind == SpeedCamera.Kind.FIXED &&
+                   dup.kind == SpeedCamera.Kind.AVERAGE) dup.kind else keep.kind
+    )
+
+    /**
+     * Route cameras with duplicates merged: within [DUPLICATE_M] *along the
+     * route* of the camera kept, and [sameDevice]. The first one along keeps
+     * its id, so a refreshed list keeps the "already announced" memory.
+     */
+    fun dedupe(cameras: List<SpeedCamera>): List<SpeedCamera> {
+        val out = ArrayList<SpeedCamera>(cameras.size)
+        for (c in cameras.sortedBy { it.alongM }) {
+            val i = out.indexOfLast { c.alongM - it.alongM <= DUPLICATE_M && sameDevice(it, c) }
+            if (i >= 0) out[i] = mergeInto(out[i], c) else out.add(c)
+        }
+        return out
+    }
+
+    /** [dedupe] for free drive, where there is no route: straight-line distance. */
+    fun dedupeByPosition(cameras: List<SpeedCamera>): List<SpeedCamera> {
+        val out = ArrayList<SpeedCamera>(cameras.size)
+        for (c in cameras) {
+            val i = out.indexOfFirst {
+                Geo.haversine(it.lat, it.lon, c.lat, c.lon) <= DUPLICATE_M && sameDevice(it, c)
+            }
+            if (i >= 0) out[i] = mergeInto(out[i], c) else out.add(c)
+        }
+        return out
+    }
+
     // -----------------------------------------------------------------------
 
     /**
@@ -496,7 +553,9 @@ data class CameraAlert(
      * live one (see [CameraWatcher.spokenDistance]). 0 = too close for a
      * number, just "Radar".
      */
-    val spokenM: Int = distanceM
+    val spokenM: Int = distanceM,
+    /** Already behind the car, shown only so the display does not flicker. Never spoken. */
+    val passed: Boolean = false
 )
 
 /**
@@ -504,12 +563,14 @@ data class CameraAlert(
  * can be tested against a simulated drive.
  */
 class CameraWatcher(
-    /** Pinned to the route this watcher was made for, nearest first. */
-    val cameras: List<SpeedCamera>,
+    cameras: List<SpeedCamera>,
     private val policy: CameraPolicy,
     /** Stage keys already spoken, carried over from a predecessor. */
     announcedBefore: Collection<Long> = emptyList()
 ) {
+    /** Pinned to the route this watcher was made for, nearest first, duplicates merged. */
+    val cameras: List<SpeedCamera> = SpeedCameras.dedupe(cameras)
+
     companion object {
         /**
          * When to speak, in metres before the camera, per speed band.
@@ -668,13 +729,21 @@ class CameraWatcher(
         val warn = warnDistance(speedKph)
         val zone = policy == CameraPolicy.ZONE
 
-        val next = cameras.firstOrNull {
+        fun wanted(it: SpeedCamera): Boolean {
             val reach = if (zone) max(warn, zoneLengthFor(it.limitKph)) else warn
-            it.alongM > alongM - PASSED_M &&
-                it.alongM - alongM <= reach &&
+            return it.alongM - alongM <= reach &&
                 SpeedCameras.facesUs(it, bearingDeg) &&
                 accept(it)
-        } ?: return null
+        }
+        // The next camera *ahead* first. The one just passed used to hold the
+        // alert until it was PASSED_M behind, so a second camera just after it
+        // got no warning until the car was almost on top of it. The passed one
+        // is only a fallback, to keep the display steady through GPS jitter,
+        // and it is never announced (see shouldAnnounce).
+        val ahead = cameras.firstOrNull { it.alongM >= alongM && wanted(it) }
+        val next = ahead
+            ?: cameras.lastOrNull { it.alongM < alongM && it.alongM > alongM - PASSED_M && wanted(it) }
+            ?: return null
 
         val raw = (next.alongM - alongM).roundToInt().coerceAtLeast(0)
         val dist = if (zone) blurZoneDistance(raw, zoneLengthFor(next.limitKph)) else raw
@@ -683,7 +752,8 @@ class CameraWatcher(
             distanceM = dist,
             zoneMode = zone,
             stage = stageFor(raw, speedKph),
-            spokenM = spokenDistance(raw, speedKph)
+            spokenM = spokenDistance(raw, speedKph),
+            passed = ahead == null
         )
     }
 
@@ -692,7 +762,8 @@ class CameraWatcher(
      * gets a warning, a reminder and a final chirp rather than one message.
      */
     fun shouldAnnounce(alert: CameraAlert): Boolean =
-        synchronized(announced) { announced.add(alert.camera.id * 8L + alert.stage) }
+        !alert.passed &&
+            synchronized(announced) { announced.add(alert.camera.id * 8L + alert.stage) }
 
     fun reset() = synchronized(announced) { announced.clear() }
 }
