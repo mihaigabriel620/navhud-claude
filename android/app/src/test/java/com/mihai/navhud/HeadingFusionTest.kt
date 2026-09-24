@@ -10,6 +10,14 @@ import org.junit.Test
 import kotlin.math.abs
 
 /**
+ * 3.6 km/h: rolling, with a GPS bearing, but under the 5 km/h at which the
+ * fusion counts as moving and stops listening to turn-rate sensors (1.27).
+ * The gyro tests below used to run at 50 km/h; they run here now so they
+ * still exercise the integration they were written for.
+ */
+private const val CRAWL_MPS = 1.0
+
+/**
  * The gyroscope filter that makes the arrow turn when the car does.
  *
  * A GPS bearing arrives once a second and is computed from where you *were*, so
@@ -51,21 +59,21 @@ class HeadingFusionTest {
 
     @Test fun `a right turn shows up immediately, without waiting for GPS`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         f.turn(rateDegPerSec = 30.0, seconds = 3.0)   // 90 degrees right
         assertEquals(90.0, f.heading!!, 2.0)
     }
 
     @Test fun `a left turn goes the other way`() {
         val f = HeadingFusion()
-        f.onFix(180.0, 14.0, 1.0)
+        f.onFix(180.0, CRAWL_MPS, 1.0)
         f.turn(rateDegPerSec = -30.0, seconds = 3.0)
         assertEquals(90.0, f.heading!!, 2.0)
     }
 
     @Test fun `the heading wraps through north instead of unwinding`() {
         val f = HeadingFusion()
-        f.onFix(350.0, 14.0, 1.0)
+        f.onFix(350.0, CRAWL_MPS, 1.0)
         f.turn(rateDegPerSec = 20.0, seconds = 1.5)   // +30 degrees, past north
         val h = f.heading!!
         assertTrue("heading left the 0..360 range: $h", h in 0.0..360.0)
@@ -74,12 +82,59 @@ class HeadingFusionTest {
 
     @Test fun `GPS pulls the gyro estimate back over a few seconds`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 20.0, 1.0)
-        // Pretend the gyro drifted 20 degrees while GPS kept saying north.
+        f.onFix(0.0, CRAWL_MPS, 1.0)
+        // Pretend the gyro drifted 20 degrees at a crawl while GPS said north.
         f.turn(rateDegPerSec = 20.0, seconds = 1.0)
         assertEquals(20.0, f.heading!!, 2.0)
         repeat(5) { f.onFix(0.0, 20.0, 1.0) }
         assertTrue("GPS should have won by now: ${f.heading}", abs(f.heading!!) < 3.0)
+    }
+
+    // ---- moving: the GPS course only (1.27) ---------------------------------
+
+    @Test fun `above 5 km-h the gyro does not move the heading`() {
+        val f = HeadingFusion()
+        f.onFix(0.0, 20.0, 1.0)                        // 72 km/h, due north
+        assertTrue(f.moving)
+        f.turn(rateDegPerSec = 30.0, seconds = 3.0)    // 90 degrees of "turn"
+        assertEquals(0.0, f.heading!!, 1e-9)
+    }
+
+    @Test fun `above 5 km-h neither the orientation sensor nor the board's yaw rate does`() {
+        val f = HeadingFusion()
+        f.onFix(0.0, 1.5, 1.0)                         // 5.4 km/h, just over
+        assertTrue(f.moving)
+        var r = doubleArrayOf(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+        f.onOrientation(r, 0.02)
+        repeat(45) {
+            val a = Math.toRadians(-1.0)
+            val rz = doubleArrayOf(Math.cos(a), -Math.sin(a), 0.0, Math.sin(a), Math.cos(a), 0.0,
+                0.0, 0.0, 1.0)
+            val o = DoubleArray(9)
+            for (i in 0..2) for (j in 0..2) for (k in 0..2) o[i * 3 + j] += rz[i * 3 + k] * r[k * 3 + j]
+            r = o
+            f.onOrientation(r, 0.02)
+        }
+        repeat(100) { f.onExternalYawRate(30.0, 0.02) }
+        assertEquals(0.0, f.heading!!, 1e-9)
+        // ...but the GPS course still does.
+        f.onFix(80.0, 1.5, 1.0)
+        assertEquals(80.0, f.heading!!, 1e-6)
+    }
+
+    @Test fun `moving has the compass's hysteresis, and the car's speed counts`() {
+        val f = HeadingFusion()
+        f.onFix(0.0, 1.5, 1.0)
+        assertTrue(f.moving)
+        f.noteVehicleSpeed(1.2)                        // 4.3 km/h: still moving
+        assertTrue(f.moving)
+        f.noteVehicleSpeed(0.9)                        // 3.2 km/h: stopped turning
+        assertFalse(f.moving)
+        f.noteVehicleSpeed(1.2)                        // back up to 4.3: not yet
+        assertFalse(f.moving)
+        // And below it the gyro turns the arrow again.
+        f.turn(rateDegPerSec = 30.0, seconds = 1.0)
+        assertEquals(30.0, f.heading!!, 2.0)
     }
 
     @Test fun `a wild disagreement snaps rather than sliding round slowly`() {
@@ -135,7 +190,7 @@ class HeadingFusionTest {
         // Phone stood upright in a cradle: gravity along -y, and the yaw axis
         // is now the device's y axis, not z.
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         val up = doubleArrayOf(0.0, -1.0, 0.0)
         var t = 0.0
         val rad = Math.toRadians(-30.0)
@@ -149,7 +204,7 @@ class HeadingFusionTest {
 
     @Test fun `an implausible gap is not integrated`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         // The app was in the background for four seconds; one sample arrives.
         f.onGyro(0.0, 0.0, Math.toRadians(-30.0), UP[0], UP[1], UP[2], 4.0)
         assertEquals(0.0, f.heading!!, 0.001)
@@ -157,7 +212,7 @@ class HeadingFusionTest {
 
     @Test fun `the HUD's own IMU drives the heading the same way`() {
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         repeat(150) { f.onExternalYawRate(20.0, 0.02) }   // 60 degrees right
         assertEquals(60.0, f.heading!!, 1.0)
     }
@@ -183,7 +238,7 @@ class HeadingFusionTest {
      */
     private fun turnMounted(upx: Double, upy: Double, upz: Double, degrees: Double): Double {
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         // Rotation about the true vertical, expressed in device axes: the
         // rate vector is along the (unit) up axis, scaled by the rate.
         val n = Math.sqrt(upx * upx + upy * upy + upz * upz)
@@ -224,7 +279,7 @@ class HeadingFusionTest {
     @Test fun `an unnormalised gravity vector is fine`() {
         // Android reports gravity in m/s2, magnitude about 9.81, not 1.
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         var t = 0.0
         val rad = Math.toRadians(-30.0)
         while (t < 3.0) { f.onGyro(0.0, 0.0, rad, 0.0, 0.0, 9.81, 0.02); t += 0.02 }
@@ -234,7 +289,7 @@ class HeadingFusionTest {
     @Test fun `free fall does not produce a heading out of nothing`() {
         // No gravity vector means no vertical, so nothing to integrate about.
         val f = HeadingFusion()
-        f.onFix(0.0, 14.0, 1.0)
+        f.onFix(0.0, CRAWL_MPS, 1.0)
         repeat(150) { f.onGyro(0.0, 0.0, Math.toRadians(-30.0), 0.0, 0.0, 0.0, 0.02) }
         assertEquals("heading must not drift on a null vertical", 0.0, f.heading!!, 0.001)
     }

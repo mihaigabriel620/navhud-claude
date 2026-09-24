@@ -282,6 +282,26 @@ class HeadingFusion {
     private var stationary = true
 
     /**
+     * Above [COMPASS_MAX_MPS], until back under [COMPASS_RESUME_MPS].
+     *
+     * While moving, the heading is the GPS course and nothing else: the gyro,
+     * the orientation sensor and the board's yaw rate are ignored, as the
+     * compass already was. Integrated turn rates on a head unit drifted the
+     * arrow off the road it was plainly driving along, and at speed the GPS
+     * course -- or the road bearing, when snapped -- is the better answer.
+     * Standing still and crawling they still do everything they did.
+     */
+    @Volatile
+    var moving = false
+        private set
+
+    private fun noteSpeed(mps: Double) {
+        lastSpeedMps = mps
+        stationary = mps < STATIONARY_MPS
+        moving = if (moving) mps >= COMPASS_RESUME_MPS else mps > COMPASS_MAX_MPS
+    }
+
+    /**
      * One gyroscope sample.
      *
      * @param gx,gy,gz angular rate in rad/s, device axes, right-hand rule
@@ -327,7 +347,7 @@ class HeadingFusion {
             if (advisoryOnly || abs(wUp - biasRadS) < PARKED_DEADBAND_RADS) return
         }
 
-        if (advisoryOnly) return
+        if (advisoryOnly || moving) return
         val h = heading ?: return
         heading = Geo.normalizeDeg(h - Math.toDegrees((wUp - biasRadS) * dtS))
     }
@@ -357,6 +377,7 @@ class HeadingFusion {
         // rotation entirely: losing a whole roundabout because one frame was
         // late is worse than being slightly short.
         val step = if (dtS > MAX_GYRO_STEP_S) MAX_GYRO_STEP_S else dtS
+        if (moving) return
         // Bolted to the car, so it turns when the car turns even at a
         // standstill — a three-point turn, a car park, a ferry ramp. The
         // deadband keeps its own noise from creeping while parked.
@@ -433,7 +454,7 @@ class HeadingFusion {
         hasRateSensor = true
         if (source == Source.HUD_IMU) return
         source = Source.PHONE_ROTATION
-        if (prev == null || dtS <= 0.0 || dtS > MAX_ORIENTATION_STEP_S) return
+        if (moving || prev == null || dtS <= 0.0 || dtS > MAX_ORIENTATION_STEP_S) return
         val h = heading ?: return
         val dYaw = Math.toDegrees(yawOf(timesTranspose(r, prev)))
         // A single step is a fraction of a degree. Anything bigger is the
@@ -510,8 +531,7 @@ class HeadingFusion {
 
     @Synchronized
     fun onFix(bearingDeg: Double?, speedMps: Double, dtS: Double) {
-        stationary = speedMps < STATIONARY_MPS
-        lastSpeedMps = speedMps
+        noteSpeed(speedMps)
         compassDrove = usingCompass
         if (bearingDeg == null || speedMps < GPS_HEADING_MIN_MPS) return
         val g = Geo.normalizeDeg(bearingDeg)
@@ -617,10 +637,7 @@ class HeadingFusion {
     }
 
     @Synchronized
-    fun noteVehicleSpeed(mps: Double) {
-        lastSpeedMps = mps
-        stationary = mps < STATIONARY_MPS
-    }
+    fun noteVehicleSpeed(mps: Double) = noteSpeed(mps)
 
     /** Force the estimate, e.g. from the road direction when snapped to route. */
     @Synchronized
@@ -749,6 +766,7 @@ class HeadingFusion {
     fun reset() {
         heading = null
         stationary = true
+        moving = false
         lastSpeedMps = 0.0
         compassDrove = true
         gpsFixedHeading = false

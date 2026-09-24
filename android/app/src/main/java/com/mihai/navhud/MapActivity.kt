@@ -37,6 +37,9 @@ import com.mihai.navhud.map.Compass
 import com.mihai.navhud.map.MapIds
 import com.mihai.navhud.nav.AreaRoads
 import com.mihai.navhud.map.NavCamera
+import com.mihai.navhud.map.FreeDriveMotion
+import com.mihai.navhud.map.PuckMotion
+import com.mihai.navhud.map.RouteLine
 import com.mihai.navhud.nav.RoadSigns
 import com.mihai.navhud.nav.RoadFeature
 import com.mihai.navhud.nav.Route
@@ -52,8 +55,11 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.offline.OfflineManager
+import org.maplibre.android.style.layers.LayoutPropertyValue
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.PaintPropertyValue
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.TransitionOptions
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -92,6 +98,12 @@ class MapActivity : AppCompatActivity() {
 
         @JvmStatic var crashShown = false
 
+        /**
+         * Outlives the activity (it holds only the application context), so a
+         * night-mode recreation does not start the current chunk over.
+         */
+        private var offlineRoutes: com.mihai.navhud.map.OfflineRoutes? = null
+
         /** Fast enough that a GPS bearing is the car's real direction. */
         /**
          * Learn the mounting offset from this speed up. 14 km/h.
@@ -121,8 +133,7 @@ class MapActivity : AppCompatActivity() {
          * uneven skip, which reads worse than either a flat 30 or a flat 60
          * would have. Moving to Choreographer was meant to stop beating
          * against the display clock; this gate was still doing it, one layer
-         * up. A frame that overruns its budget is now dealt with by skipping
-         * the next one deliberately -- see [skipNextFrame].
+         * up.
          */
         const val FRAME_MIN_NS = 8_000_000L
 
@@ -183,65 +194,60 @@ class MapActivity : AppCompatActivity() {
 
         // Style ids live in MapIds, where a unit test can prove they are all
         // different from each other. See the note in that file.
-        private const val ROUTE_SOURCE = MapIds.ROUTE_SOURCE
+        private const val ROUTE_NEAR_SOURCE = MapIds.ROUTE_NEAR_SOURCE
+        private const val ROUTE_FAR_SOURCE = MapIds.ROUTE_FAR_SOURCE
         private const val ALT_SOURCE = MapIds.ALT_SOURCE
         private const val ALT_LAYER = MapIds.ALT_LAYER
         private const val ROUTE_CASING = MapIds.ROUTE_CASING
+        private const val ROUTE_CASING_FAR = MapIds.ROUTE_CASING_FAR
         private const val ROUTE_LAYER = MapIds.ROUTE_LAYER
-        private const val ROUTE_DONE_SOURCE = MapIds.ROUTE_DONE_SOURCE
-        private const val ROUTE_DONE_LAYER = MapIds.ROUTE_DONE_LAYER
-        private const val PUCK_SOURCE = MapIds.PUCK_SOURCE
+        private const val ROUTE_LAYER_FAR = MapIds.ROUTE_LAYER_FAR
         private const val PUCK_LAYER = MapIds.PUCK_LAYER
         private const val PUCK_ICON = MapIds.PUCK_ICON
         private const val PUCK_DOT_ICON = MapIds.PUCK_DOT_ICON
         private const val CAM_SOURCE = MapIds.CAM_SOURCE
         private const val CAM_LAYER = MapIds.CAM_LAYER
         private const val CAM_ICON = MapIds.CAM_ICON
-        // The travelled-route layer is a second line over the route, not a
-        // gradient on it. MapLibre's `lineGradient` replaces `lineColor`
-        // outright and needs `lineMetrics` on a source holding a single
-        // feature -- and the route line is neither: it is one feature per run
-        // of equal traffic level, coloured per feature. A gradient would have
-        // meant giving up the traffic colouring to show how far you had got,
-        // which is a bad trade. Two layers keep both.
-        //
-        // These two belong in MapIds with the rest, and the uniqueness test
-        // there does not cover them until they are moved.
-        /** Dim warm grey: read as "behind you" without competing with the amber. */
-        private const val ROUTE_DONE_COLOR = "#5E5648"
         /** Cap the drawn polyline; a full geometry can be many thousands of points. */
         private const val MAX_POLY_POINTS = 1500
 
         /**
-         * Rebuild the travelled line only after moving this far, metres.
-         *
-         * It is rebuilt from `alongM`, which advances every frame, and each
-         * rebuild is a GeoJSON parse plus a source upload on the main thread.
-         * Two metres is well under the width the line is drawn at, so nothing
-         * visible is lost, and at 100 km/h it is a redraw about fourteen times
-         * a second rather than thirty.
+         * The route line starts under the arrow, Waze-style: nothing is drawn
+         * behind the car. The first [NEAR_WINDOW_M] or so ahead are one
+         * full-resolution source, rebuilt from the frame loop; the rest is a
+         * second, thinned source whose start moves on in [FAR_STEP_M] steps,
+         * so it is rebuilt every 500 m rather than every frame. The near piece
+         * ends exactly where the far one starts. See RouteLine.
          */
-        const val TRAVELLED_EPSILON_M = 2.0
-        /** Same reasoning as MAX_POLY_POINTS, for the part already driven. */
-        private const val TRAVELLED_MAX_POINTS = 300
+        const val NEAR_WINDOW_M = 2000.0
+        const val FAR_STEP_M = 500.0
+
+        /**
+         * Rebuild the near piece at most this often, ns (~15 Hz), and only
+         * after the arrow has moved this far. The cut sits under the arrow,
+         * which covers a couple of metres of it at any nav zoom.
+         */
+        const val ROUTE_NEAR_MIN_NS = 66_000_000L
+        const val ROUTE_NEAR_EPSILON_M = 0.5
 
         /** No `$IMU` for this long and the HUD's sensor is treated as gone. */
         private const val IMU_TIMEOUT_MS = 1500L
 
         /**
-         * Stop moving the marker once the fix is this old.
+         * A fix older than this is gone, and the marker coasts.
          *
          * Three seconds is three missed fixes at 1 Hz: long enough that a
-         * single dropped one does not visibly stall the marker, short enough
-         * that pulling into a multi-storey stops it before it has invented
-         * much. Only used for the unsnapped marker -- see Prefs.snapToRoad.
+         * single dropped one is still extrapolated through, short enough that
+         * a tunnel switches to running on the car's speed promptly. Until then
+         * the marker is extrapolated from the fix continuously -- see
+         * PuckMotion.
          */
         private const val FIX_HOLD_MS = 3000L
 
         /**
          * How long to keep the marker moving on nothing but the car's speed.
          *
-         * Freezing after FIX_HOLD_MS is the honest answer in a car park. It is
+         * Freezing when the fix goes is the honest answer in a car park. It is
          * the wrong one in a tunnel, where the car is demonstrably still doing
          * 80 and the driver still needs to know which exit is coming. So the
          * marker coasts instead, and the two numbers differ because the two
@@ -250,37 +256,16 @@ class MapActivity : AppCompatActivity() {
          * - on a route there is a line to run along, so the only unknown is
          *   how far -- three minutes covers the Mont Blanc tunnel and most of
          *   what Europe has under a mountain;
-         * - free driving there is no line, only the last heading, so every
-         *   bend is error that never comes back. Thirty seconds is an
-         *   underpass or a covered junction, and past that the marker has
-         *   invented enough.
+         * - free driving there is at best the last matched road, and past its
+         *   end only the last heading, so every bend is error that never
+         *   comes back. Thirty seconds is an underpass or a covered junction,
+         *   and past that the marker has invented enough.
+         *
+         * Catching up afterwards, and the 300 m past which the marker simply
+         * jumps, live in PuckMotion.
          */
         const val COAST_ON_ROUTE_MS = 180_000L
         const val COAST_FREE_MS = 30_000L
-
-        /**
-         * Time constant for easing back onto the fix after coasting, seconds.
-         *
-         * Reacquisition is a step, not a drift: the receiver comes back with
-         * a position that can be a couple of hundred metres from where the
-         * marker has coasted to. Snapping there is a teleport and looks like a
-         * fault. This is deliberately faster than the 0.5-0.6 s used for
-         * ordinary GPS noise -- the gap is real and known, so the only thing
-         * the easing is buying is that the eye can follow it.
-         */
-        const val CATCHUP_TAU_S = 0.35
-
-        /**
-         * Past this gap, stop easing and place the marker, metres.
-         *
-         * Three hundred metres of easing at the constant above takes about a
-         * second, which is the most that still reads as motion rather than as
-         * the map being wrong. Beyond it -- a long tunnel, a ferry, a cold
-         * start next to a stale marker -- there is no line to draw between the
-         * two positions that means anything, so the marker simply appears
-         * where the car is.
-         */
-        const val CATCHUP_SNAP_M = 300.0
     }
 
     private lateinit var mapView: MapView
@@ -333,6 +318,9 @@ class MapActivity : AppCompatActivity() {
     private var drawnRoute: Route? = null
     private var drawnCameras: List<SpeedCamera> = emptyList()
     private var following = true
+    /** A pinch / two-finger tilt is in progress: the frame loop leaves the camera alone. */
+    private var scaling = false
+    private var shoving = false
     private var voiceOn = true
 
     // ---- the map is a moving map whether or not a route is running ---------
@@ -353,7 +341,7 @@ class MapActivity : AppCompatActivity() {
     private var seededFromParked = false
 
     /** See Prefs.snapToRoad. Read on resume; this loop runs at 30 Hz. */
-    private var snapToRoad = false
+    private var snapToRoad = true
     private var sensors: SensorManager? = null
     /**
      * Gravity direction in device axes; Android reports it pointing up.
@@ -417,9 +405,13 @@ class MapActivity : AppCompatActivity() {
 
     /** Smoothed drawing state, so the marker glides instead of stepping. */
     private var puckAlong = Double.NaN
-    private var puckLat = Double.NaN
-    private var puckLon = Double.NaN
     private var puckBearing = Double.NaN
+    private val routeMotion = PuckMotion(COAST_ON_ROUTE_MS / 1000.0)
+    private val freeMotion = FreeDriveMotion(COAST_FREE_MS / 1000.0, FreeTracker.SNAP_TRUST_M)
+    /** The route [routeMotion]'s distances belong to. */
+    private var motionRoute: Route? = null
+    /** The last matched road, kept for coasting after the service drops it. */
+    private var coastRoad: Array<DoubleArray>? = null
 
     private val amber = Color.parseColor("#FF9D00")
     private val amberDim = Color.parseColor("#C07200")
@@ -546,25 +538,25 @@ class MapActivity : AppCompatActivity() {
         }
         findViewById<ImageView>(R.id.routePickerClose).setOnClickListener { hideRoutePicker() }
 
-        // Any finger on the map drops follow mode immediately. The camera-move
-        // listener alone is not reliable while moveCamera runs every frame.
-        mapView.setOnTouchListener { _, ev ->
-            if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN && following) {
-                following = false
-                updateFollowButton()
-            }
-            false
-        }
-
         voiceOn = Prefs.voice(this)
         HudService.voiceEnabled = voiceOn
         updateFollowButton()
         updateVoiceButton()
 
-        // Cap the render thread rather than letting a weak head-unit GPU try to
-        // draw as fast as it can and cook itself. MapRenderer implements this
-        // by sleeping after each native render, so it costs nothing.
-        runCatching { mapView.setMaximumFps(30) }
+        // Cap the render thread at the panel's own rate, and never above 60.
+        //
+        // It was a flat 30. MapRenderer implements the cap by sleeping after
+        // each render until 1/fps has passed, and the camera moves every
+        // vsync -- so on a 60 Hz head unit the renderer took every other
+        // update, and which one depended on how long the sleep ran: the map
+        // advanced two frames, then one, then two. That beat is the stutter.
+        // Matching the panel leaves vsync as the only clock; capping at 60
+        // still stops a 90/120 Hz phone rendering twice as often as it needs.
+        val panelHz = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display?.refreshRate
+            else @Suppress("DEPRECATION") windowManager.defaultDisplay.refreshRate
+        }.getOrNull() ?: 60f
+        runCatching { mapView.setMaximumFps(Math.round(panelHz).coerceIn(30, 60)) }
         mapView.getMapAsync { m ->
             map = m
             // The OpenFreeMap source is capped at zoom 14 and navigation sits
@@ -575,7 +567,8 @@ class MapActivity : AppCompatActivity() {
             // a slow SoC. One level up is the one that actually helps.
             runCatching { m.prefetchZoomDelta = 1 }
             m.uiSettings.apply {
-                isRotateGesturesEnabled = true
+                // Only once follow mode is off; see the gesture listeners below.
+                isRotateGesturesEnabled = !following
                 isTiltGesturesEnabled = true
                 isCompassEnabled = false
                 isAttributionEnabled = true
@@ -592,20 +585,56 @@ class MapActivity : AppCompatActivity() {
             // is designed for.
             m.setMinPitchPreference(NavCamera.TILT_MIN)
             m.setMaxPitchPreference(NavCamera.TILT_MAX)
-            // Any manual gesture drops out of follow mode, as every nav app does.
-            m.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE &&
-                    following) {
-                    following = false
-                    updateFollowButton()
+            // Follow mode, the Waze way. Any finger on the map used to drop it
+            // -- a pinch to see a little further, a tap near the arrow -- and
+            // then the map sat still while the car drove off it. Now only a
+            // one-finger pan leaves follow mode. A pinch or a two-finger tilt
+            // while following adjusts the view and is kept (NavCamera's user
+            // zoom offset and tilt); the frame loop stays off the camera while
+            // one is in progress so the two do not fight. Rotation is off
+            // while following, since the map turns with the car.
+            m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
+                override fun onMoveBegin(d: org.maplibre.android.gestures.MoveGestureDetector) {
+                    if (d.pointersCount == 1 && following) {
+                        following = false
+                        updateFollowButton()
+                    }
                 }
-            }
+                override fun onMove(d: org.maplibre.android.gestures.MoveGestureDetector) {}
+                override fun onMoveEnd(d: org.maplibre.android.gestures.MoveGestureDetector) {}
+            })
+            m.addOnShoveListener(object : MapLibreMap.OnShoveListener {
+                override fun onShoveBegin(d: org.maplibre.android.gestures.ShoveGestureDetector) {
+                    shoving = true
+                }
+                override fun onShove(d: org.maplibre.android.gestures.ShoveGestureDetector) {}
+                override fun onShoveEnd(d: org.maplibre.android.gestures.ShoveGestureDetector) {
+                    shoving = false
+                    if (following) {
+                        navCamera.setUserTilt(m.cameraPosition.tilt)
+                        forgetDrawnCamera()
+                    }
+                }
+            })
+            m.addOnScaleListener(object : MapLibreMap.OnScaleListener {
+                override fun onScaleBegin(d: org.maplibre.android.gestures.StandardScaleGestureDetector) {
+                    scaling = true
+                }
+                override fun onScale(d: org.maplibre.android.gestures.StandardScaleGestureDetector) {}
+                override fun onScaleEnd(d: org.maplibre.android.gestures.StandardScaleGestureDetector) {
+                    scaling = false
+                    if (following) {
+                        navCamera.setUserZoom(m.cameraPosition.zoom)
+                        forgetDrawnCamera()
+                    }
+                }
+            })
             val json = resources.openRawResource(R.raw.style_e60)
                 .bufferedReader().use { it.readText() }
             m.setStyle(Style.Builder().fromJson(json)) { s ->
                 style = s
                 installLayers(s)
-                // A reloaded style has a brand new puck source with nothing in
+                // A reloaded style has a brand new puck layer with nothing in
                 // it, so what we think is drawn is not drawn.
                 forgetDrawnCamera()
                 drawnRoute = null
@@ -714,6 +743,9 @@ class MapActivity : AppCompatActivity() {
         snapToRoad = Prefs.snapToRoad(this)
         lastCamFrameMs = 0L
         lastFrameNanos = 0L
+        // A gesture cut off by the pause never delivered its end.
+        scaling = false
+        shoving = false
         // A window that started before a five-minute pause would publish
         // "vsync 0 Hz" on the first frame back, which reads as a hang.
         frameWindowStartNs = 0L
@@ -891,13 +923,7 @@ class MapActivity : AppCompatActivity() {
      */
     private fun clearOurStyle(s: Style) {
         for (id in MapIds.layers) runCatching { s.removeLayer(id) }
-        runCatching { s.removeLayer(ROUTE_DONE_LAYER) }
         for (id in MapIds.sources) runCatching { s.removeSource(id) }
-        // Named separately only because these two ids have not been moved into
-        // MapIds yet. Left out, a style reload would leave the old travelled
-        // layer standing where it was and stack the new route line *over* it,
-        // so the part already driven would stop showing.
-        runCatching { s.removeSource(ROUTE_DONE_SOURCE) }
     }
 
     /**
@@ -948,67 +974,59 @@ class MapActivity : AppCompatActivity() {
                 PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
             )
         )
-        addSourceSafely(s, GeoJsonSource(ROUTE_SOURCE))
-        addLayerSafely(s,
-            // The casing. Near-black rather than the brown it used to be:
-            // two things separate a route from a road, colour and an edge.
-            // The map's roads are warm grey now, which gives the colour; this
-            // gives the edge, so the amber sits *on* the map instead of being
-            // one more line in it, and it still reads where the route runs
-            // along a pale road or over a junction full of them.
-            LineLayer(ROUTE_CASING, ROUTE_SOURCE).withProperties(
-                PropertyFactory.lineColor(Color.parseColor("#08080A")),
-                PropertyFactory.lineWidth(
-                    Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
-                        Expression.stop(10f, 7f), Expression.stop(18f, 26f))),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+        // The route ahead, in two sources (see NEAR_WINDOW_M), stacked casing
+        // far, casing near, line far, line near: both casings under both lines,
+        // so where the pieces meet no casing is painted across the amber.
+        // Nothing is drawn behind the car, which is also what tells the two
+        // passes of a route that doubles back apart.
+        addSourceSafely(s, GeoJsonSource(ROUTE_FAR_SOURCE))
+        addSourceSafely(s, GeoJsonSource(ROUTE_NEAR_SOURCE))
+        for ((id, src) in listOf(ROUTE_CASING_FAR to ROUTE_FAR_SOURCE,
+                                 ROUTE_CASING to ROUTE_NEAR_SOURCE)) {
+            addLayerSafely(s,
+                // The casing. Near-black rather than the brown it used to be:
+                // two things separate a route from a road, colour and an edge.
+                // The map's roads are warm grey now, which gives the colour;
+                // this gives the edge, so the amber sits *on* the map instead
+                // of being one more line in it, and it still reads where the
+                // route runs along a pale road or over a junction full of them.
+                LineLayer(id, src).withProperties(
+                    PropertyFactory.lineColor(Color.parseColor("#08080A")),
+                    PropertyFactory.lineWidth(
+                        Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
+                            Expression.stop(10f, 7f), Expression.stop(18f, 26f))),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                )
             )
-        )
+        }
         // The line is coloured by live traffic, the way every nav app has done
         // it since TomTom put it on a windscreen: amber running freely, through
         // orange and red, to a dark red for a stretch the provider reports as
         // closed. The levels come from Mapbox's congestion and closure
         // annotations, which is also how roadworks show up.
-        addLayerSafely(s,
-            LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
-                PropertyFactory.lineColor(
-                    Expression.step(
-                        Expression.toNumber(Expression.get("level")),
-                        Expression.color(Color.parseColor("#FFB121")),
-                        Expression.stop(2, Expression.color(Color.parseColor("#FF6A00"))),
-                        Expression.stop(3, Expression.color(red)),
-                        Expression.stop(4, Expression.color(Color.parseColor("#B31200"))),
-                        Expression.stop(5, Expression.color(Color.parseColor("#6E0A00")))
-                    )
-                ),
-                PropertyFactory.lineWidth(
-                    Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
-                        Expression.stop(10f, 5f), Expression.stop(18f, 20f))),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+        for ((id, src) in listOf(ROUTE_LAYER_FAR to ROUTE_FAR_SOURCE,
+                                 ROUTE_LAYER to ROUTE_NEAR_SOURCE)) {
+            addLayerSafely(s,
+                LineLayer(id, src).withProperties(
+                    PropertyFactory.lineColor(
+                        Expression.step(
+                            Expression.toNumber(Expression.get("level")),
+                            Expression.color(Color.parseColor("#FFB121")),
+                            Expression.stop(2, Expression.color(Color.parseColor("#FF6A00"))),
+                            Expression.stop(3, Expression.color(red)),
+                            Expression.stop(4, Expression.color(Color.parseColor("#B31200"))),
+                            Expression.stop(5, Expression.color(Color.parseColor("#6E0A00")))
+                        )
+                    ),
+                    PropertyFactory.lineWidth(
+                        Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
+                            Expression.stop(10f, 5f), Expression.stop(18f, 20f))),
+                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                    PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+                )
             )
-        )
-
-        // The part already driven, over the route line and under everything
-        // else. Every nav app dims the road behind you, and the reason is not
-        // decoration: on a route that doubles back -- a motorway and its
-        // service road, a ring road taken twice -- two amber lines an inch
-        // apart tell you nothing about which one you are on, and one amber and
-        // one grey tell you immediately.
-        addSourceSafely(s, GeoJsonSource(ROUTE_DONE_SOURCE))
-        addLayerSafely(s,
-            // Same width ramp as the route line, so it covers it exactly
-            // rather than leaving an amber fringe along one edge.
-            LineLayer(ROUTE_DONE_LAYER, ROUTE_DONE_SOURCE).withProperties(
-                PropertyFactory.lineColor(Color.parseColor(ROUTE_DONE_COLOR)),
-                PropertyFactory.lineWidth(
-                    Expression.interpolate(Expression.exponential(1.5f), Expression.zoom(),
-                        Expression.stop(10f, 5f), Expression.stop(18f, 20f))),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
-            )
-        )
+        }
 
         runCatching { s.addImage(CAM_ICON, scaledToDp(cameraBitmap(), 30)) }
         addSourceSafely(s, GeoJsonSource(CAM_SOURCE))
@@ -1023,38 +1041,56 @@ class MapActivity : AppCompatActivity() {
 
         runCatching { s.addImage(PUCK_DOT_ICON, scaledToDp(puckDotBitmap(), 34)) }
         runCatching { s.addImage(PUCK_ICON, scaledToDp(puckBitmap(), 54)) }
-        addSourceSafely(s, GeoJsonSource(PUCK_SOURCE))
-        addLayerSafely(s,
-            SymbolLayer(PUCK_LAYER, PUCK_SOURCE).withProperties(
-                PropertyFactory.iconImage(
-                    org.maplibre.android.style.expressions.Expression.get("icon")),
-                PropertyFactory.iconAllowOverlap(true),
-                PropertyFactory.iconIgnorePlacement(true),
-                // Rotation follows the map, so the arrow points along the road.
-                PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
-                // ...and so does *pitch*, so the marker lies on the road
-                // surface rather than standing up to the camera.
-                //
-                // It used to be a viewport-pitched billboard, and on a tilted
-                // map that is subtly wrong in a way that is hard to name until
-                // you see it beside Waze: the marker is painted in screen
-                // space, so as the pitch changes it appears to swing, and it
-                // never looks like it is *on* the road -- it looks like a
-                // sticker on the windscreen that happens to be over the road.
-                // Waze, Google Maps and every built-in car navigation lay the
-                // arrow flat on the ground plane, and that is what makes it
-                // read as part of the map.
-                //
-                // The cost of doing it this way is foreshortening, which the
-                // bitmap compensates for: see puckBitmap().
-                PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-                PropertyFactory.iconRotate(org.maplibre.android.style.expressions.Expression.get("bearing")),
-                PropertyFactory.iconSize(1.0f)
+        // Added last, so it stays on top of everything above.
+        //
+        // The indicator layer draws its image flat on the ground plane, the way
+        // Waze and every built-in car navigation lay the arrow, which is what
+        // the old map-pitched symbol did too -- so the pre-stretched bitmap
+        // (see puckBitmap) still comes out the right shape. 0.9 is the
+        // perspective compensation MapLibre's own LocationComponent uses.
+        puckLayer = newPuckLayer()?.also { layer ->
+            layer.setProperties(
+                LayoutPropertyValue("bearing-image", PUCK_DOT_ICON),
+                PaintPropertyValue("perspective-compensation", 0.9f),
+                PaintPropertyValue("image-tilt-displacement", 0f),
+                PaintPropertyValue("bearing-image-size", 1f),
+                PaintPropertyValue("accuracy-radius", 0f)
             )
-        )
+            addLayerSafely(s, layer)
+        }
+        puckShownDot = null
 
         verifyStyle(s)
     }
+
+    /**
+     * The car marker, as a LocationIndicatorLayer.
+     *
+     * Its position is a layer property, which MapLibre applies in the same
+     * render as the moveCamera beside it. The old puck was a GeoJSON source
+     * updated every frame, and a GeoJSON update is parsed on a worker thread
+     * and lands a frame or more later -- so the arrow trailed the map and
+     * shimmered against it.
+     *
+     * The class is package-private in MapLibre 11.8 (LocationComponent is its
+     * only intended user), hence the reflection; minify is off, so the name
+     * survives into the APK. Null, logged, if that ever stops being true.
+     */
+    private fun newPuckLayer(): org.maplibre.android.style.layers.Layer? = runCatching {
+        val cls = Class.forName("org.maplibre.android.location.LocationIndicatorLayer")
+        val layer = cls.getDeclaredConstructor(String::class.java)
+            .apply { isAccessible = true }
+            .newInstance(PUCK_LAYER) as org.maplibre.android.style.layers.Layer
+        // No easing: the frame loop already smooths, and the style's default
+        // transition would put the arrow 300 ms behind the camera.
+        val none = TransitionOptions(0, 0)
+        for (setter in listOf("setLocationTransition", "setBearingTransition")) {
+            cls.getDeclaredMethod(setter, TransitionOptions::class.java)
+                .apply { isAccessible = true }
+                .invoke(layer, none)
+        }
+        layer
+    }.onFailure { android.util.Log.e(TAG, "could not create the puck layer", it) }.getOrNull()
 
     /** MapLibre treats bitmaps as raw pixels, so scale by screen density. */
     private fun scaledToDp(src: android.graphics.Bitmap, dp: Int): android.graphics.Bitmap {
@@ -1218,13 +1254,14 @@ class MapActivity : AppCompatActivity() {
         val route = HudService.currentRoute
         val s = style
 
-        if (s != null && route !== drawnRoute) {
-            drawRoute(s, route); drawnRoute = route
-            // A new route is a new set of distances, so the throttle below has
-            // nothing to compare against any more.
-            travelledDrawnM = -1.0
+        // Also how the line is cleared when the route ends: route is null.
+        if (s != null && route !== drawnRoute) { drawRoute(s, route); drawnRoute = route }
+        // Keep the next stretch of the route downloaded. See OfflineRoutes.
+        runCatching {
+            val off = offlineRoutes
+                ?: com.mihai.navhud.map.OfflineRoutes(applicationContext).also { offlineRoutes = it }
+            off.update(route, HudService.alongM, SystemClock.elapsedRealtime())
         }
-        if (s != null) drawTravelled(s, route, HudService.alongM)
         if (s != null) {
             // Not in zone mode. Everything else about a danger zone is careful
             // not to publish a position -- the distance is blurred, the text
@@ -1833,19 +1870,14 @@ class MapActivity : AppCompatActivity() {
      * which is main-thread work the fastest device has the least reason to
      * spend. Vsync still decides *when*; this only decides how often.
      */
+    // There used to be a skipNextFrame here, dropping the frame after any that
+    // overran its vsync interval so the loop could "catch up". Choreographer
+    // has no backlog to catch up on: a callback that overruns just misses the
+    // vsyncs it overlapped, and the next one arrives at the first vsync after
+    // it returns. The renderer coalesces camera updates the same way. So the
+    // skip bought nothing and cost a second dropped frame after every slow
+    // one -- a hitch doubled -- and it is gone.
     private var lastFrameNanos = 0L
-
-    /**
-     * Give the renderer a whole vsync back after a frame that overran.
-     *
-     * Without it, a frame that takes longer than its vsync interval pushes the
-     * next one late, which pushes the one after that later still: the loop
-     * falls behind and stays behind, because it never stops asking. Skipping
-     * one deliberately is the difference between dropping a frame and dropping
-     * a second's worth. The camera's own smoothing is time-based, so a skipped
-     * frame costs nothing but the frame -- the next one catches up by dt.
-     */
-    private var skipNextFrame = false
 
     private val frameCallback = object : android.view.Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -1865,29 +1897,13 @@ class MapActivity : AppCompatActivity() {
                 frameWindowStartNs = frameTimeNanos
             }
             if (lastFrameNanos != 0L && frameTimeNanos - lastFrameNanos < FRAME_MIN_NS) return
-            if (skipNextFrame) {
-                skipNextFrame = false
-                // Still count this vsync as the last one acted on, or the gate
-                // above measures the skipped frame's time into the next one.
-                lastFrameNanos = frameTimeNanos
-                return
-            }
-            // The budget is the interval we were actually given, not a nominal
-            // 60 Hz: on a 120 Hz panel 8 ms is an overrun and on a 48 Hz one it
-            // is not. The fallback is a single 60 Hz vsync, for the first frame
-            // of a run, where there is no previous one to measure against.
-            val budgetNs = if (lastFrameNanos != 0L) frameTimeNanos - lastFrameNanos
-                           else 16_666_666L
             lastFrameNanos = frameTimeNanos
             val workStart = System.nanoTime()
-            // Logged, and only once. This runs thirty times a second; an
-            // unguarded throw here freezes the marker and the camera for the
-            // rest of the drive, and swallowing it silently means there is
-            // nothing to find afterwards. Once is enough to know.
+            // Logged, and only once. This runs every vsync; an unguarded throw
+            // here freezes the marker and the camera for the rest of the
+            // drive, and swallowing it silently means there is nothing to find
+            // afterwards. Once is enough to know.
             val outcome = runCatching { cameraFrame() }
-            // Measured before the logging below, so the one frame that fails is
-            // judged on the work it did rather than on writing the log line.
-            skipNextFrame = System.nanoTime() - workStart > budgetNs
             outcome.onFailure {
                 if (!cameraLoopFailed) {
                     cameraLoopFailed = true
@@ -1921,7 +1937,9 @@ class MapActivity : AppCompatActivity() {
             val dtFix = if (lastFusedFixNs == 0L) 1.0
                         else ((fixNs - lastFusedFixNs) / 1e9).coerceIn(0.05, 5.0)
             fusion.setClock(android.os.SystemClock.elapsedRealtime())
-            fusion.onFix(gpsBrg, speed, dtFix)
+            // The car's speed when the bus reports one, so "moving" and
+            // "stationary" mean the same thing here as everywhere else.
+            fusion.onFix(gpsBrg, HudService.carSpeedMps ?: speed, dtFix)
             updateDeclination(loc.latitude, loc.longitude, loc.altitude)
             learnMountingOffset(gpsBrg, speed)
             lastFusedFixNs = fixNs
@@ -2012,17 +2030,8 @@ class MapActivity : AppCompatActivity() {
             HudService.routeInitialBearing?.let { navCamera.faceBearing(it); forgetDrawnCamera() }
         }
 
-        val ageS = ((now - fixNs / 1_000_000L).coerceIn(0L, 1500L)) / 1000.0
         val route = HudService.currentRoute
-        // Both snaps are off by default now -- the marker goes where the fix
-        // says, not where the road is. See Prefs.snapToRoad.
-        //
-        // And it only moves while there IS a fix. Drawing an unsnapped marker
-        // from a stale or absent position is the one case where snapping was
-        // genuinely covering for something: the road line held the marker
-        // still while the receiver wandered. Without it, the marker has to
-        // freeze on its own, or it drifts around the car park on multipath
-        // and looks like the car is moving when it is parked.
+        // Both snaps are on by default again (1.27) -- see Prefs.snapToRoad.
         val snapWanted = snapToRoad
         val onRouteSnap = snapWanted && route != null && HudService.snapTrusted
         // Free drive snaps too, to the road network rather than to a route
@@ -2035,124 +2044,53 @@ class MapActivity : AppCompatActivity() {
         var lon: Double
         var roadBrg: Double? = null
 
+        // The car's own speed in preference to the GPS one, because in a
+        // tunnel the GPS speed is as stale as the position it came with, while
+        // the bus keeps reporting. Falls back to the fix's speed on a phone,
+        // where there is no bus -- and with the fix gone that is its last one.
+        val refSpeed = HudService.carSpeedMps ?: speed
+        val fixAgeMs = (now - fixNs / 1_000_000L).coerceAtLeast(0L)
+
         if (onRouteSnap && route != null) {
             // Move *along the route*, not across open ground. This is the fix
             // for the marker sitting beside the road: the position drawn is a
             // point on the road geometry by construction, so a fix that lands
             // in the building next door cannot move it off the tarmac.
-            val alongAge = now - HudService.alongAtMs
-            // The car's own speed in preference to the GPS one, because in a
-            // tunnel the GPS speed is as stale as the position it came with,
-            // while the bus keeps reporting. Falls back to the fix's speed on
-            // a phone, where there is no bus.
-            val coastSpeed = HudService.carSpeedMps ?: speed
-            if (alongAge > FIX_HOLD_MS && alongAge < COAST_ON_ROUTE_MS && coastSpeed > 1.0) {
-                // Coasting. There is a route line to run along, so this is not
-                // guesswork about direction -- only about distance, and the
-                // distance comes from the car. The marker keeps advancing
-                // through the tunnel and the maneuver countdown with it.
-                if (puckAlong.isNaN()) puckAlong = HudService.alongM
-                puckAlong += coastSpeed * dt
-            } else {
-                var target = HudService.alongM +
-                    speed * (alongAge.coerceIn(0L, 1500L) / 1000.0)
-                if (!puckAlong.isNaN() &&
-                    kotlin.math.abs(target - puckAlong) <= CATCHUP_SNAP_M) {
-                    val predicted = puckAlong + speed * dt
-                    // Ordinary GPS noise is a few metres and gets the gentle
-                    // constant; anything larger is the tunnel case -- a real,
-                    // known gap -- and is worth closing faster.
-                    val tau = if (kotlin.math.abs(target - puckAlong) <= 60.0) 0.5
-                              else CATCHUP_TAU_S
-                    target = predicted + (target - predicted) * (1.0 - kotlin.math.exp(-dt / tau))
-                }
-                puckAlong = target
-            }
+            //
+            // A new route is a new set of distances; carrying the old drawn
+            // position over would leave the marker waiting kilometres ahead.
+            if (route !== motionRoute) { routeMotion.reset(); motionRoute = route }
+            val alongAgeMs = (now - HudService.alongAtMs).coerceAtLeast(0L)
+            // Stale either way means a tunnel: coast along the line on the
+            // car's speed. See PuckMotion.
+            puckAlong = routeMotion.step(dt, HudService.alongM, alongAgeMs / 1000.0, refSpeed,
+                fixAvailable = alongAgeMs <= FIX_HOLD_MS && fixAgeMs <= FIX_HOLD_MS)
             val p = Geo.pointAlong(route.pts, route.cum, puckAlong)
             lat = p[0]; lon = p[1]
             roadBrg = Geo.bearingAlong(route.pts, route.cum, puckAlong)
-            puckLat = lat; puckLon = lon
+            // Free motion picks up from here if the car leaves the line.
+            freeMotion.reset(lat, lon)
         } else {
-            // Free driving, or off the route: dead-reckon from the raw fix and
-            // ease onto it, so a jumpy fix does not yank the marker.
+            // Free driving, or off the route: the same rubber band, run along
+            // the heading -- or along the matched road, which is where the
+            // marker is put back last. See FreeDriveMotion.
+            routeMotion.reset()
             puckAlong = Double.NaN
-            val h = fusion.heading ?: gpsBrg
-            // ...but if the road matcher found a road under us, draw on it.
-            var tLat = if (freeSnap) HudService.snapLat else loc.latitude
-            var tLon = if (freeSnap) HudService.snapLon else loc.longitude
+            val live = fixAgeMs <= FIX_HOLD_MS
             if (freeSnap) roadBrg = HudService.roadBearing
-            if (h != null && speed > 1.0) {
-                val p = Geo.destination(tLat, tLon, h, speed * ageS)
-                tLat = p[0]; tLon = p[1]
+            // The service forgets the road a few seconds into an underpass,
+            // which is exactly when the coast wants it; so keep our own copy.
+            val road = when {
+                freeSnap -> HudService.roadPts.also { coastRoad = it }
+                live -> { coastRoad = null; null }
+                else -> coastRoad
             }
-            // No usable fix: coast for a while, then hold. Never ease toward
-            // a stale or invented target.
-            //
-            // The easing mattered less when the marker was snapped -- the road
-            // line pinned it while the receiver wandered. Unsnapped, a parked
-            // car on multipath walks its own marker around the car park, so
-            // the old answer was to freeze the moment the fix went stale.
-            // That is right in a car park and wrong in an underpass, where the
-            // car is still moving and there is a speed on the bus that says
-            // so. So: dead-reckon while the car is demonstrably moving and the
-            // reckoning is still young, and freeze after that rather than
-            // drift along a heading that stopped meaning anything at the first
-            // bend. The status line already says WAITING FOR GPS either way.
-            val fixAgeMs = now - fixNs / 1_000_000L
-            val stale = fixAgeMs > FIX_HOLD_MS && !puckLat.isNaN()
-            // As on the route: the car's speed outlives the fix that would
-            // otherwise be carrying it.
-            val coastSpeed = HudService.carSpeedMps ?: speed
-            if (stale && fixAgeMs < COAST_FREE_MS && coastSpeed > 1.0 && h != null) {
-                // Coasting, off-route: dead reckoning with no line to follow,
-                // so every bend is error that never comes back. Worth doing
-                // anyway for the underpass and the covered junction, and
-                // bounded hard because of the bend -- see COAST_FREE_MS.
-                val step = Geo.destination(puckLat, puckLon, h, coastSpeed * dt)
-                puckLat = step[0]; puckLon = step[1]
-            } else if (stale) {
-                // Coasted as far as it is honest to, or the car has stopped,
-                // or there is no heading to coast along. Hold: falls through
-                // to `lat = puckLat` below, so the marker stops where it was.
-            } else if (puckLat.isNaN() ||
-                Geo.haversine(puckLat, puckLon, tLat, tLon) > CATCHUP_SNAP_M) {
-                puckLat = tLat; puckLon = tLon
-            } else {
-                if (h != null && speed > 1.0) {
-                    val step = Geo.destination(puckLat, puckLon, h, speed * dt)
-                    puckLat = step[0]; puckLon = step[1]
-                }
-                // Same split as on the route: the gentle constant for GPS
-                // noise, the faster one for closing a real gap after a tunnel.
-                val gap = Geo.haversine(puckLat, puckLon, tLat, tLon)
-                val a = 1.0 - kotlin.math.exp(-dt / if (gap <= 60.0) 0.6 else CATCHUP_TAU_S)
-                puckLat += (tLat - puckLat) * a
-                puckLon += (tLon - puckLon) * a
-            }
-
-            // Put it back on the road, *last*.
-            //
-            // Snapping at the moment of the fix and then dead-reckoning and
-            // easing on top of it undoes the snap: a second of travel along the
-            // heading, plus a smoothing lag, is ten or twenty metres of drift,
-            // and on a bend all of it is sideways. The result was a marker
-            // sitting in the gardens beside a road whose name the app was
-            // confidently printing at the bottom of the screen. Projecting after
-            // all the motion means whatever the dead reckoning does, the marker
-            // ends up on the tarmac.
-            // ...but only while the answer is still honest. `snapWithin`
-            // refuses when the dead-reckoned point has drifted too far from
-            // this road to belong to it, and when the projection has clamped
-            // to an end vertex — OSM splits ways at junctions, so without that
-            // second test the marker pins itself to the junction and sits
-            // there while the car drives into the side street, then jumps.
-            if (freeSnap) {
-                HudService.roadPts?.let { pts ->
-                    AreaRoads.snapWithin(pts, puckLat, puckLon, FreeTracker.SNAP_TRUST_M)
-                        ?.let { onRoad -> puckLat = onRoad[0]; puckLon = onRoad[1] }
-                }
-            }
-            lat = puckLat; lon = puckLon
+            val p = freeMotion.step(dt,
+                if (freeSnap) HudService.snapLat else loc.latitude,
+                if (freeSnap) HudService.snapLon else loc.longitude,
+                fixAgeMs / 1000.0, refSpeed, live,
+                fusion.heading ?: gpsBrg ?: roadBrg, road)
+            lat = p[0]; lon = p[1]
         }
 
         // ---- which way it points --------------------------------------------
@@ -2171,8 +2109,13 @@ class MapActivity : AppCompatActivity() {
         // the wrong one on a driveway: it cannot tell which of the two ways
         // along the road you are facing, and it does not move when you swing
         // the car round into a space. The orientation sensor can and does.
+        //
+        // Moving (over 5 km/h, see HeadingFusion.moving) the fused heading is
+        // the smoothed GPS course alone, and the road bearing wins whenever the
+        // marker is snapped -- for the map and the arrow both.
+        val moving = fusion.moving
         val stopped = speed < HeadingFusion.STATIONARY_MPS
-        val targetHeading = if (snapped && !stopped) (roadBrg ?: fusion.heading ?: gpsBrg)
+        val targetHeading = if (snapped && (moving || !stopped)) (roadBrg ?: fusion.heading ?: gpsBrg)
                             else (fusion.heading ?: roadBrg ?: gpsBrg)
 
         // What the *arrow* points at, which is not always what turns the map.
@@ -2202,23 +2145,26 @@ class MapActivity : AppCompatActivity() {
             compassHeading = fusion.heading,
             mapHeading = targetHeading,
             compassDriving = fusion.usingCompass,
-            mountKnown = learnedThisDrive || Prefs.headingCalibrated(this)
+            mountKnown = learnedThisDrive || Prefs.headingCalibrated(this),
+            moving = moving
         )
         if (arrowHeading != null) {
-            puckBearing = if (puckBearing.isNaN() ||
-                kotlin.math.abs(Geo.signedDelta(arrowHeading, puckBearing)) > 90.0) {
-                arrowHeading
-            } else {
-                Geo.normalizeDeg(
-                    puckBearing + Geo.signedDelta(arrowHeading, puckBearing) *
-                        (1.0 - kotlin.math.exp(-dt / 0.2))
-                )
-            }
+            // Eased, and never faster than NavCamera.MAX_TURN_DPS -- a U-turn
+            // or the first fix after a tunnel swings round instead of
+            // flipping, in step with the map. Only the very first heading is
+            // taken whole.
+            puckBearing = if (puckBearing.isNaN()) arrowHeading
+                          else NavCamera.turnToward(puckBearing, arrowHeading, dt, 0.2)
         }
 
-        updatePuck(style, lat, lon, puckBearing)
+        updatePuck(lat, lon, puckBearing)
+        // The route line starts under the arrow: from the arrow's own distance
+        // while it runs on the line, else from the service's projection.
+        maybeDrawRouteLine(route, if (onRouteSnap) puckAlong else HudService.alongM,
+            System.nanoTime())
         HudService.headingSource = fusion.describe()
-        if (!following) return
+        // A pinch or tilt in progress owns the camera until it ends.
+        if (!following || scaling || shoving) return
 
         val manDist = HudService.lastFrame
             ?.takeIf { it.distToManeuverM > 0 }?.distToManeuverM?.toDouble() ?: -1.0
@@ -2515,18 +2461,18 @@ class MapActivity : AppCompatActivity() {
     private var puckShownLat = Double.NaN
     private var puckShownLon = Double.NaN
     private var puckShownBrg = Double.NaN
+    /** Which image the puck layer holds; null = not set since the style loaded. */
+    private var puckShownDot: Boolean? = null
+    /** The puck layer of the current style. See newPuckLayer. */
+    private var puckLayer: org.maplibre.android.style.layers.Layer? = null
 
-    /** Distance along the route the travelled line was last built for; -1 = none drawn. */
-    private var travelledDrawnM = -1.0
-
-    private fun updatePuck(s: Style?, lat: Double, lon: Double, bearing: Double) {
-        val src = s?.getSourceAs<GeoJsonSource>(PUCK_SOURCE) ?: return
-        // Setting a GeoJSON source marks the map dirty, and MapLibre renders
-        // when dirty -- so re-setting this thirty times a second was, by
-        // itself, enough to keep the GPU redrawing the whole map while the car
-        // was parked at a red light. Both smoothing filters here are
-        // exponential, so they approach their target and never reach it: the
-        // position kept "changing" by nanometres for ever.
+    private fun updatePuck(lat: Double, lon: Double, bearing: Double) {
+        val layer = puckLayer ?: return
+        // Setting a layer property marks the map dirty, and MapLibre renders
+        // when dirty -- so re-setting this every frame was, by itself, enough
+        // to keep the GPU redrawing the whole map while the car was parked at
+        // a red light. Both smoothing filters here approach their target and
+        // never reach it: the position kept "changing" by nanometres for ever.
         val samePlace = !puckShownLat.isNaN() &&
             Geo.haversine(puckShownLat, puckShownLon, lat, lon) < PUCK_EPSILON_M &&
             (bearing.isNaN() == puckShownBrg.isNaN()) &&
@@ -2535,23 +2481,24 @@ class MapActivity : AppCompatActivity() {
         if (samePlace) return
         puckShownLat = lat; puckShownLon = lon; puckShownBrg = bearing
 
-        val f = Feature.fromGeometry(Point.fromLngLat(lon, lat))
         // An arrow is a claim about which way you are facing. Before the first
         // fix there is nothing to base that claim on, and the map used to draw
         // the arrow at zero -- which does not read as "unknown", it reads as
         // "pointing north", stated with complete confidence. A plain dot says
         // the true thing: here you are, direction not known yet. Google Maps
         // does the same, and switches to a chevron the moment it can.
-        f.addStringProperty("icon", if (bearing.isNaN()) PUCK_DOT_ICON else PUCK_ICON)
-        // ICON_ROTATION_ALIGNMENT_MAP means icon-rotate is measured from *map*
-        // north, and the map itself is already turned by the camera bearing --
-        // so what lands on screen is (icon-rotate - camera bearing). Feeding it
-        // "heading - camera bearing" subtracted the rotation twice, which is
-        // why the arrow sat pointing the wrong way and barely moved through a
-        // turn: the two errors very nearly cancelled while driving straight.
-        // The value wanted here is simply the absolute heading.
-        f.addNumberProperty("bearing", if (bearing.isNaN()) 0.0 else Geo.normalizeDeg(bearing))
-        src.setGeoJson(f)
+        val dot = bearing.isNaN()
+        if (dot != puckShownDot) {
+            puckShownDot = dot
+            layer.setProperties(
+                LayoutPropertyValue("bearing-image", if (dot) PUCK_DOT_ICON else PUCK_ICON))
+        }
+        // The bearing is the absolute heading, clockwise from true north; the
+        // layer applies the camera's own rotation itself.
+        layer.setProperties(
+            PaintPropertyValue("location", arrayOf(lat, lon, 0.0)),
+            PaintPropertyValue("bearing", if (dot) 0.0 else Geo.normalizeDeg(bearing))
+        )
     }
 
     /**
@@ -2581,139 +2528,71 @@ class MapActivity : AppCompatActivity() {
         map?.style?.getSourceAs<GeoJsonSource>(ALT_SOURCE)?.setGeoJson(FeatureCollectionEmpty)
     }
 
-    /**
-     * The part of the route already driven, as far as [alongM].
-     *
-     * A second polyline rather than a gradient on the first one. `lineGradient`
-     * would be the obvious way to fade the line behind the car, and it cannot
-     * be used here: it replaces `lineColor` outright, and `lineColor` on the
-     * route line is the live traffic colouring -- amber through red -- which
-     * is worth considerably more than the fade. It also requires `lineMetrics`
-     * on a source holding one feature, and the route source holds one feature
-     * per run of equal traffic level. So: a dimmer line, drawn over the top,
-     * ending exactly where the car is.
-     */
-    private fun drawTravelled(s: Style, route: Route?, alongM: Double) {
-        val src = s.getSourceAs<GeoJsonSource>(ROUTE_DONE_SOURCE) ?: return
-        if (route == null || route.pts.size < 2 || alongM <= 0.0) {
-            // Nothing to dim. Guarded so that with no route running this is
-            // not uploading an empty collection five times a second for ever.
-            if (travelledDrawnM == -1.0) return
-            src.setGeoJson(FeatureCollectionEmpty)
-            travelledDrawnM = -1.0
-            return
-        }
-        if (kotlin.math.abs(alongM - travelledDrawnM) < TRAVELLED_EPSILON_M) return
-        travelledDrawnM = alongM
+    // ---- the route line ----------------------------------------------------
 
-        // Last vertex at or before the car. Binary search rather than a scan:
-        // this runs on the main thread against a polyline that can be tens of
-        // thousands of points on a cross-country route.
-        var lo = 0
-        var hi = route.cum.size - 1
-        while (lo < hi) {
-            val mid = (lo + hi + 1) ushr 1
-            if (route.cum[mid] <= alongM) lo = mid else hi = mid - 1
-        }
-        if (lo < 1) {
-            // Still inside the first segment: there is no polyline to draw yet.
-            src.setGeoJson(FeatureCollectionEmpty)
-            return
-        }
+    /** The route the line is drawn from, and its per-segment traffic levels. */
+    private var lineRoute: Route? = null
+    private var lineLevels = IntArray(0)
+    private var lineStride = 1
+    /** Where the near piece last started, metres; NaN = not drawn. */
+    private var nearDrawnFrom = Double.NaN
+    private var nearDrawnAtNs = 0L
+    /** Which FAR_STEP_M step the far piece was built for. */
+    private var farDrawnStep = Long.MIN_VALUE
 
-        val stride = maxOf(1, lo / TRAVELLED_MAX_POINTS)
-        val pts = ArrayList<Point>(lo / stride + 3)
-        var k = 0
-        while (k <= lo) { pts.add(Point.fromLngLat(route.pts[k][1], route.pts[k][0])); k += stride }
-        // The stride can step straight over the last vertex, which is the one
-        // end of this line that has to be exact.
-        if (pts.size < 2 || k - stride != lo) {
-            pts.add(Point.fromLngLat(route.pts[lo][1], route.pts[lo][0]))
-        }
-        // ...and then the car itself, part-way along the next segment. Without
-        // it the dim line ends at whichever vertex was last passed, so it
-        // visibly lags the marker by up to a segment and catches up in jumps.
-        val next = lo + 1
-        if (next < route.pts.size) {
-            val segM = route.cum[next] - route.cum[lo]
-            if (segM > 0.01) {
-                val f = ((alongM - route.cum[lo]) / segM).coerceIn(0.0, 1.0)
-                val a = route.pts[lo]
-                val b = route.pts[next]
-                pts.add(Point.fromLngLat(a[1] + (b[1] - a[1]) * f, a[0] + (b[0] - a[0]) * f))
-            }
-        }
-
-        if (pts.size < 2) src.setGeoJson(FeatureCollectionEmpty)
-        else src.setGeoJson(Feature.fromGeometry(LineString.fromLngLats(pts)))
-    }
-
+    /** A new route, or none: work out its colours and draw it from the car. */
     private fun drawRoute(s: Style, route: Route?) {
-        val src = s.getSourceAs<GeoJsonSource>(ROUTE_SOURCE) ?: return
-        if (route == null || route.pts.size < 2) {
-            src.setGeoJson(FeatureCollectionEmpty)
+        lineRoute = route?.takeIf { it.pts.size >= 2 }
+        nearDrawnFrom = Double.NaN
+        farDrawnStep = Long.MIN_VALUE
+        val r = lineRoute
+        if (r == null) {
+            s.getSourceAs<GeoJsonSource>(ROUTE_NEAR_SOURCE)?.setGeoJson(FeatureCollectionEmpty)
+            s.getSourceAs<GeoJsonSource>(ROUTE_FAR_SOURCE)?.setGeoJson(FeatureCollectionEmpty)
             return
         }
-        val nSeg = route.pts.size - 1
-        val stride = maxOf(1, route.pts.size / MAX_POLY_POINTS)
-
-        // 0 unknown, 1 free .. 4 standstill, 5 closed.
-        val levels = IntArray(nSeg) { i ->
-            if (route.closed.getOrElse(i) { false }) 5
-            else route.congestion.getOrElse(i) { 0 }
-        }
-        // Traffic alternates segment by segment on a busy motorway, and one
-        // GeoJSON feature per run would undo the point-count cap entirely --
-        // thousands of two-point features instead of one line. Absorb runs
-        // shorter than the line is wide into their neighbour: they were never
-        // visible as separate colours anyway.
-        // Closures are exempt; a closed stretch is worth a feature of its own.
-        //
-        // Measured in *metres*, not in sampling stride. The stride version only
-        // ran when stride > 1, i.e. above MAX_POLY_POINTS vertices -- and a
-        // typical 6 km urban route at overview=full is 400-1200 points, so it
-        // never ran at all. Every congestion transition became its own
-        // two-point Feature: 200-400 of them, built on the main thread, which
-        // is a visible lurch at exactly the wrong moment -- the redraw after a
-        // reroute.
-        run {
-            var i = 0
-            while (i < nSeg) {
-                var j = i
-                while (j + 1 < nSeg && levels[j + 1] == levels[i]) j++
-                val runM = route.cum[j + 1] - route.cum[i]
-                if ((runM < MIN_TRAFFIC_RUN_M || j - i + 1 < stride) &&
-                    levels[i] != 5 && i > 0) {
-                    for (k in i..j) levels[k] = levels[i - 1]
-                }
-                i = j + 1
-            }
-        }
-
-        // One feature per run of equal traffic level, sharing end vertices so
-        // the line stays continuous where the colour changes.
-        val feats = ArrayList<Feature>()
-        var i = 0
-        while (i < nSeg) {
-            val level = levels[i]
-            var j = i
-            while (j + 1 < nSeg && levels[j + 1] == level) j++
-            val endVertex = j + 1
-            val pts = ArrayList<Point>((endVertex - i) / stride + 2)
-            var k = i
-            while (k < endVertex) {
-                pts.add(Point.fromLngLat(route.pts[k][1], route.pts[k][0])); k += stride
-            }
-            pts.add(Point.fromLngLat(route.pts[endVertex][1], route.pts[endVertex][0]))
-            if (pts.size >= 2) {
-                feats.add(Feature.fromGeometry(LineString.fromLngLats(pts)).apply {
-                    addNumberProperty("level", level)
-                })
-            }
-            i = j + 1
-        }
-        src.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(feats))
+        lineStride = maxOf(1, r.pts.size / MAX_POLY_POINTS)
+        lineLevels = RouteLine.trafficLevels(r, lineStride, MIN_TRAFFIC_RUN_M)
+        drawRouteLine(s, r, HudService.alongM)
     }
+
+    /**
+     * From the frame loop: move the start of the line to [alongM], at most
+     * ~15 times a second. Only for the route [drawRoute] was given -- a new
+     * one, or none, is refresh()'s to install.
+     */
+    private fun maybeDrawRouteLine(route: Route?, alongM: Double, nowNs: Long) {
+        val s = style ?: return
+        val r = lineRoute ?: return
+        if (route !== r || alongM.isNaN()) return
+        if (!nearDrawnFrom.isNaN() &&
+            (kotlin.math.abs(alongM - nearDrawnFrom) < ROUTE_NEAR_EPSILON_M ||
+                nowNs - nearDrawnAtNs < ROUTE_NEAR_MIN_NS)) return
+        nearDrawnAtNs = nowNs
+        drawRouteLine(s, r, alongM)
+    }
+
+    private fun drawRouteLine(s: Style, r: Route, alongM: Double) {
+        val from = alongM.coerceIn(0.0, r.cum.last())
+        val step = kotlin.math.floor(from / FAR_STEP_M).toLong()
+        val farFrom = step * FAR_STEP_M + NEAR_WINDOW_M
+        if (step != farDrawnStep) {
+            farDrawnStep = step
+            s.getSourceAs<GeoJsonSource>(ROUTE_FAR_SOURCE)?.setGeoJson(
+                routeFeatures(RouteLine.routeSlice(r, farFrom, r.cum.last(), lineLevels, lineStride)))
+        }
+        nearDrawnFrom = from
+        s.getSourceAs<GeoJsonSource>(ROUTE_NEAR_SOURCE)?.setGeoJson(
+            routeFeatures(RouteLine.routeSlice(r, from, farFrom, lineLevels)))
+    }
+
+    private fun routeFeatures(runs: List<RouteLine.Run>) =
+        org.maplibre.geojson.FeatureCollection.fromFeatures(runs.map { run ->
+            Feature.fromGeometry(LineString.fromLngLats(
+                run.pts.map { Point.fromLngLat(it[1], it[0]) })).apply {
+                addNumberProperty("level", run.level)
+            }
+        })
 
     private fun drawCameras(s: Style, cams: List<SpeedCamera>) {
         val src = s.getSourceAs<GeoJsonSource>(CAM_SOURCE) ?: return
@@ -2855,6 +2734,8 @@ class MapActivity : AppCompatActivity() {
         // Colour only. Fading the whole view took the chip's background and
         // border with it, so one button looked unlike its four neighbours.
         followButton.setColorFilter(if (following) amberDim else amber)
+        // Every change of `following` comes through here.
+        map?.uiSettings?.isRotateGesturesEnabled = !following
     }
 
     private fun updateVoiceButton() {

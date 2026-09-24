@@ -17,19 +17,22 @@ package com.mihai.navhud.map
 object MapIds {
 
     // sources
-    const val ROUTE_SOURCE = "navhud-route"
+    // The route ahead, in two pieces (see RouteLine): NEAR is the arrow to
+    // about 2 km on, full resolution, rebuilt as the car moves; FAR is the
+    // rest, thinned, rebuilt every 500 m.
+    const val ROUTE_NEAR_SOURCE = "navhud-route-near"
+    const val ROUTE_FAR_SOURCE = "navhud-route-far"
     const val ALT_SOURCE = "navhud-alts"
-    const val PUCK_SOURCE = "navhud-puck"
     const val CAM_SOURCE = "navhud-cams"
 
     // layers, in the order they are stacked
     const val ALT_LAYER = "navhud-alts-line"
+    const val ROUTE_CASING_FAR = "navhud-route-casing-far"
     const val ROUTE_CASING = "navhud-route-casing"
+    const val ROUTE_LAYER_FAR = "navhud-route-line-far"
     const val ROUTE_LAYER = "navhud-route-line"
-    // The part already driven, drawn dimmer ON TOP of the route line.
-    const val ROUTE_DONE_SOURCE = "navhud-route-done"
-    const val ROUTE_DONE_LAYER = "navhud-route-done-line"
     const val CAM_LAYER = "navhud-cams-layer"
+    // A LocationIndicatorLayer: it has no source, its position is a property.
     const val PUCK_LAYER = "navhud-puck-layer"
 
     // images
@@ -37,10 +40,11 @@ object MapIds {
     const val PUCK_DOT_ICON = "navhud-puck-dot"
     const val CAM_ICON = "navhud-cam-icon"
 
-    val sources = listOf(ROUTE_SOURCE, ALT_SOURCE, PUCK_SOURCE, CAM_SOURCE, ROUTE_DONE_SOURCE)
+    val sources = listOf(ROUTE_NEAR_SOURCE, ROUTE_FAR_SOURCE, ALT_SOURCE, CAM_SOURCE)
 
     val layers = listOf(
-        ALT_LAYER, ROUTE_CASING, ROUTE_LAYER, ROUTE_DONE_LAYER, CAM_LAYER, PUCK_LAYER
+        ALT_LAYER, ROUTE_CASING_FAR, ROUTE_CASING, ROUTE_LAYER_FAR, ROUTE_LAYER,
+        CAM_LAYER, PUCK_LAYER
     )
 
     val images = listOf(PUCK_ICON, PUCK_DOT_ICON, CAM_ICON)

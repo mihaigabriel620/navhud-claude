@@ -1,7 +1,6 @@
 package com.mihai.navhud.map
 
 import com.mihai.navhud.Geo
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -59,6 +58,9 @@ class NavCamera {
          */
         const val TILT_MIN = 28.0
         const val TILT_MAX = 58.0
+
+        /** How far a pinch may move the zoom off the speed curve, levels. */
+        const val MAX_USER_ZOOM_OFFSET = 4.0
 
         /** Below this a *GPS* heading is not trustworthy, m/s (~7 km/h). */
         const val HEADING_MIN_SPEED = 2.0
@@ -135,6 +137,26 @@ class NavCamera {
             return ZOOM.last()
         }
 
+        /**
+         * Fastest the map or the arrow may turn, degrees per second.
+         *
+         * A turn over 90 degrees used to be taken in a single frame -- a
+         * U-turn, or the first bearing after a tunnel, flipped the whole map.
+         * 180 deg/s makes a reversal a one-second swing the eye can follow.
+         */
+        const val MAX_TURN_DPS = 180.0
+
+        /**
+         * One frame of easing from [from] toward [to]: exponential with time
+         * constant [tauS], the step capped at [MAX_TURN_DPS].
+         */
+        fun turnToward(from: Double, to: Double, dtS: Double, tauS: Double): Double {
+            val turn = shortestTurn(from, to)
+            val eased = turn * (1.0 - kotlin.math.exp(-dtS / tauS))
+            val cap = MAX_TURN_DPS * dtS
+            return Geo.normalizeDeg(from + eased.coerceIn(-cap, cap))
+        }
+
         /** Shortest signed turn from a to b, in degrees, -180..180. */
         fun shortestTurn(from: Double, to: Double): Double {
             var d = (to - from) % 360.0
@@ -155,6 +177,34 @@ class NavCamera {
     private var started = false
 
     /**
+     * What a pinch or a two-finger tilt left behind, while following.
+     *
+     * The gesture no longer drops out of follow mode -- only a one-finger pan
+     * does, as in Waze -- so its result has to outlive the next frame: the tilt
+     * replaces [TILT], and the zoom becomes an offset on the speed-based zoom,
+     * so a driver who likes it closer keeps it closer at every speed. Cleared
+     * by [reset], i.e. by recentring.
+     */
+    var userTilt: Double? = null
+        private set
+    var userZoomOffset = 0.0
+        private set
+
+    /** A tilt gesture ended at [deg]; keep it (clamped) from now on. */
+    fun setUserTilt(deg: Double) {
+        val t = deg.coerceIn(TILT_MIN, TILT_MAX)
+        userTilt = t
+        tilt = t
+    }
+
+    /** A pinch ended at map zoom [actual]; keep the difference from here on. */
+    fun setUserZoom(actual: Double) {
+        userZoomOffset = (userZoomOffset + actual - zoom)
+            .coerceIn(-MAX_USER_ZOOM_OFFSET, MAX_USER_ZOOM_OFFSET)
+        zoom = actual
+    }
+
+    /**
      * @param speedMps  current speed
      * @param rawBearing GPS heading, or null when there isn't a usable one
      * @return true if anything moved enough to be worth animating
@@ -171,12 +221,13 @@ class NavCamera {
         val kph = speedMps * 3.6
 
         val targetZoom = if (overview) 13.0
-                         else zoomForSpeed(kph) + maneuverZoomBoost(maneuverDistM, speedMps)
+                         else zoomForSpeed(kph) + maneuverZoomBoost(maneuverDistM, speedMps) +
+                             userZoomOffset
         // Not zero: the map's own pitch is clamped to [TILT_MIN, TILT_MAX] so
         // a gesture cannot flatten it, and asking for a pitch the map will
         // refuse would leave this filter's idea of the tilt and the map's
         // permanently disagreeing.
-        val targetTilt = if (overview) TILT_MIN else TILT
+        val targetTilt = if (overview) TILT_MIN else userTilt ?: TILT
 
         // Freeze the heading when we are barely moving; keep the last good one.
         val minSpeed = if (headingTrusted) HEADING_MIN_SPEED_TRUSTED else HEADING_MIN_SPEED
@@ -193,15 +244,12 @@ class NavCamera {
         }
 
         val dt = dtSeconds.coerceIn(0.005, 0.5)
-        val aBearing = 1.0 - kotlin.math.exp(-dt / TAU_BEARING)
         val aZoom = 1.0 - kotlin.math.exp(-dt / TAU_ZOOM)
         val aTilt = 1.0 - kotlin.math.exp(-dt / TAU_TILT)
 
-        val turn = shortestTurn(bearing, targetBearing)
-        // Snap through a big change (a U-turn, or the first fix after a tunnel)
-        // instead of spinning the long way round slowly.
-        bearing = if (abs(turn) > 90.0) targetBearing
-                  else (bearing + turn * aBearing + 360.0) % 360.0
+        // Always the short way round, and a big change (a U-turn, the first
+        // fix after a tunnel) at MAX_TURN_DPS rather than in one frame.
+        bearing = turnToward(bearing, targetBearing, dt, TAU_BEARING)
 
         zoom += (targetZoom - zoom) * aZoom
         tilt += (targetTilt - tilt) * aTilt
@@ -214,6 +262,8 @@ class NavCamera {
         bearing = 0.0
         zoom = ZOOM.first()
         tilt = TILT
+        userTilt = null
+        userZoomOffset = 0.0
     }
 
     /**

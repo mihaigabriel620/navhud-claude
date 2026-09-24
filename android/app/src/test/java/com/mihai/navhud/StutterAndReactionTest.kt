@@ -229,6 +229,14 @@ class StutterAndReactionTest {
             compassDriving = false, mountKnown = true)!!, 1e-9)
     }
 
+    @Test fun `moving, the arrow points where the map points`() {
+        // 1.27: over 5 km/h the arrow and the map share one heading -- the
+        // road's when snapped -- whatever the compass says.
+        assertEquals(0.0, com.mihai.navhud.map.Marker.headingFor(
+            compassHeading = 90.0, mapHeading = 0.0,
+            compassDriving = true, mountKnown = true, moving = true)!!, 1e-9)
+    }
+
     @Test fun `an unlearned mount does not get to point the arrow`() {
         // Unlearned, the compass reads the phone's heading, not the car's --
         // so the map would point along the street while the arrow sat at an

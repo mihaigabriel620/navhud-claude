@@ -115,8 +115,15 @@ object Geo {
         if (pts.isEmpty()) return doubleArrayOf(0.0, 0.0)
         if (alongM <= 0.0) return pts[0].copyOf()
         if (alongM >= cum.last()) return pts.last().copyOf()
+        // First segment whose far end reaches alongM. A binary search, not a
+        // scan from vertex 0: the map calls this several times a frame on a
+        // route that can be tens of thousands of points long.
         var i = 0
-        while (i < cum.size - 2 && cum[i + 1] < alongM) i++
+        var hi = cum.size - 2
+        while (i < hi) {
+            val mid = (i + hi) ushr 1
+            if (cum[mid + 1] < alongM) i = mid + 1 else hi = mid
+        }
         val segLen = cum[i + 1] - cum[i]
         val t = if (segLen > 1e-6) (alongM - cum[i]) / segLen else 0.0
         return doubleArrayOf(
