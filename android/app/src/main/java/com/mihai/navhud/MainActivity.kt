@@ -256,6 +256,11 @@ class MainActivity : AppCompatActivity() {
                          else View.VISIBLE
             setOnClickListener { Permissions.openAppSettings(this@MainActivity) }
         }
+        findViewById<android.widget.Button>(R.id.notifFix).apply {
+            visibility = if (BackgroundHealth.notificationsOn(this@MainActivity)) View.GONE
+                         else View.VISIBLE
+            setOnClickListener { BackgroundHealth.openNotificationSettings(this@MainActivity) }
+        }
 
         findViewById<TextView>(R.id.bgSteps).text = buildString {
             append(getString(R.string.bg_steps_title))

@@ -58,6 +58,20 @@ object BackgroundHealth {
         }.getOrDefault(false)
     }
 
+    /** Android 13+ asks; refused, the service's notification is never shown. */
+    fun notificationsOn(ctx: Context): Boolean =
+        androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+
+    /** This app's notification switch (API 26+), with the app's page as a fallback. */
+    fun openNotificationSettings(ctx: Context) {
+        val direct = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            runCatching { ctx.startActivity(direct); true }.getOrDefault(false)) return
+        Permissions.openAppSettings(ctx)
+    }
+
     fun powerSaveMode(ctx: Context): Boolean =
         runCatching {
             ctx.getSystemService(PowerManager::class.java).isPowerSaveMode
@@ -73,6 +87,11 @@ object BackgroundHealth {
                     "app settings → Permissions → Location → Use precise location."
                 else -> "Not allowed. NavHUD cannot navigate or start with the car."
             }
+        ),
+        Check(
+            "Notifications",
+            notificationsOn(ctx),
+            "Off. The Stop button and the \"Resume route?\" offer are only in the notification."
         ),
         Check(
             "Start with the car",

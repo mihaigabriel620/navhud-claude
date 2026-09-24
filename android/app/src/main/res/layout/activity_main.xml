@@ -246,6 +246,14 @@
                 android:layout_marginTop="@dimen/space"
                 android:text="@string/open_app_settings" />
 
+            <Button
+                android:id="@+id/notifFix"
+                style="@style/NavHUD.Button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space"
+                android:text="@string/allow_notifications" />
+
             <TextView
                 android:id="@+id/bgSteps"
                 style="@style/NavHUD.Caption"
