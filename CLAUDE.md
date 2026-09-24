@@ -12,8 +12,9 @@ Waze / Google Maps everywhere.
   worktrees, merge into main and delete the worktrees and their branches. If a
   cloud session is started on its own `claude/...` branch, fast-forward `main`
   to it, push `main`, and delete that branch (local and remote) when done.
-- **Cloud sessions are preferred** (the owner has cloud-session credits):
-  at the start and end of a session, report remaining usage/credits if visible.
+- **Where to work:** the owner currently prefers sessions on their PC; cloud
+  sessions (which use their cloud credit) are an option when the weekly limit
+  is tight. At the start and end of a session, report remaining usage.
 - **Every new APK goes to GitHub Releases, automatically.** Bump
   `versionCode`/`versionName` in `android/app/build.gradle.kts`, add a
   `## App X.Y` section at the top of `CHANGELOG.md`, push to `main`. When CI
