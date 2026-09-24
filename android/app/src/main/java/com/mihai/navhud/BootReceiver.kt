@@ -3,7 +3,6 @@ package com.mihai.navhud
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 
@@ -55,9 +54,9 @@ class BootReceiver : BroadcastReceiver() {
         if (!wanted) return
         // Without location there is nothing to report, and starting a
         // location-typed service without the permission is a crash on 14+.
-        if (ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
-            Log.i(TAG, "boot: no location permission, staying down")
+        // Not silent: the Setup screen's "Location" line says what is missing.
+        if (!Permissions.precise(ctx)) {
+            Log.i(TAG, "boot: no precise location permission, staying down")
             return
         }
 

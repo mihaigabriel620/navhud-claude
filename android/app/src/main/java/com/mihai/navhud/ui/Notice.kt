@@ -24,9 +24,16 @@ import com.mihai.navhud.R
 object Notice {
 
     private const val SHOW_MS = 2600L
+    private const val ACTION_SHOW_MS = 8000L
     private const val FADE_MS = 180L
 
-    fun show(activity: Activity, message: CharSequence) {
+    /**
+     * With [action], the card carries a second, bold line naming it, stays
+     * longer, and a tap on it runs [onAction] -- for the messages that need
+     * the driver to go and change something, like a permission.
+     */
+    fun show(activity: Activity, message: CharSequence,
+             action: CharSequence? = null, onAction: (() -> Unit)? = null) {
         val root = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
 
         // One at a time: a second message replaces the first rather than
@@ -35,7 +42,14 @@ object Notice {
 
         val text = TextView(activity).apply {
             tag = TAG
-            this.text = message
+            this.text = if (action == null) message else
+                android.text.SpannableStringBuilder(message).append("\n").append(
+                    action, android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (onAction != null) setOnClickListener {
+                (parent as? ViewGroup)?.removeView(this)
+                onAction()
+            }
             setTextColor(androidx.core.content.ContextCompat.getColor(
                 activity, R.color.text_primary))
             textSize = 15f
@@ -61,7 +75,7 @@ object Notice {
                 ).setDuration(FADE_MS).withEndAction {
                     (text.parent as? ViewGroup)?.removeView(text)
                 }
-            }, SHOW_MS)
+            }, if (onAction != null) ACTION_SHOW_MS else SHOW_MS)
         }
     }
 

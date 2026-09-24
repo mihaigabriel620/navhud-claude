@@ -65,6 +65,16 @@ object BackgroundHealth {
 
     fun checks(ctx: Context): List<Check> = listOf(
         Check(
+            "Location",
+            Permissions.precise(ctx),
+            when {
+                Permissions.precise(ctx) -> "Precise. Good."
+                Permissions.approximateOnly(ctx) -> "Approximate only. Precise location needed: " +
+                    "app settings → Permissions → Location → Use precise location."
+                else -> "Not allowed. NavHUD cannot navigate or start with the car."
+            }
+        ),
+        Check(
             "Battery optimisation",
             ignoringBatteryOptimisations(ctx),
             if (ignoringBatteryOptimisations(ctx)) "Off for NavHUD. Good."

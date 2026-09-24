@@ -243,6 +243,12 @@ class MainActivity : AppCompatActivity() {
         fix.visibility = if (exempt) View.GONE else View.VISIBLE
         fix.setOnClickListener { BackgroundHealth.requestExemption(this) }
 
+        // A permission the system will no longer ask for is changed only there.
+        findViewById<android.widget.Button>(R.id.permFix).apply {
+            visibility = if (Permissions.precise(this@MainActivity)) View.GONE else View.VISIBLE
+            setOnClickListener { Permissions.openAppSettings(this@MainActivity) }
+        }
+
         findViewById<TextView>(R.id.bgSteps).text = buildString {
             append(getString(R.string.bg_steps_title))
             for (step in BackgroundHealth.manualSteps) append("\n• ").append(step)
@@ -345,7 +351,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPermissions() {
-        val want = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        // FINE and COARSE together: Android 12+ may ignore FINE asked alone.
+        val want = Permissions.LOCATION.toMutableList()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             want += Manifest.permission.POST_NOTIFICATIONS
         }

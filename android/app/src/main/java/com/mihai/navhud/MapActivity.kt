@@ -806,8 +806,8 @@ class MapActivity : AppCompatActivity() {
         // should not switch the service on again behind their back; opening
         // the app afresh will.
         if (HudService.userStopped && !firstResume) return
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) return
+        // Approximate-only was already explained by startOwnLocation, just before.
+        if (!Permissions.precise(this)) return
         ContextCompat.startForegroundService(this,
             Intent(this, HudService::class.java)
                 .setAction(HudService.ACTION_START)
@@ -867,10 +867,13 @@ class MapActivity : AppCompatActivity() {
         // The same guard startFreeDrive has. Starting a foreground service that
         // then finds it may not claim the location type leaves it unable to go
         // foreground at all, and Android kills the process for it.
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions()
-            toast(getString(R.string.need_location))
+        if (!Permissions.precise(this)) {
+            if (Permissions.approximateOnly(this)) {
+                Permissions.explainApproximate(this)
+            } else {
+                requestPermissions()
+                toast(getString(R.string.need_location))
+            }
             return
         }
 
@@ -1635,8 +1638,12 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun startOwnLocation() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) return
+        if (!Permissions.precise(this)) {
+            // Runs on every resume, so it is also what tells the driver why
+            // free drive (started right after) does not start either.
+            if (Permissions.approximateOnly(this)) Permissions.explainApproximate(this)
+            return
+        }
         val lm = getSystemService(LOCATION_SERVICE) as LocationManager
         locationManager = lm
         // Start from a clean slate: after a long pause the filter's last fix is
@@ -2969,7 +2976,8 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun requestPermissions() {
-        val want = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        // FINE and COARSE together: Android 12+ may ignore FINE asked alone.
+        val want = Permissions.LOCATION.toMutableList()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             want += Manifest.permission.POST_NOTIFICATIONS
         val missing = want.filter {
