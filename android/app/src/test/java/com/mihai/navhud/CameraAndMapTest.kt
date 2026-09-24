@@ -31,10 +31,12 @@ class CameraAndMapTest {
     }
 
     @Test fun `unknown countries fall back to the conservative default`() {
-        assertEquals(CameraPolicy.ZONE, CountryRules.policyFor("RO"))
+        // Slovakia: detectors banned, app warnings unclear -- so unverified.
+        // (Romania was the example here until its rule was checked: ADAC.)
+        assertEquals(CameraPolicy.ZONE, CountryRules.policyFor("SK"))
         assertEquals(CameraPolicy.ZONE, CountryRules.policyFor(null))
         assertEquals(CameraPolicy.ZONE, CountryRules.policyFor("ZZ"))
-        assertFalse(CountryRules.isVerified("RO"))
+        assertFalse(CountryRules.isVerified("SK"))
     }
 
     @Test fun `the user can tighten the rules but never loosen them`() {
