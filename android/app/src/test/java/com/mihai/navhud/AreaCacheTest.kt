@@ -284,6 +284,17 @@ class AreaCacheTest {
         }
     }
 
+    @Test fun `a cached window cut short is dropped and fetched again`() {
+        AreaCache.put(LAT, LON, RADIUS_M, """{"elements":[{"type":"way","""")
+        assertEquals("written whole, nothing left aside", 1, AreaCache.dir!!.listFiles()!!.size)
+        var calls = 0
+        AreaRoads.transport = { _, _ -> calls++; BODY }
+        val a = AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        assertEquals(1, calls)
+        assertFalse(a.fromCache)
+        assertEquals(BODY, body(LAT, LON, RADIUS_M))
+    }
+
     @Test fun `a fresh answer is cached and a remark instead of data is not`() {
         AreaRoads.transport = { _, _ -> BODY }
         AreaRoads.prefetch(LAT, LON, RADIUS_M)

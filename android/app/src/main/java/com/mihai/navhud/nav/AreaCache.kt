@@ -71,7 +71,8 @@ object AreaCache {
     @Volatile var dir: File? = null
 
     /** A cached window: its body, and the circle it actually covers. */
-    class Hit(val body: String, val lat: Double, val lon: Double, val radiusM: Double)
+    class Hit(val body: String, val lat: Double, val lon: Double, val radiusM: Double,
+              internal val file: File? = null)
 
     private class Entry(val file: File, val lat: Double, val lon: Double, val radiusM: Double)
 
@@ -93,9 +94,30 @@ object AreaCache {
             d.listFiles()?.forEach {
                 if (it.name == "$k.json" || it.name.startsWith(k + "_")) it.delete()
             }
-            File(d, name(lat, lon, radiusM)).writeText(body)
+            writeWhole(File(d, name(lat, lon, radiusM)), body)
             prune(d)
         }
+    }
+
+    /**
+     * Written aside and renamed into place, so a file under its real name is
+     * always complete. A power cut mid-write -- ignition off, on a head unit --
+     * used to leave half a JSON body that every lookup there then failed on,
+     * for as long as the file counted as fresh.
+     */
+    private fun writeWhole(f: File, body: String) {
+        val tmp = File(f.parentFile, "tmp_" + f.name)
+        tmp.writeText(body)
+        // POSIX rename replaces; elsewhere (the unit tests) make room first.
+        if (!tmp.renameTo(f) && !(f.delete() && tmp.renameTo(f))) {
+            tmp.delete()
+            throw java.io.IOException("could not move ${tmp.name} into place")
+        }
+    }
+
+    /** Drop a cached window that turned out to be unreadable. */
+    fun forget(h: Hit) {
+        runCatching { h.file?.delete() }
     }
 
     /**
@@ -109,7 +131,7 @@ object AreaCache {
         val d = dir ?: return
         runCatching {
             if (!d.exists()) d.mkdirs()
-            File(d, "n_$name.json").writeText(body)
+            writeWhole(File(d, "n_$name.json"), body)
             prune(d)
         }
     }
@@ -153,7 +175,7 @@ object AreaCache {
     )
 
     private fun read(e: Entry): Hit? =
-        runCatching { Hit(e.file.readText(), e.lat, e.lon, e.radiusM) }.getOrNull()
+        runCatching { Hit(e.file.readText(), e.lat, e.lon, e.radiusM, e.file) }.getOrNull()
 
     /**
      * A cached window that contains the whole circle asked for, or null.

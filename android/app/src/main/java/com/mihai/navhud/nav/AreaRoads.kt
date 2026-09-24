@@ -431,7 +431,10 @@ object AreaRoads {
         wallMs: Long = System.currentTimeMillis()
     ): Area {
         AreaCache.get(lat, lon, radiusM, AreaCache.FRESH_MS, wallMs)?.let {
-            return build(it.lat, it.lon, it.radiusM, it.body, nowMs, fromCache = true)
+            // Unreadable -- cut short by a crash or a power cut: drop it and
+            // ask again, or it would fail here until it went stale.
+            runCatching { return build(it.lat, it.lon, it.radiusM, it.body, nowMs, fromCache = true) }
+            AreaCache.forget(it)
         }
         // Only the network call is guarded. A body that comes back and then
         // fails to parse is a bug worth seeing, not a reason to quietly serve
