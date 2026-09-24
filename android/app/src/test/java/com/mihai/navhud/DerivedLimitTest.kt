@@ -124,10 +124,10 @@ class DerivedLimitTest {
         assertEquals(null, a.regionCode)
         assertEquals(70, drive(a, country = "BE").first)
 
-        // Same for the urban value: 30 is Brussels' and the lowest of the
-        // three, so an unknown region takes it.
+        // In town it is 50, Flanders' and Wallonia's value: Brussels' 30 is
+        // nearly always tagged, and its window votes BE-BRU when it is not.
         val urban = area(road("residential"))
-        assertEquals(30, drive(urban, country = "BE").first)
+        assertEquals(50, drive(urban, country = "BE").first)
     }
 
     @Test fun `a plain BE region vote is ignored`() {
@@ -135,6 +135,27 @@ class DerivedLimitTest {
         // then be treated as if it had.
         val a = area(road("residential", scheme = "BE:zone30"))
         assertEquals(null, a.regionCode)
+    }
+
+    @Test fun `a way tagged maxspeed=BE colon rural keeps no number of its own`() {
+        // The tag names no region, and the region is the whole answer.
+        val json = """{"elements":[
+            {"type":"way","id":7,"tags":{"highway":"unclassified","maxspeed":"BE:rural"},
+             "geometry":[{"lat":50.40,"lon":4.40},{"lat":50.41,"lon":4.40}]},
+            {"type":"way","id":8,"tags":{"highway":"primary","maxspeed":"BE-WAL:rural",
+             "lanes":"2","oneway":"yes","int_ref":"E 42"},
+             "geometry":[{"lat":50.40,"lon":4.41},{"lat":50.41,"lon":4.41}]}]}"""
+        val (roads, _) = com.mihai.navhud.nav.AreaRoads.parse(json)
+        val bare = roads.first { it.id == 7L }
+        val tagged = roads.first { it.id == 8L }
+        assertEquals(0, bare.limitKph)
+        assertEquals("BE:rural", bare.schemeTag)
+        assertEquals(90, tagged.limitKph)
+        assertEquals(2, tagged.lanes)
+        assertEquals("E 42", tagged.intRef)
+        // ...so the window's region settles it: Wallonia.
+        val a = Area(50.405, 4.405, 3000.0, roads, emptyList(), 0L)
+        assertEquals(90, SpeedDefaults.limitOf(bare, a, "BE", 12)!!.kph)
     }
 
     // ---- refusing to invent ------------------------------------------------
@@ -174,7 +195,7 @@ class DerivedLimitTest {
 
     @Test fun `an unknown country produces nothing rather than a plausible number`() {
         assertEquals(0, drive(area(road("residential")), country = null).first)
-        assertEquals(0, drive(area(road("residential")), country = "PL").first)
+        assertEquals(0, drive(area(road("residential")), country = "GR").first)
     }
 
     // ---- the neighbouring countries ---------------------------------------

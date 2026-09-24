@@ -94,6 +94,49 @@ class RouteTracker(val route: Route) {
     private var heldLimit = 0
     private var heldLimitAlong = -1e9
 
+    /**
+     * Where to ask when the router has no limit for the segment: the OSM road
+     * under the car, or its legal default (SpeedDefaults.limitAt). Returns 0
+     * for "nothing", -1 for derestricted. Injected so the tracker stays pure.
+     *
+     * Mapbox's `maxspeed` is missing on a good share of minor roads, and the
+     * route used to show a blank sign there -- or, worse, the previous road's
+     * limit held on through the turn.
+     */
+    var limitFallback: ((lat: Double, lon: Double, headingDeg: Double?) -> Int)? = null
+
+    /** The limit from the last [limitAt] was held or came from the fallback. */
+    private var limitLowConf = false
+
+    /**
+     * The router's limit for this segment; else the fallback; else the last
+     * known one held over a short gap in the data, but never past a maneuver
+     * -- a turn is exactly where the road, and so the limit, changes.
+     */
+    private fun limitAt(seg: Int, along: Double, lat: Double, lon: Double, heading: Double?): Int {
+        val raw = if (seg < route.limitKph.size) route.limitKph[seg] else 0
+        limitLowConf = false
+        if (raw != 0) {
+            heldLimit = raw
+            heldLimitAlong = along
+            return raw
+        }
+        // A limit from a second source, matched by position: flagged, and not
+        // held, because it is only as good as the match it came from.
+        val fb = limitFallback?.invoke(lat, lon, heading) ?: 0
+        if (fb != 0) {
+            limitLowConf = true
+            return fb
+        }
+        val turned = route.maneuvers.any { it.alongM > heldLimitAlong && it.alongM <= along }
+        if (heldLimit != 0 && !turned && along - heldLimitAlong < LIMIT_HOLD_M) {
+            limitLowConf = true         // brief gap in the data, keep showing it
+            return heldLimit
+        }
+        heldLimit = 0
+        return 0
+    }
+
     /** Metres travelled along the route at the last fix. */
     var alongM = 0.0
         private set
@@ -207,21 +250,9 @@ class RouteTracker(val route: Route) {
         roadBearing = Geo.bearingAlong(route.pts, route.cum, snap.along)
         snapTrusted = snap.cross <= SNAP_TRUST_M && !offRoute
 
-        // ---- speed limit, with hold-over across unmapped stretches ----------
-        val raw = if (snap.segIndex < route.limitKph.size) route.limitKph[snap.segIndex] else 0
-        var limit: Int
-        var lowConf = false
-        if (raw != 0) {
-            limit = raw
-            heldLimit = raw
-            heldLimitAlong = snap.along
-        } else if (heldLimit != 0 && snap.along - heldLimitAlong < LIMIT_HOLD_M) {
-            limit = heldLimit          // brief gap in the data, keep showing it
-            lowConf = true
-        } else {
-            limit = 0
-            heldLimit = 0
-        }
+        // ---- speed limit ----------------------------------------------------
+        val limit = limitAt(snap.segIndex, snap.along, lat, lon, heading)
+        var lowConf = limitLowConf
         if (offRoute) { lowConf = true }
 
         // ---- next maneuver --------------------------------------------------

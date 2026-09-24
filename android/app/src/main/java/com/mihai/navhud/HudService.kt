@@ -39,6 +39,7 @@ import com.mihai.navhud.nav.LatLon
 import com.mihai.navhud.nav.MapboxProvider
 import com.mihai.navhud.nav.NavProvider
 import com.mihai.navhud.nav.Route
+import com.mihai.navhud.nav.SpeedDefaults
 import java.util.Calendar
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1570,7 +1571,15 @@ class HudService : Service(), LocationListener {
         carLink.speedMps(nowMs)?.toFloat() ?: gpsSpeed
 
     private fun adoptRoute(r: Route, reason: String) {
-        tracker = RouteTracker(r)
+        // Where the router has no limit, the same OSM window and legal
+        // defaults free drive uses. The window keeps being fetched on a route
+        // (step() -> maybeFetchArea), so this has data wherever free drive would.
+        tracker = RouteTracker(r).also {
+            it.limitFallback = { lat, lon, h ->
+                SpeedDefaults.limitAt(freeArea, lat, lon, h, country,
+                    Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
+            }
+        }
         currentRoute = r
         // 30 m in: far enough past the start vertex that a jitter in the first
         // coordinate cannot point the map the wrong way down the street.

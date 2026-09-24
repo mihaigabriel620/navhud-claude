@@ -209,38 +209,30 @@ class FreeTracker {
                 roadPts = m.road.pts
                 snapTrusted = true
             }
-            if (m.road.limitKph != 0) {
-                limit = m.road.limitKph
-                heldLimit = limit
-                heldAtMs = nowMs
-                limitDerived = false
-            }
-        }
-
-        // Nothing posted. Fall back to what the law says applies when there is
-        // no sign -- which is not a guess: a road with no sign IS at its legal
-        // default. Half the drivable road length in Belgium has no `maxspeed`
-        // in OpenStreetMap, and it is concentrated in exactly the residential
-        // and unclassified streets where the limit matters most and is least
-        // obvious. Measured 2026-09-07: residential 48.6 % tagged,
-        // unclassified 28.1 %, motorway 99.5 %.
-        //
-        // SpeedDefaults owns this, rather than a copy living here, because the
-        // routed path needs exactly the same answer: when the fallback was
-        // free-drive-only, typing a destination turned the limit off again on
-        // every untagged road.
-        if (limit == 0 && m != null) {
+            // The road's own maxspeed, else what the law says applies when
+            // there is no sign -- which is not a guess: a road with no sign IS
+            // at its legal default. Half the drivable road length in Belgium
+            // has no `maxspeed` in OpenStreetMap, concentrated in exactly the
+            // residential and unclassified streets where the limit matters
+            // most. SpeedDefaults owns this, rather than a copy living here,
+            // because a route needs exactly the same answer where the router
+            // has none.
+            //
             // Null is the only "no answer". A derestricted autobahn comes back
             // as DERESTRICTED (-1) and is a real answer, so this tests the
-            // nullability and never the sign -- `> 0` here would put a German
-            // motorway back in the blank case it was rescued from.
-            val derived = SpeedDefaults.forRoad(m.road, a, country, localHour)
-            if (derived != null) {
-                limit = derived
-                limitDerived = true
-                // Never held: a derived limit is only as good as the road it
-                // was derived from, so it must not survive onto the next one.
-                heldLimit = 0
+            // nullability and never the sign.
+            val rl = SpeedDefaults.limitOf(m.road, a, country, localHour)
+            if (rl != null) {
+                limit = rl.kph
+                limitDerived = rl.derived
+                if (rl.derived) {
+                    // Never held: a derived limit is only as good as the road it
+                    // was derived from, so it must not survive onto the next one.
+                    heldLimit = 0
+                } else {
+                    heldLimit = limit
+                    heldAtMs = nowMs
+                }
             }
         }
 

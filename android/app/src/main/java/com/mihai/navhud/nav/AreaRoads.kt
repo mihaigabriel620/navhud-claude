@@ -45,7 +45,13 @@ class RoadWay(
     val schemeTag: String = "",
 
     /** `lit=yes` is the closest thing OSM has to "this is a built-up area". */
-    val lit: Boolean? = null
+    val lit: Boolean? = null,
+
+    /** `lanes`: in the way's direction when one-way, else both. 0 unknown. */
+    val lanes: Int = 0,
+
+    /** `int_ref`, "E 40": Romania's E-roads have a limit of their own. */
+    val intRef: String = ""
 ) {
     /** What to print on the road-name pill: the number if it has one. */
     val label: String get() = when {
@@ -447,25 +453,34 @@ object AreaRoads {
                     }
                     if (pts.any { it[0].isNaN() || it[1].isNaN() }) return@runCatching
                     val ow = tags.optString("oneway")
+                    val maxspeed = tags.optString("maxspeed")
+                    // "BE:rural" names no region, and the region is the answer:
+                    // no number here, and the scheme tag lets the window's
+                    // vote settle it (SpeedDefaults.forRoad).
+                    val deferred = SpeedDefaults.deferredZone(maxspeed)
                     roads.add(
                         RoadWay(
                             id = e.optLong("id"),
                             pts = pts,
                             name = tags.optString("name"),
                             ref = tags.optString("ref").replace(";", " · "),
-                            limitKph = parseMaxspeed(tags.optString("maxspeed")),
+                            limitKph = if (deferred) 0 else parseMaxspeed(maxspeed),
                             kind = tags.optString("highway"),
                             onewayDir = onewayOf(ow),
                             schemeTag = firstNonBlank(
                                 tags.optString("source:maxspeed"),
                                 tags.optString("maxspeed:type"),
                                 tags.optString("zone:maxspeed"),
-                                tags.optString("zone:traffic")),
+                                tags.optString("zone:traffic"),
+                                // An implicit maxspeed names the region too.
+                                if (maxspeed.contains(':')) maxspeed else ""),
                             lit = when (tags.optString("lit")) {
                                 "" -> null
                                 "no" -> false
                                 else -> true          // yes, sunset-sunrise, 24/7...
-                            }
+                            },
+                            lanes = tags.optString("lanes").trim().toIntOrNull() ?: 0,
+                            intRef = tags.optString("int_ref")
                         )
                     )
                 }
@@ -545,30 +560,12 @@ object AreaRoads {
         return if (s.contains("mph")) Math.round(num * 1.609344).toInt() else num
     }
 
-    private fun implicit(s: String): Int? {
-        if (!s.contains(':')) return null
-        val zone = s.substringAfter(':')
-        val country = s.substringBefore(':').uppercase()
-        return when (zone) {
-            "urban" -> if (country == "BE" || country == "FR" || country == "NL") 50 else 50
-            "rural" -> when (country) {
-                "BE" -> 70          // Flanders and Wallonia both sit at 70 now
-                "FR" -> 80
-                "RO", "DE", "NL", "LU" -> 90
-                else -> 90
-            }
-            "motorway" -> when (country) {
-                "BE", "FR", "LU", "AT" -> 120
-                "RO" -> 130
-                "DE" -> -1
-                "NL" -> 100
-                else -> 120
-            }
-            "living_street" -> 20
-            "trunk" -> if (country == "BE") 120 else 110
-            else -> null
-        }
-    }
+    /**
+     * One table for implicit codes and legal defaults, in SpeedDefaults. This
+     * was a second copy that had drifted: "BE-VLG:rural" fell through to 90,
+     * "BE-BRU:urban" read 50, "AT:motorway" 120, and "BE:zone30" nothing.
+     */
+    private fun implicit(s: String): Int? = SpeedDefaults.zoneLimit(s)
 
     // ---- matching ----------------------------------------------------------
 

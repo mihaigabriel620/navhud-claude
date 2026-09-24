@@ -47,7 +47,9 @@ class SpeedDefaultsTest {
         assertEquals(Confidence.WEAK, rural.confidence)
 
         val urban = be("BE", "residential", urban = true)
-        assertEquals(30, urban.kph)          // Brussels' number, the lowest
+        // 50 in town: Flanders' and Wallonia's value. Brussels' 30 is nearly
+        // always tagged, and the window's own region vote catches the rest.
+        assertEquals(50, urban.kph)
         assertEquals(Confidence.WEAK, urban.confidence)
 
         // ...and knowing it is not weak.
@@ -108,10 +110,108 @@ class SpeedDefaultsTest {
         assertEquals(130, SpeedDefaults.implied("LU", "motorway", null).kph)
     }
 
+    // ---- the drive to Romania ------------------------------------------------
+
+    private fun at(cc: String, highway: String, urban: Boolean?, dual: Boolean = false) =
+        SpeedDefaults.implied(cc, highway, urban, dual).kph
+
+    @Test fun `every country on the way has urban, rural and motorway defaults`() {
+        // country to (urban, rural, motorway). Sources are cited on the table.
+        val law = mapOf(
+            "NL" to Triple(50, 80, 130), "LU" to Triple(50, 90, 130),
+            "FR" to Triple(50, 80, 130), "DE" to Triple(50, 100, -1),
+            "AT" to Triple(50, 100, 130), "CH" to Triple(50, 80, 120),
+            "CZ" to Triple(50, 90, 130), "SK" to Triple(50, 90, 130),
+            "HU" to Triple(50, 90, 130), "RO" to Triple(50, 90, 130),
+            "PL" to Triple(50, 90, 140), "IT" to Triple(50, 90, 130),
+            "ES" to Triple(30, 90, 120)
+        )
+        for ((cc, v) in law) {
+            assertEquals("$cc urban", v.first, at(cc, "residential", true))
+            assertEquals("$cc rural", v.second, at(cc, "secondary", false))
+            if (cc != "NL") assertEquals("$cc motorway", v.third, at(cc, "motorway", null))
+        }
+    }
+
+    @Test fun `the expressway classes`() {
+        assertEquals(100, at("RO", "trunk", false))      // drum expres / E-road
+        assertEquals(110, at("HU", "trunk", false))      // autóút
+        assertEquals(110, at("CZ", "trunk", false))
+        assertEquals(100, at("AT", "trunk", false))      // Autostraße
+        assertEquals(100, at("CH", "trunk", false))
+        assertEquals(110, at("IT", "trunk", false))      // extraurbana principale
+        assertEquals(100, at("NL", "trunk", false))      // autoweg
+        assertEquals(100, at("PL", "trunk", false))
+        assertEquals(120, at("PL", "trunk", false, dual = true))
+        assertEquals(110, at("FR", "trunk", false, dual = true))
+        // Separated, two lanes each way, outside town: no general limit.
+        assertEquals(SpeedDefaults.DERESTRICTED, at("DE", "trunk", false, dual = true))
+        // One lane each way in Belgium is still the ordinary rural road.
+        assertEquals(90, at("BE-WAL", "trunk", false))
+        assertEquals(120, at("BE-WAL", "trunk", false, dual = true))
+    }
+
+    @Test fun `a Romanian E-road mapped as primary is 100`() {
+        fun ro(intRef: String) = SpeedDefaults.forRoad(RoadWay(
+            id = 1L, pts = arrayOf(doubleArrayOf(45.0, 25.0), doubleArrayOf(45.01, 25.0)),
+            name = "DN1", ref = "DN1", limitKph = 0, kind = "primary", onewayDir = 0,
+            lit = false, intRef = intRef), null, "RO", 12)
+        assertEquals(100, ro("E 60"))
+        assertEquals(90, ro(""))
+    }
+
+    @Test fun `urban motorways where the law has them`() {
+        assertEquals(80, at("CZ", "motorway", true))
+        assertEquals(90, at("SK", "motorway", true))
+        assertEquals(130, at("CZ", "motorway", null))
+    }
+
+    // ---- implicit maxspeed codes ---------------------------------------------
+
+    @Test fun `implicit codes read from the same table`() {
+        assertEquals(70, SpeedDefaults.zoneLimit("BE-VLG:rural"))
+        assertEquals(90, SpeedDefaults.zoneLimit("BE-WAL:rural"))
+        assertEquals(30, SpeedDefaults.zoneLimit("BE-BRU:urban"))
+        assertEquals(70, SpeedDefaults.zoneLimit("BE-BRU:rural"))
+        assertEquals(120, SpeedDefaults.zoneLimit("BE:trunk"))
+        assertEquals(120, SpeedDefaults.zoneLimit("BE:motorway"))
+        assertEquals(30, SpeedDefaults.zoneLimit("BE:zone30"))
+        assertEquals(30, SpeedDefaults.zoneLimit("DE:zone:30"))
+        assertEquals(SpeedDefaults.DERESTRICTED, SpeedDefaults.zoneLimit("DE:motorway"))
+        assertEquals(100, SpeedDefaults.zoneLimit("DE:rural"))
+        assertEquals(130, SpeedDefaults.zoneLimit("AT:motorway"))
+        assertEquals(100, SpeedDefaults.zoneLimit("RO:trunk"))
+        assertEquals(50, SpeedDefaults.zoneLimit("RO:urban"))
+        assertEquals(110, SpeedDefaults.zoneLimit("HU:trunk"))
+        assertEquals(90, SpeedDefaults.zoneLimit("SK:trunk"))
+        assertEquals(80, SpeedDefaults.zoneLimit("CZ:urban_motorway"))
+        assertEquals(20, SpeedDefaults.zoneLimit("BE:living_street"))
+        // The clock decides, so the code alone does not.
+        assertNull(SpeedDefaults.zoneLimit("NL:motorway"))
+        assertNull(SpeedDefaults.zoneLimit("XX:rural"))
+        assertNull(SpeedDefaults.zoneLimit("50"))
+    }
+
+    @Test fun `a bare BE rural road takes its region from the window`() {
+        assertTrue(SpeedDefaults.deferredZone("BE:rural"))
+        assertFalse(SpeedDefaults.deferredZone("BE-WAL:rural"))
+        val bare = road("unclassified", "BE:rural")
+        val wallonia = window(road("residential", "BE-WAL:urban"))
+        assertEquals(90, SpeedDefaults.forRoad(bare, wallonia, "BE", 12))
+        assertEquals(70, SpeedDefaults.forRoad(bare, window(), "BE", 12))
+    }
+
+    @Test fun `a neighbouring country's region vote is ignored`() {
+        // Driving in the Netherlands a few km from the border: the window's
+        // Flemish roads must not make a Dutch rural lane 70.
+        val flemish = window(road("residential", "BE-VLG:urban"))
+        assertEquals(80, SpeedDefaults.forRoad(road("tertiary", lit = false), flemish, "NL", 12))
+    }
+
     // ---- refusing to answer ------------------------------------------------
 
     @Test fun `an unknown country produces nothing rather than a plausible number`() {
-        assertFalse(SpeedDefaults.implied("PL", "residential", true).known)
+        assertFalse(SpeedDefaults.implied("GR", "residential", true).known)
         assertFalse(SpeedDefaults.implied(null, "residential", true).known)
         assertFalse(SpeedDefaults.implied("", "residential", true).known)
     }
@@ -177,7 +277,7 @@ class SpeedDefaultsTest {
     @Test fun `every derived value is a legal number, never an interpolation`() {
         // A limit is one of a small set of legal values. If this file ever
         // returns 63 or 85 something has gone badly wrong.
-        val legal = setOf(-1, 15, 20, 30, 50, 70, 80, 90, 100, 110, 120, 130)
+        val legal = setOf(-1, 5, 10, 15, 20, 30, 50, 70, 80, 90, 100, 110, 120, 130, 140)
         val regions = listOf("BE-VLG", "BE-WAL", "BE-BRU", "BE", "FR", "NL", "DE", "LU")
         val classes = listOf("motorway", "motorway_link", "trunk", "primary", "secondary",
             "tertiary", "unclassified", "residential", "living_street", "service", "track")
@@ -279,7 +379,7 @@ class SpeedDefaultsTest {
         assertNull(SpeedDefaults.forRoad(road("residential"), null, null, 12))
         assertNull(SpeedDefaults.forRoad(road("residential"), window(), null, 12))
         // A country with no table entry is the same kind of silence.
-        assertNull(SpeedDefaults.forRoad(road("residential"), null, "PL", 12))
+        assertNull(SpeedDefaults.forRoad(road("residential"), null, "GR", 12))
         // ...but a scheme tag alone is enough to answer without a country.
         assertEquals(50, SpeedDefaults.forRoad(
             road("residential", "BE-VLG:urban"), null, null, 12))
