@@ -3,4 +3,4 @@ build/
 local.properties
 *.jks
 .idea/
-.claude/worktrees/
+.claude/

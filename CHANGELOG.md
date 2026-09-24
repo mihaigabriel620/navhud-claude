@@ -41,7 +41,7 @@ patched over. Firmware unchanged.
 - Speed limits, cameras and crossings cached in chunks ~100 km ahead; losing
   the network never ends guidance, and a failed reroute retries quietly.
 
-**Icons** from the supplied pack for road-ahead warnings and the map.
+**Icons** from the supplied pack: coming in the next build.
 
 ## 2.7 — the roundabout arrow points where the exit actually is
 
