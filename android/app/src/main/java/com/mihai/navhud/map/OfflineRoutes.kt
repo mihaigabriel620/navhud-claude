@@ -55,6 +55,10 @@ class OfflineRoutes(context: Context) {
 
         /** Not more often than this, so a burst of reroutes is one download. */
         const val MIN_INTERVAL_MS = 20_000L
+
+        /** The latest chunk's state in plain words, for the Setup screen. */
+        @Volatile var status: String = "nothing yet (starts with a route)"
+            private set
     }
 
     private val app = context.applicationContext
@@ -76,7 +80,7 @@ class OfflineRoutes(context: Context) {
             route = current; chunkStart = null
         }
         val r = current ?: return
-        val m = manager ?: return
+        val m = manager ?: run { status = "not available on this device"; return }
         // A callback that never came back must not stop prefetching for good.
         if (nowMs - lastAttemptMs < (if (busy) 120_000L else MIN_INTERVAL_MS)) return
         if (r.pts.size < 2) return
@@ -87,8 +91,11 @@ class OfflineRoutes(context: Context) {
         busy = true
         val previous = chunkStart
         chunkStart = start
+        status = "chunk km %d-%d: starting".format((start / 1000).toInt(),
+            ((start + OfflineCorridor.CHUNK_M) / 1000).toInt())
         val failed = { what: String ->
             Log.w(TAG, "offline chunk not created: $what")
+            status = "chunk not created: $what"
             busy = false
             // Try this stretch again after MIN_INTERVAL_MS.
             if (route === r) chunkStart = previous
@@ -180,6 +187,9 @@ class OfflineRoutes(context: Context) {
     private class Observer(private val region: OfflineRegion) : OfflineRegion.OfflineRegionObserver {
         private var errors = 0
         override fun onStatusChanged(status: OfflineRegionStatus) {
+            OfflineRoutes.status = "chunk ${if (status.isComplete) "ready" else "downloading"}: " +
+                "${status.completedResourceCount}/${status.requiredResourceCount} files, " +
+                "${status.completedResourceSize / 1024} kB"
             if (status.isComplete) {
                 runCatching { region.setDownloadState(OfflineRegion.STATE_INACTIVE) }
                 Log.i(TAG, "offline chunk ${region.id}: ${status.completedTileCount} tiles, " +
@@ -187,6 +197,7 @@ class OfflineRoutes(context: Context) {
             }
         }
         override fun onError(error: OfflineRegionError) {
+            OfflineRoutes.status = "chunk error: ${error.reason} (MapLibre retries)"
             if (errors++ < 3) Log.w(TAG, "offline chunk ${region.id}: ${error.reason} ${error.message}")
         }
         override fun mapboxTileCountLimitExceeded(limit: Long) {}

@@ -308,7 +308,12 @@ class MainActivity : AppCompatActivity() {
                           "\ngps: ${HudService.fixQuality}" +
                           "\n${HudService.headingSource}" +
                           "\ncameras: ${HudService.cameraFreshness()}" +
-                          (HudService.country?.let { "\ncountry: $it" } ?: "")
+                          (HudService.country?.let { "\ncountry: $it" } ?: "") +
+                          // Is the offline cache doing anything? Roads and cameras
+                          // (Overpass answers on disk) and the map tiles ahead.
+                          "\noffline roads: ${com.mihai.navhud.nav.AreaCache.fileCount()} areas, " +
+                          "%.1f MB".format(com.mihai.navhud.nav.AreaCache.sizeBytes() / 1e6) +
+                          "\noffline map: ${com.mihai.navhud.map.OfflineRoutes.status}"
         // Which voice was picked is worth showing: if it says the offline one,
         // installing Google's high-quality French from the TTS settings is the
         // single biggest improvement available to the spoken guidance. Without
