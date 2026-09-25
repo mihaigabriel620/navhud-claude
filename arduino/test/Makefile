@@ -62,7 +62,7 @@ sketch_imu: test_sketch.cpp ../NavHud/NavHud.ino ../NavHud/hud_imu.h Wire.h $(TH
 mount: test_mount.cpp ../NavHud/hud_mount.h
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_mount.cpp
 
-layout_e60: test_layout.cpp $(THEME_DEPS)
+layout_e60: test_layout.cpp corpus.h $(THEME_DEPS)
 	$(CXX) $(CXXFLAGS) $(INC) -DHUD_THEME_E60_CLASSIC -o $@ test_layout.cpp
 
 
@@ -131,7 +131,34 @@ check: all
 	python3 ../../tools/hud_sim.py --stdout --frames 3000 | ./parse_stdin
 	python3 ../../tools/tracker_reference.py --emit | ./parse_stdin
 
-clean:
-	rm -f $(BINS)
+# ---- the screen renderer ------------------------------------------------------
+# Every screen of both themes as a PNG in out/, drawn by the unmodified themes
+# through tft_stub.h built with -DHUD_RENDER (see tft_raster.h). The built-in
+# fonts are TFT_eSPI's own tables, so the library is fetched once, pinned.
+TFT_ESPI_DIR ?= .tft_espi
+TFT_ESPI_TAG ?= V2.5.43
+TFT_ESPI_FONTS := $(TFT_ESPI_DIR)/Fonts/Font16.h
+RENDER_DEPS := render_screens.cpp corpus.h tft_raster.h png_write.h $(THEME_DEPS) $(TFT_ESPI_FONTS)
+RENDER_FLAGS := -DHUD_RENDER -I$(TFT_ESPI_DIR)
 
-.PHONY: all check clean
+$(TFT_ESPI_FONTS):
+	rm -rf $(TFT_ESPI_DIR)
+	git clone --quiet --depth 1 --branch $(TFT_ESPI_TAG) https://github.com/Bodmer/TFT_eSPI.git $(TFT_ESPI_DIR)
+
+render_dash: $(RENDER_DEPS)
+	$(CXX) $(CXXFLAGS) $(INC) $(RENDER_FLAGS) -o $@ render_screens.cpp
+
+render_e60: $(RENDER_DEPS)
+	$(CXX) $(CXXFLAGS) $(INC) $(RENDER_FLAGS) -DHUD_THEME_E60_CLASSIC -o $@ render_screens.cpp
+
+render: render_dash render_e60
+	rm -rf out
+	mkdir -p out
+	./render_dash out
+	./render_e60 out
+
+clean:
+	rm -f $(BINS) render_dash render_e60 *.exe
+	rm -rf out
+
+.PHONY: all check clean render

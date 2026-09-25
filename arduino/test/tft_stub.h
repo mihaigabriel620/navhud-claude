@@ -34,6 +34,15 @@
 #include <cstdlib>
 #include <cmath>
 #include "../NavHud/hud_protocol.h"
+
+// -DHUD_RENDER (the `render` target) also rasterises every call into a real
+// framebuffer; see tft_raster.h. Without it nothing below changes.
+#ifdef HUD_RENDER
+#include "tft_raster.h"
+#define HUD_RAS(call) ras.call
+#else
+#define HUD_RAS(call) ((void)0)
+#endif
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -149,7 +158,9 @@ class TFT_eSPI {
   void writecommand(uint8_t) {}
   void writedata(uint8_t) {}
 
-  void fillScreen(uint16_t) { /* clears everything: not a collision */ }
+  void fillScreen(uint16_t c) {   /* clears everything: not a collision */
+    (void)c; HUD_RAS(fillRect(0, 0, width(), height(), c));
+  }
 
   // The driver's own idea of the panel size, which follows setRotation.
   // Rotations 1, 3, 5 and 7 are the four landscape orientations of an ST7796;
@@ -158,33 +169,45 @@ class TFT_eSPI {
   int16_t width()  const { return (rotation & 1) ? HUD_SCR_W : HUD_SCR_H; }
   int16_t height() const { return (rotation & 1) ? HUD_SCR_H : HUD_SCR_W; }
 
-  void fillRect(int x, int y, int w, int h, uint16_t) {
+  void fillRect(int x, int y, int w, int h, uint16_t c) {
+    (void)c; HUD_RAS(fillRect(x, y, w, h, c));
     // A background fill is a clear, not a mark -- record it as such so the
     // collision check can ignore it.
     rec(x, y, x + w - 1, y + h - 1, "fillRect", /*isClear=*/true);
   }
-  void drawRect(int x, int y, int w, int h, uint16_t) {
+  void drawRect(int x, int y, int w, int h, uint16_t c) {
+    (void)c; HUD_RAS(drawRect(x, y, w, h, c));
     rec(x, y, x + w - 1, y + h - 1, "drawRect");
   }
-  void drawRoundRect(int x, int y, int w, int h, int, uint16_t) {
+  void drawRoundRect(int x, int y, int w, int h, int r, uint16_t c) {
+    (void)r; (void)c; HUD_RAS(drawRoundRect(x, y, w, h, r, c));
     rec(x, y, x + w - 1, y + h - 1, "drawRoundRect");
   }
-  void drawCircle(int cx, int cy, int r, uint16_t) {
+  void drawCircle(int cx, int cy, int r, uint16_t c) {
+    (void)c; HUD_RAS(drawCircle(cx, cy, r, c));
     rec(cx - r, cy - r, cx + r, cy + r, "drawCircle");
   }
-  void fillCircle(int cx, int cy, int r, uint16_t) {
+  void fillCircle(int cx, int cy, int r, uint16_t c) {
+    (void)c; HUD_RAS(fillCircle(cx, cy, r, c));
     rec(cx - r, cy - r, cx + r, cy + r, "fillCircle");
   }
   void fillTriangle(float x0, float y0, float x1, float y1,
-                    float x2, float y2, uint16_t) {
+                    float x2, float y2, uint16_t c) {
+    // TFT_eSPI takes int32_t: the floats are truncated toward zero on the way in.
+    (void)c; HUD_RAS(fillTriangle((int32_t)x0, (int32_t)y0, (int32_t)x1, (int32_t)y1,
+                                  (int32_t)x2, (int32_t)y2, c));
     int lo_x = (int)std::floor(std::min({x0, x1, x2}));
     int hi_x = (int)std::ceil (std::max({x0, x1, x2}));
     int lo_y = (int)std::floor(std::min({y0, y1, y2}));
     int hi_y = (int)std::ceil (std::max({y0, y1, y2}));
     rec(lo_x, lo_y, hi_x, hi_y, "fillTriangle");
   }
-  void drawFastHLine(int x, int y, int w, uint16_t) { rec(x, y, x + w - 1, y, "hline"); }
-  void drawFastVLine(int x, int y, int h, uint16_t) { rec(x, y, x, y + h - 1, "vline"); }
+  void drawFastHLine(int x, int y, int w, uint16_t c) {
+    (void)c; HUD_RAS(drawFastHLine(x, y, w, c)); rec(x, y, x + w - 1, y, "hline");
+  }
+  void drawFastVLine(int x, int y, int h, uint16_t c) {
+    (void)c; HUD_RAS(drawFastVLine(x, y, h, c)); rec(x, y, x, y + h - 1, "vline");
+  }
 
   // ---- smooth fonts -------------------------------------------------------
   //
@@ -196,6 +219,7 @@ class TFT_eSPI {
   // street name containing a character the font does not carry draws nothing
   // at all on the hardware, silently.
   void loadFont(const uint8_t* arr) {
+    HUD_RAS(loadFont(arr));
     smooth_ = true;
     glyphs_.clear();
     auto be32 = [&](size_t o) -> int32_t {
@@ -226,15 +250,18 @@ class TFT_eSPI {
     ascent_  = be32(16);                      // header, never raised
     descent_ = maxD > be32(20) ? maxD : be32(20);
   }
-  void unloadFont() { smooth_ = false; glyphs_.clear(); }
+  void unloadFont() { HUD_RAS(unloadFont()); smooth_ = false; glyphs_.clear(); }
 
-  void setTextDatum(uint8_t d) { datum_ = d; }
-  void setTextColor(uint16_t, uint16_t) {}
-  void setTextColor(uint16_t) {}
-  void setTextPadding(int) {}
-  void setTextSize(uint8_t n) { size_ = n ? n : 1; }
+  void setTextDatum(uint8_t d) { HUD_RAS(setTextDatum(d)); datum_ = d; }
+  void setTextColor(uint16_t f, uint16_t b) { (void)f; (void)b; HUD_RAS(setTextColor(f, b)); }
+  void setTextColor(uint16_t f) { (void)f; HUD_RAS(setTextColor(f)); }
+  void setTextPadding(int p) { (void)p; HUD_RAS(setTextPadding((uint16_t)p)); }
+  void setTextSize(uint8_t n) { HUD_RAS(setTextSize(n)); size_ = n ? n : 1; }
 
   int textWidth(const char* s, uint8_t font) const {
+#ifdef HUD_RENDER
+    return ras.textWidth(s, font);    // the library's real widths
+#endif
     if (smooth_) return smoothWidth(s);
     return (int)(strlen(s) * charW(font)) * size_;
   }
@@ -250,6 +277,9 @@ class TFT_eSPI {
     int w = textWidth(s, font);
     int h = smooth_ ? (ascent_ + descent_) : (fontH(font) * size_);
     recText(x, y, w, h, "drawString");
+#ifdef HUD_RENDER
+    return ras.drawString(s, x, y, font);
+#endif
     return w;
   }
   int drawString(const String& s, int x, int y, uint8_t font) {
@@ -356,6 +386,7 @@ class TFT_eSPI {
       case BL_DATUM: x0 = x;         y0 = y - h;     break;
       case BR_DATUM: x0 = x - w;     y0 = y - h;     break;
       case ML_DATUM: x0 = x;         y0 = y - h / 2; break;
+      case MR_DATUM: x0 = x - w;     y0 = y - h / 2; break;
       case TC_DATUM: x0 = x - w / 2; y0 = y;         break;
       case TR_DATUM: x0 = x - w;     y0 = y;         break;
       default:       x0 = x;         y0 = y;         break;
@@ -377,6 +408,11 @@ class TFT_eSPI {
   }
 
   uint8_t datum_ = TL_DATUM;
+#ifdef HUD_RENDER
+ public:
+  mutable HudRaster ras;              // the framebuffer the render target reads
+ private:
+#endif
   uint8_t size_ = 1;
  public:
   static bool g_reportOob;

@@ -4,3 +4,6 @@ local.properties
 *.jks
 .idea/
 .claude/
+arduino/test/out/
+arduino/test/.tft_espi/
+arduino/test/*.exe
