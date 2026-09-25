@@ -102,7 +102,13 @@ Waze / Google Maps everywhere.
 ## Where things are
 - `MapActivity.kt` driving screen (camera loop, arrow, route line, gestures);
   `map/` PuckMotion (arrow motion, tunnel coasting), RouteLine (vanishing
-  line), HeadingFusion, NavCamera, OfflineRoutes (map tile chunks).
+  line), HeadingFusion (GPS above 5 km/h, the HUD compass below it, plus
+  `hudCorrection` learned from GPS so tilt on hills and the mounting do not
+  matter -- see docs/HEADING.md), NavCamera, OfflineRoutes (map tile chunks).
+- Free-drive road data (limits, cameras) comes from Overpass: `nav/AreaRoads`
+  asks overpass-api.de, then overpass.private.coffee, per-server fair use,
+  with `AreaCache` on disk shown at once. With the app swiped away the voice
+  keeps only the over-limit and camera warnings (`VoiceGuide.warningsOnly`).
 - `HudService.kt` foreground service: GPS, HUD link, route tracking, reroute,
   speed source (CAN vs GPS), cameras, country rules, Overpass prefetch.
 - `RouteTracker.kt`, `RerouteRule.kt`, `RouteChoice.kt`, `FreeTracker.kt`:

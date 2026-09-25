@@ -1,5 +1,29 @@
 # Changelog
 
+## App 1.34 — the HUD compass stops caring about hills and how it is mounted
+
+Works with any HUD firmware; nothing changes on the board.
+
+- **On a hill the arrow no longer jumps when you stop.** The board lies flat on
+  the dashboard, so on a slope it is tilted with the car, and here every degree
+  of tilt reads as about two degrees of heading: a 10 % hill was 10–15° out.
+  When the car stopped and the compass took over from GPS, the arrow jumped by
+  that. The board has no accelerometer and the head unit no sensors, so the
+  tilt cannot be measured — and it does not need to be: while you drive (on a
+  straight, from 9 km/h) the app learns how far the compass is from the GPS
+  course, and adds that when the compass takes over. You stop on the same
+  slope, facing the same way, so the arrow stays where GPS left it; turning at
+  a crawl turns it by what the compass saw change.
+- **It does not matter which way round the box sits.** The same correction
+  takes care of the mounting and of a calibration or declination that is a
+  little out, so the `north` command is no longer needed. (Turned more than
+  45° from straight ahead, it looks like a faulty compass while you drive, so
+  after a stop the arrow keeps the GPS heading for a minute before the
+  corrected compass takes over.)
+- It is remembered when the app closes, so a car that has not moved starts
+  pointing the way it was left. Moved to another slope, it is at most as far
+  out as the slope changed, until the first straight bit of road.
+
 ## App 1.33 — the speed limit without a route, and warnings with the app closed
 
 Works with any HUD firmware; nothing changes on the board.
