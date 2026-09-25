@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.0 — the compass knows which way is down
+
+Firmware only; works with app 1.34, which already reads `$IMU`. Includes 2.8
+and 2.9 (below). Not flashed — the owner flashes.
+
+**An MPU-6050 (GY-521) can now sit on the I2C bus next to the compass**, and
+the HUD does all the maths itself; the app only receives numbers.
+
+- **Tilt the screen, drive up a hill: the heading stays put.** The Earth's field
+  dips about 65° here, so with no idea where down is every degree of tilt read
+  as about two of heading — tilting the screen up swung the arrow. The MPU's
+  gravity now takes the tilt out (the heading of the box's nose on the true
+  horizontal). Gravity is carried by the gyro and only re-read from the
+  accelerometer when that is gravity: parked, or driving steadily in a straight
+  line, so braking, pulling away and corners do not bend it.
+- **The HUD sends the car's turn rate as `$IMU`** (PROTOCOL.md), 20 times a
+  second, about the true vertical so a crooked box does not matter. The app
+  already prefers it to the phone's own gyroscope. It starts once the gyro's
+  bias is known — two seconds parked, normally right after the key goes in —
+  and the bias is kept up to date at every stop.
+- **`spin` is tilt-correct**: the circle is measured in the true horizontal, so
+  a tilted box no longer puts part of the Earth's vertical field into the
+  offset. The per-axis soft-iron gains are gone (they assumed a level box).
+- **Without the MPU nothing changes**: the same flat compass as 2.9, no `$IMU`.
+  Either chip can be missing at boot and is looked for again every 3 s.
+
+**After flashing**: type `spin` once and drive (or turn the box) a full
+circle, then `spin stop`. The saved calibration changed format and the 2.9 one
+is refused rather than misread. `north` is optional since app 1.34.
+
+**Wiring**: GY-521 SDA → D3, SCL → D4 (in parallel with the compass), VCC →
+3V3, GND; AD0 as it comes (0x68). If its X arrow does not point forward and Y
+to the left, set `MPU_AXIS_ORDER`/`MPU_AXIS_SIGN` in `hud_config.h`; `status`
+shows the pitch and roll to check them (nose up and right side down are
+positive).
+
+**New libraries** (Library Manager): **GY521** 0.6.2 (Rob Tillaart),
+**Adafruit QMC5883P Library** 1.0.2 and **Adafruit BusIO** 1.17.4. The compass
+is now driven through Adafruit's library, still in QST's order and with the
+range read back.
+
+**Cleaner inside, same on the glass.** `loop()` only orchestrates now: the
+screen switching went to `hud_display.h`, the `$CAR` report to `hud_link.h`,
+the alignment checks to `hud_align.h`, flash to `hud_settings.h`, and the
+sensors to `hud_sensors.h`, each moved unchanged and tested. `NavHud.ino`
+starts with a file map: which file does what, and where to look when something
+breaks. Removed: the unused pin glyph, `tools/check_layout.py` and
+`tools/layout_preview.html` (neither could run any more). All 113 screens are
+pixel-identical to 2.9; flash 57 % (+9.5 KB), RAM 46 %, IRAM 94 % (unchanged).
+
+**Tests**: a new stage, `make check` 3/12, drives the heading maths with a
+simulated box in a simulated car — tilted, turned, braked, over a hill, with a
+drifting gyro and a crooked calibration. The sketch builds check the MPU end to
+end over a simulated I2C bus: found, bias learned and followed, a 12°/s right
+turn reads +12, the heading holds within half a degree when the box is tilted
+20°, found again after a brown-out, and nothing but `$MAG` without it.
+
 ## App 1.34 — the HUD compass stops caring about hills and how it is mounted
 
 Works with any HUD firmware; nothing changes on the board.

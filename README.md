@@ -165,7 +165,7 @@ a word that any French voice reads correctly. Belgium keeps *quatre-vingts* for
 cd arduino/test && make check
 ```
 
-Eleven stages and an end-to-end pass, all green:
+Twelve stages and an end-to-end pass, all green:
 
 1. **Protocol** — checksums (including the ones quoted in `PROTOCOL.md`),
    truncated frames, resync, field-count errors, buffer overflow, out-of-range
@@ -175,34 +175,42 @@ Eleven stages and an end-to-end pass, all green:
    app asked, straight lines stay straight, a corrupted or extreme setting
    cannot make the screen unreadable), mirroring left to the panel, and the
    settings surviving being turned into bytes and back.
-3. **Map geometry** — the polyline decoder against the canonical Google test
+3. **Compass heading** — the maths in `hud_heading.h`, driven by a simulated
+   box in a simulated car: level it is exactly the old flat compass; tilted any
+   way, within 0.2°; braking, a hill and a jumping gyro bias do not bend
+   gravity; the turn rate is the car's whatever the mount; a calibration taken
+   tilted is right; what is saved comes back and nothing damaged is believed.
+4. **Map geometry** — the polyline decoder against the canonical Google test
    vector, haversine against known distances, projection accuracy, and the
    divided-highway case where heading decides which carriageway you're on.
-4. **Navigation logic** — a simulated drive asserting every maneuver is announced
+5. **Navigation logic** — a simulated drive asserting every maneuver is announced
    in order, the countdown never ticks upwards, limits track the sections being
    driven, the data-gap hold-over fires and clears, arrival is flagged only at
    the end, and an 80 m detour is caught with no false positives before it.
-5. **Voice** — every maneuver announced, never more than three times, stages
+6. **Voice** — every maneuver announced, never more than three times, stages
    never repeat or go backwards, the final call always lands within 200 m, and
    no two announcements stack up on top of each other.
-6. **E60 theme layout** — the theme compiled against a stub TFT that records
+7. **E60 theme layout** — the theme compiled against a stub TFT that records
    every primitive: 30 states, nothing drawn off-panel (with a keystone
    correction too), and no two screen zones ever writing the same pixel. That's
    the check that catches an arrow crossing into the distance digits before your
    dashboard does.
-7. **The sketch itself**, E60 theme — compiled on the host and run against a
+8. **The sketch itself**, E60 theme — compiled on the host and run against a
    scripted serial stream: link up, deltas, an unchanged frame repainting
    nothing, link lost, link restored, a corrupt frame ignored, 400 frames stay
    on-panel, the saved alignment surviving a power cycle, the backlight
-   following the key, and nothing ever sent on the car's bus.
-8. **The same in bench mode** — unmirrored, the saved alignment ignored, Save
+   following the key, the compass and MPU over a simulated I2C bus (bias
+   learned parked, `$IMU` reading a 12°/s turn as +12, the heading holding when
+   the box tilts, found again after a brown-out, fine without the MPU), and
+   nothing ever sent on the car's bus.
+9. **The same in bench mode** — unmirrored, the saved alignment ignored, Save
    refused, the backlight on whatever the key says.
-9. **CAN** — `canBegin()`/`canPump()` through a stand-in for the mcp_can library
+10. **CAN** — `canBegin()`/`canPump()` through a stand-in for the mcp_can library
    over a register-level MCP2515 simulator: the chip brought up listen-only and
    kept there, the E60 decoders (ignition, speed, rpm, torque, battery,
    coolant), stale data, and no transmit ever reaching the chip.
-10. **The same in the dash theme.**
-11. **PanelDiag**, the bring-up sketch — nothing drawn off the panel, every
+11. **The same in the dash theme.**
+12. **PanelDiag**, the bring-up sketch — nothing drawn off the panel, every
     string in a font that has its characters.
 
 Then **end to end**: 1,942 + 1,853 generated frames through the exact parser the

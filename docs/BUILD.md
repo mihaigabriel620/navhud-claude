@@ -4,13 +4,13 @@
 
 | Part | What to get | Roughly | Notes |
 |---|---|---|---|
-| MCU | **NodeMCU v3 / Wemos D1 mini (ESP8266)** | €4 | What the current firmware targets. ESP32 also builds |
+| MCU | **Wemos D1 mini (ESP8266)** | €4 | What the current firmware targets; the pin map is its (`hud_pins.h`) |
 | Display | **4.0" ST7796S SPI TFT, 480×320** | €26 | What the layouts are drawn for. 320×240 panels no longer fit |
 | Cable | USB-C to USB-C or C-to-micro, **data** | €5 | Charge-only cables are the classic time-waster |
 | Power | USB-C hub with PD passthrough | €15 | The important one — see below |
 | Car supply | 12 V → USB-C PD car charger, 30 W+ | €12 | |
 | Enclosure | 3D print or a project box | — | Matte black inside if you reflect it off the glass |
-| **Gyroscope** *(optional)* | **GY-521 / MPU-6050** | **€3** | Four wires. Makes the map turn with the car instead of a second later — see below |
+| **Gyroscope** *(optional)* | **GY-521 / MPU-6050** | **€3** | Four wires, on the compass's I2C bus. Keeps the compass right at any tilt and gives the map the car's turn rate — see below |
 
 Total, about €60–65, or €63–68 with the gyroscope.
 
@@ -75,22 +75,27 @@ Three ways out, best first:
 
 ## Wiring
 
-NodeMCU v3 (ESP8266) → ST7796S, HSPI bus:
+The authoritative map is `arduino/NavHud/hud_pins.h`, where the compiler checks
+it, with the datasheet reason for every pin; the top of `NavHud.ino` has the
+copy to read with a soldering iron in your hand. In short, on a D1 mini:
 
 ```
-   NodeMCU                   ST7796S TFT
-   -------                   -----------
-   3V3    ---------------->  VCC
-   GND    ---------------->  GND
-   D5  GPIO14 ------------>  SCK          fixed by the SPI peripheral
-   D7  GPIO13 ------------>  MOSI (SDI)   fixed
-   D6  GPIO12 <-----------   MISO (SDO)   leave unconnected
-   D8  GPIO15 ------------>  CS
-   D1  GPIO5  ------------>  DC   (RS)
-   RST        ------------>  RESET        the board's own reset pin
-   D2  GPIO4  ------------>  LED  (backlight, PWM for night dimming)
-        or
-   3V3        ------------>  LED          always on, if you skip the dimming
+   D1 mini                   goes to
+   -------                   -------
+   D5  GPIO14 ------------>  SCK   of the display AND the MCP2515 (shared SPI)
+   D7  GPIO13 ------------>  MOSI  of both
+   D6  GPIO12 <-----------   the MCP2515's data out -- and NOTHING else: the
+                             display's SDO stays unconnected (hud_pins.h says
+                             which header pin, these modules label it oddly)
+   D2  GPIO4  ------------>  display CS
+   D1  GPIO5  ------------>  display DC (RS)
+   RST        ------------>  display RESET (the board's own reset pin)
+   D0  GPIO16 ------------>  display LED (backlight, PWM for night dimming)
+   D8  GPIO15 ------------>  MCP2515 CS
+   D3  GPIO0  <----------->  SDA of the QMC5883P compass and the MPU-6050
+   D4  GPIO2  <----------->  SCL of both
+   3V3 / GND  ------------>  display, MCP2515 VDD, compass, MPU
+                             (the MCP2515 module's TJA1050 wants 5V)
 ```
 
 Three things that catch people out, and one of them will cost you an evening:
@@ -99,9 +104,10 @@ Three things that catch people out, and one of them will cost you an evening:
   be high, high and low respectively. TFT_eSPI's stock ESP8266 setup puts DC on
   GPIO0 and RESET on GPIO2, so a display module that holds either low at
   power-up stops the board booting entirely — and it looks exactly like a dead
-  ESP8266. The pin map above uses neither. GPIO15 is still used for chip select,
-  which is fine because every NodeMCU and D1 mini has a pulldown on it; check
-  your display module does not pull its CS input high.
+  ESP8266. Here GPIO0 and GPIO2 carry I2C, which idles high, and GPIO15 is the
+  MCP2515's chip select, which the D1 mini pulls down. A sensor that hangs
+  holding SDA low would still stop the boot, which is why the firmware clocks
+  the bus free before anything else touches it (`hud_i2c.h`).
 - **SCK, MOSI and MISO are not a choice.** `SPIClass::pins()` in the ESP8266
   core accepts exactly two pin sets and the TFT one is fixed in silicon.
   Renaming them in `User_Setup.h` moves nothing but the comment.
@@ -120,7 +126,7 @@ to 20.
 **Power.** The panel draws about 120 mA with the backlight on, which is more
 than some USB-serial adapters will supply. Power the board from the car, not
 from a laptop port, before blaming the wiring for a display that resets under
-load.
+load — the compass and the MPU share that 3V3 rail.
 
 ## Mirroring and keystone
 
@@ -163,44 +169,47 @@ The one to buy is a **GY-521 breakout carrying an MPU-6050**. About three euros,
 sold by every Arduino shop in Europe, and the module most likely to already be
 in your parts drawer.
 
-Resist the upgrade. A BNO055 or an ICM-20948 costs five times as much and the
-extra money buys on-chip sensor fusion producing an *absolute* heading from a
-magnetometer — which, inside a steel car next to an alternator, a phone charger
-and a set of speakers, is worse than the GPS heading it would be replacing. You
-would be paying for the one part you must not use. All this sensor has to do is
-answer "how fast is the car turning, right now", because GPS already knows which
-way it is pointing; it just only says so once a second. A plain gyro does that
-perfectly.
+It does two jobs, both on the HUD, with only numbers going up the cable:
+
+- **It tells the compass where down is.** The Earth's field dips about 65° here,
+  so a compass with no idea of down reads every degree of tilt as about two of
+  heading: angle the screen up, or park on a hill, and the arrow swings. With
+  the MPU's gravity the heading is worked out on the true horizontal and stays
+  put (`hud_heading.h`). This is what a phone does with its own accelerometer.
+- **It gives the map the car's turn rate** (`$IMU`, 20 a second), about the true
+  vertical, so the map turns with the car instead of a second later. The app
+  prefers it to the phone's gyroscope: a sensor bolted to the car beats one in
+  a cradle.
 
 ```
-   ESP32                     MPU-6050 (GY-521)
-   -----                     -----------------
+   D1 mini                   MPU-6050 (GY-521)
+   -------                   -----------------
    3V3    ---------------->  VCC        (the board has its own regulator, but
    GND    ---------------->  GND         3V3 keeps the I2C bus at 3.3 V)
-   GPIO22 <-------------->   SCL
-   GPIO21 <-------------->   SDA
-                             AD0  left unconnected = address 0x68
+   D4  GPIO2 <------------>  SCL        in parallel with the compass
+   D3  GPIO0 <------------>  SDA        in parallel with the compass
+                             AD0  as it comes (low) = address 0x68
 ```
 
-On an Uno: SCL -> A5, SDA -> A4, VCC -> 5V.
+Nothing to switch on: the firmware looks for it at boot, and again every three
+seconds if it is missing. `status` on the serial monitor says what it found.
 
-Then uncomment `#define HUD_IMU` at the top of `NavHud.ino` and reflash.
+**Mounting.** In the same box as the compass, fixed to it — the two have to
+agree about which way the box points. Its X arrow forward and Y arrow to the
+left (the driver's side here) is the default; mounted any other way round, set
+`MPU_AXIS_ORDER` and `MPU_AXIS_SIGN` in `hud_config.h`, the same way as the
+compass's `MAG_AXIS_*`. To check: type `status`, lift the front of the box, and
+the pitch must go positive; lower its right side, and the roll must. The box
+itself can then sit at any angle on the dash.
 
-**Mounting.** Anywhere, any way up, as long as it cannot move relative to the
-car — cable-tied to the loom behind the dash is ideal. It does not need to be
-level or square: the sketch works out which axis is pointing at the sky from
-gravity at startup. What it must not do is sit loose on the passenger seat.
+**Calibration.** The gyro's zero is learned by itself whenever the car is
+parked — two seconds after the key goes in, and topped up at every stop. The
+compass still wants one `spin` (a slow full circle, then `spin stop`), which
+with the MPU fitted is right at whatever angle the box sits.
 
-**Calibration happens by itself.** The zero-rate offset is measured at boot and
-again every time the phone reports the car has been standing still for a
-second — which is the only moment the true turn rate is known to be zero. There
-is nothing to adjust.
-
-**You do not need it.** Without the module the app uses the phone's own
-gyroscope, which is nearly as good; without that either, it falls back to plain
-GPS heading, which works but turns a beat late. The board tells the app which
-one it is doing by announcing itself as `$HELLO,NAVHUD,2,IMU`, and the Setup
-screen shows the link description.
+**You do not need it.** Without it the compass is the flat one — right only
+with the box level — and the app uses the phone's own gyroscope, or plain GPS
+heading, which works but turns a beat late.
 
 ## Which file owns what
 
@@ -209,7 +218,7 @@ than at a thousand-line sketch. In rough order of how often you will open them:
 
 | File | Owns | Open it when |
 |---|---|---|
-| `hud_config.h` | Every setting you change before flashing: theme, `HUD_CAN`, `HUD_BENCH`, pins, backlight levels, `HUD_IMU`/`HUD_MAG`, timeouts | You want to turn something on or off |
+| `hud_config.h` | Every setting you change before flashing: `HUD_CAN`, `HUD_MAG`, `HUD_BENCH`, the sensors' axis mapping, backlight levels, timeouts | You want to turn something on or off |
 | `hud_display.h` | Which of the five screens is up, and the rule that no route means no maneuver | The screen shows the wrong thing |
 | `hud_backlight.h` | Lit or dark (the key, off 0x130) and how bright (the phone's night flag) | The panel is dark when it should not be, or lit when it should not be |
 | `hud_can.h` | The MCP2515 itself: SPI, registers, bit timing, listen-only | No frames arrive, or `$CANDROP` climbs |
@@ -221,8 +230,11 @@ than at a thousand-line sketch. In rough order of how often you will open them:
 | `theme_dash.h` | The three-band E60 layout that ships | Something is in the wrong place on screen |
 | `theme_e60.h` | The older nav-only E60 layout (`HUD_THEME_E60_CLASSIC`) | Only if you turned that on |
 | `hud_arrows.h` | The maneuver glyphs | An arrow is the wrong shape |
-| `hud_imu.h` / `hud_mag.h` | MPU-9250 gyro and AK8963 compass | Heading or yaw rate is wrong |
-| `NavHud.ino` | `setup()` and `loop()`, and nothing else | You want to see the order things happen in |
+| `hud_heading.h` | The compass maths: tilt-compensated heading, turn rate, gyro bias, `spin` | The heading is wrong, or moves when the box tilts |
+| `hud_sensors.h` | Running the compass and the MPU: bring-up, reads, retries, `$MAG`, `$IMU` | A chip is reported missing, or a line stops |
+| `hud_compass.h` / `hud_motion.h` | The QMC5883P and the MPU-6050, through their libraries | A chip answers but its numbers are nonsense |
+| `hud_i2c.h` | The I2C bus itself, and clocking it free at boot | Nothing on I2C answers, or the board will not boot |
+| `NavHud.ino` | `setup()` and `loop()`, and a file map at the top | You want to see the order things happen in |
 
 Two rules hold the split together, and both are load-bearing:
 
@@ -236,30 +248,33 @@ Two rules hold the split together, and both are load-bearing:
 
 ## Flashing the display
 
-1. Install the **ESP8266 board package** (Arduino IDE → Boards Manager →
+1. Install the **ESP8266 board package** 3.1.2 (Arduino IDE → Boards Manager →
    "esp8266 by ESP8266 Community").
-2. Install the **TFT_eSPI** library (Library Manager).
-3. Copy `arduino/config/User_Setup_ESP8266.h` over
-   `libraries/TFT_eSPI/User_Setup.h`, keeping the original somewhere. TFT_eSPI
-   is configured by editing the library rather than the sketch — an unfortunate
-   design, but it is the library's.
-4. Open `arduino/NavHud/NavHud.ino`, select **NodeMCU 1.0 (ESP-12E Module)**,
-   set CPU frequency to 160 MHz, upload.
-5. You should see `NavHUD — waiting for the phone...`, then `NO LINK` after 4 s.
-   That is the sketch working correctly with nothing talking to it.
+2. Install the libraries (Library Manager), at the versions CI compiles with:
+   **TFT_eSPI** 2.5.43, **mcp_can** 1.5.1 (coryjfowler), **GY521** 0.6.2 (Rob
+   Tillaart), **Adafruit QMC5883P Library** 1.0.2 and **Adafruit BusIO** 1.17.4.
+3. Copy `arduino/config/User_Setup.h` over `libraries/TFT_eSPI/User_Setup.h`,
+   keeping the original somewhere. TFT_eSPI is configured by editing the
+   library rather than the sketch — an unfortunate design, but it is the
+   library's. Miss this and it compiles fine and drives the wrong pins.
+4. Open `arduino/NavHud/NavHud.ino`, select **LOLIN(WEMOS) D1 R2 & mini**,
+   upload.
+5. You should see `NavHUD — starting...`, then `waiting for the phone...`, then
+   the car screen (or `NO LINK` on a build without CAN). That is the sketch
+   working correctly with nothing talking to it.
 
 The text will read backwards, because the firmware ships mirrored for the
 windscreen mount. That is not a fault — hold a mirror up to it, or turn the
 mirror off on the app's alignment page. If you would rather it came up
-unmirrored, `HUD_DEFAULT_MIRROR_X` at the top of `NavHud.ino` is the switch.
+unmirrored, `HUD_DEFAULT_MIRROR_X` in `hud_config.h` is the switch.
 
 **If the screen comes up white with a working backlight**, the controller is
 powered but was never initialised, and the usual reason is that you talked to
 it too soon. RESET is tied to the board's own reset line rather than driven by
 the library, so the ST7796S and the ESP8266 come out of reset together — and
 the datasheet wants 120 ms after reset before the controller will accept a
-command. The ESP is ready long before that. `NavHud.ino` waits 250 ms before
-`init()` and 50 ms after, which is that budget with room to spare.
+command. The ESP is ready long before that. `NavHud.ino` waits well past that
+before `init()`, and 50 ms after.
 
 This is worth knowing because it does not fail cleanly: the init sequence goes
 into a controller that is not listening, every later draw is ignored, and what
@@ -274,40 +289,26 @@ exactly so this does not matter.
 
 ## Themes
 
-Two are included, switched with one line at the top of `NavHud.ino`:
+Two are included:
 
-```cpp
-//#define HUD_THEME_MODERN     // commented out = BMW E60 (the default)
-```
-
-**E60** is the default: monochrome amber on black, big speed reading on top,
-navigation underneath, a thin rule between them — the way the 2004–2010 5-series
-head-up display looked. The one departure from the original is that the speed
-turns red and gets bracketed when you are over the limit, and the roundel blinks
-between red and amber. (It blinks between two *visible* colours deliberately —
-a limit that disappears half the time is a limit you cannot read.)
-
-**Modern** is full colour: green turn arrow going yellow as the turn approaches,
-a proper red-and-white roundel, white speed turning red. Easier to read at a
-glance; looks nothing like a BMW.
+- **`theme_dash.h`**, the one that ships: three bands, amber on black — the car
+  on top (rpm, speed, PS and battery from the CAN bus), the drive in the middle
+  and where you are at the bottom (turn, distance, limit, street and cameras
+  from the phone). Either half runs without the other.
+- **`theme_e60.h`**, the older navigation-only layout after the 2004–2010
+  5-series HUD, selected with `HUD_THEME_E60_CLASSIC`; the host tests build it
+  so it keeps working.
 
 Both are plain C++ headers implementing the same five functions, so writing a
 third is a copy-paste job. `cd arduino/test && make render` draws every screen
 of both on a PC — a much faster loop than reflashing.
 
-### Making the E60 typography authentic
+### The typeface
 
-The real HUD used a DIN-like typeface. TFT_eSPI's built-in fonts are what the
-sketch falls back on, and they look more "digital clock" than "BMW". To fix that
-properly:
-
-1. Download a free DIN-alike — **D-DIN** or **Barlow Condensed** both work well.
-2. Convert it with the `Create_font` Processing sketch that ships with TFT_eSPI,
-   at around 75 px for the speed and 26 px for the labels. You get `.vlw` files.
-3. Put them in SPIFFS/LittleFS on the ESP32 and load with `tft.loadFont()`.
-
-It is half an hour of faff and it is the difference between "amber numbers" and
-"that's an E60".
+The digits are **Barlow Condensed**, compiled into the sketch as smooth
+(anti-aliased) fonts, one file per size, in `arduino/NavHud/fonts/`.
+`tools/make_vlw.py` makes them from the TTF in `tools/fonts/`; its header says
+why each size is its own file and how to add one.
 
 ## Test it from a PC before involving the phone
 
@@ -370,9 +371,9 @@ The simplest version is a box on the dash with the screen facing you. That is a
 
 For a real HUD you reflect the screen off the windscreen, which means:
 
-- Uncomment `#define HUD_MIRROR` in `NavHud.ino`, so text reads correctly in
-  the reflection. If it flips the wrong axis on your panel, change the MADCTL
-  value on the line below it — the comment there explains the bits.
+- The picture is mirrored by default so text reads correctly in the
+  reflection; the app's **Align the screen** page sets the mirror and the
+  keystone and saves them on the board (see *Mirroring and keystone*).
 - Reflect off a **combiner** (a sheet of acrylic angled ~30°) rather than the
   glass itself if you can. A windscreen is two panes and gives you a ghost
   image about 10 cm from the real one, which is much more distracting than it

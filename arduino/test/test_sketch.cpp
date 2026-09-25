@@ -108,11 +108,10 @@ int main() {
   }
   printf("\n");
 #endif
-  // Protocol 2: the board can now talk back up the cable ($IMU), so it says so.
-  // The hello line grows a capability when the gyroscope is compiled in, so
-  // check the checksum is right for whatever was actually sent rather than
-  // pinning one build's string -- otherwise the optional build fails a test
-  // that is really about the checksum routine.
+  // The hello line's checksum, checked against whatever was actually sent
+  // rather than one build's pinned string, so a change to the line fails the
+  // test that is about the line and not this one, which is about the checksum
+  // routine.
   {
     const size_t at = Serial.out_.find("$HELLO,");
     CHECK(at != std::string::npos, "sends $HELLO");

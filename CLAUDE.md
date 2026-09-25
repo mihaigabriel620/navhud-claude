@@ -2,7 +2,8 @@
 
 Android nav app (Kotlin, MapLibre, Mapbox Directions, OSM/Overpass) for Android
 head units (UIS7862/Mekede, Android 10+), driving a DIY HUD (ESP8266 + MCP2515
-CAN + QMC5883P compass, 480x320 SPI). Firmware in `arduino/`, app in `android/`.
+CAN + QMC5883P compass + optional MPU-6050, 480x320 SPI). Firmware in
+`arduino/`, app in `android/`.
 The owner drives in Belgium and across Europe (to Romania); it must behave like
 Waze / Google Maps everywhere.
 
@@ -53,13 +54,26 @@ Waze / Google Maps everywhere.
 - A cloud session may not reach dl.google.com / jitpack.io; if the SDK or
   dependencies cannot be installed, push and let CI build and test instead.
 
-## HUD firmware (`arduino/NavHud`, v2.9)
+## HUD firmware (`arduino/NavHud`, v3.0)
+- **Firmware 3.0 is on branch `claude/quirky-wright-sqijvf`, not `main`**, at
+  the owner's request, until they have flashed and approved it; `main` has 2.9.
+  Once approved, fast-forward `main` to it and delete this line.
 - Hardware: Wemos D1 mini (ESP8266) + ST7796 4" 480x320 SPI (landscape,
   mirrored for the windscreen) + MCP2515 CAN (BMW E60 K-CAN, listen-only) +
-  QMC5883P compass (I2C). Pins: `hud_pins.h` (CAN CS D8, TFT CS D2, backlight
-  D0). Two themes: `theme_dash.h` (default), `theme_e60.h`. Protocol with the
-  app: `PROTOCOL.md` ($HUD, $RAB, $CAM, $LANE, $CAR …; flags bit 7 = left-hand
-  traffic) — app side in `android/.../HudFrame.kt`, `HudService.kt`.
+  QMC5883P compass and optional MPU-6050 (GY-521), both on I2C D3/D4. Pins:
+  `hud_pins.h` (CAN CS D8, TFT CS D2, backlight D0). Two themes: `theme_dash.h`
+  (default), `theme_e60.h`. Protocol with the app: `PROTOCOL.md` ($HUD, $RAB,
+  $CAM, $LANE, $CAR, $MAG, $IMU …; flags bit 7 = left-hand traffic) — app side
+  in `android/.../HudFrame.kt`, `HudService.kt`.
+- `NavHud.ino` only orchestrates and starts with a file map (which file does
+  what, where to look when something breaks); keep it that way.
+- Heading: `hud_heading.h` is pure maths (tilt-compensated heading from the
+  MPU's gravity, gyro-carried and re-read only when parked or driving steadily;
+  turn rate about the true vertical for `$IMU`; `spin` in the true horizontal),
+  host-tested by `test_heading.cpp`. The chips are `hud_compass.h` (Adafruit
+  QMC5883P library, QST's write order, range read back) and `hud_motion.h`
+  (GY521 library); `hud_sensors.h` runs them, one chip per loop pass so CAN is
+  drained between. Without the MPU it is the flat compass of 2.9.
 - The MCP2515 must never transmit: listen-only, re-checked on every drain
   (`canPump`), and the host tests assert no transmit command ever reaches it.
 - Roundabout glyph: `hud_arrows.h` `roundaboutArt()` (dim ring, bright driven
@@ -72,19 +86,23 @@ Waze / Google Maps everywhere.
   (round-ended strokes + triangles, per pixel, no seams). `make render` fails
   on any pinhole, on an arrow without smooth edges, or on a seam inside one.
 - Build: `arduino-cli compile --fqbn esp8266:esp8266:d1_mini arduino/NavHud`
-  with core esp8266:esp8266 3.1.2, libraries TFT_eSPI 2.5.43 and mcp_can 1.5.1;
+  with core esp8266:esp8266 3.1.2, libraries TFT_eSPI 2.5.43, mcp_can 1.5.1,
+  GY521 0.6.2, Adafruit QMC5883P 1.0.2 and Adafruit BusIO 1.17.4;
   **copy `arduino/config/User_Setup.h` into the TFT_eSPI library folder** or it
-  compiles fine and drives the wrong pins. 2.9: flash 56 %, RAM 45 %, IRAM 94 %
+  compiles fine and drives the wrong pins. 3.0: flash 57 %, RAM 46 %, IRAM 94 %
   (IRAM is the tight one — no new IRAM_ATTR code). CI does this compile.
 - CI: `.github/workflows/firmware.yml` on every push to `arduino/`/`tools/`:
   `make check`, `make render` (PNGs as artifact `hud-screens`), and the real
   compile with the size report in the log.
 - Host tests and screen images: `cd arduino/test && make check` (all suites
-  green since 2.8: protocol, geometry, the three sketch builds, CAN through an
-  MCP2515 register simulator and an mcp_can stand-in, layout, PanelDiag, and
-  the python reference models — needs python3) and `make render` (PNGs of every
-  screen state, both themes, into `arduino/test/out/`, readable orientation;
-  also runs pixel checks — a field drawn alone must survive the full screen).
+  green since 2.8: protocol, geometry, the heading maths, the three sketch
+  builds, CAN through an MCP2515 register simulator and an mcp_can stand-in,
+  layout, PanelDiag, and the python reference models — needs python3; the
+  sketch builds fetch the three sensor libraries once, pinned, and run them
+  over a simulated I2C bus with both chips in `test/Wire.h`) and `make render`
+  (PNGs of every screen state, both themes, into `arduino/test/out/`, readable
+  orientation; also runs pixel checks — a field drawn alone must survive the
+  full screen).
   `make docs-images` rebuilds README's pictures in `docs/img/` from those
   renders (needs Pillow); rerun it whenever what the HUD draws changes.
   On the owner's PC use `mingw32-make` from WinLibs GCC (not on PATH in older
