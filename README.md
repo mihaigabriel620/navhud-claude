@@ -167,38 +167,64 @@ a word that any French voice reads correctly. Belgium keeps *quatre-vingts* for
 cd arduino/test && make check
 ```
 
-Nine stages, all green:
+Eleven stages and an end-to-end pass, all green:
 
-1. **Protocol** — checksums, truncated frames, resync, field-count errors,
-   buffer overflow, out-of-range clamping.
-2. **Geometry** — the polyline decoder against the canonical Google test vector,
-   haversine against known distances, projection accuracy, and the
+1. **Protocol** — checksums (including the ones quoted in `PROTOCOL.md`),
+   truncated frames, resync, field-count errors, buffer overflow, out-of-range
+   clamping, and the newer frames: `$CAM`, `$LANE`, `$GEOM`, `$RAB` and the
+   left-hand-traffic flag.
+2. **Screen geometry** — the keystone correction (the corners land where the
+   app asked, straight lines stay straight, a corrupted or extreme setting
+   cannot make the screen unreadable), mirroring left to the panel, and the
+   settings surviving being turned into bytes and back.
+3. **Map geometry** — the polyline decoder against the canonical Google test
+   vector, haversine against known distances, projection accuracy, and the
    divided-highway case where heading decides which carriageway you're on.
-3. **Navigation logic** — a simulated drive asserting every maneuver is announced
+4. **Navigation logic** — a simulated drive asserting every maneuver is announced
    in order, the countdown never ticks upwards, limits track the sections being
    driven, the data-gap hold-over fires and clears, arrival is flagged only at
    the end, and an 80 m detour is caught with no false positives before it.
-4. **Voice** — every maneuver announced, never more than three times, stages
+5. **Voice** — every maneuver announced, never more than three times, stages
    never repeat or go backwards, the final call always lands within 200 m, and
    no two announcements stack up on top of each other.
-5–6. **Both themes' layout** — the sketch's themes compiled against a stub TFT
-   that records every primitive: 27 states each, nothing drawn off-panel, and no
-   two screen zones ever writing the same pixel. That's the check that catches
-   an arrow crossing into the distance digits before your dashboard does.
-7–8. **The sketch itself** — compiled on the host and run against a scripted
-   serial stream: link up, deltas, an unchanged frame repainting nothing, link
-   lost, link restored, a corrupt frame ignored, 400 frames stay on-panel.
-9. **End to end** — 1,942 + 1,853 generated frames through the exact parser the
-   sketch compiles, zero rejected.
+6. **E60 theme layout** — the theme compiled against a stub TFT that records
+   every primitive: 30 states, nothing drawn off-panel (with a keystone
+   correction too), and no two screen zones ever writing the same pixel. That's
+   the check that catches an arrow crossing into the distance digits before your
+   dashboard does.
+7. **The sketch itself**, E60 theme — compiled on the host and run against a
+   scripted serial stream: link up, deltas, an unchanged frame repainting
+   nothing, link lost, link restored, a corrupt frame ignored, 400 frames stay
+   on-panel, the saved alignment surviving a power cycle, the backlight
+   following the key, and nothing ever sent on the car's bus.
+8. **The same in bench mode** — unmirrored, the saved alignment ignored, Save
+   refused, the backlight on whatever the key says.
+9. **CAN** — `canBegin()`/`canPump()` through a stand-in for the mcp_can library
+   over a register-level MCP2515 simulator: the chip brought up listen-only and
+   kept there, the E60 decoders (ignition, speed, rpm, torque, battery,
+   coolant), stale data, and no transmit ever reaching the chip.
+10. **The same in the dash theme.**
+11. **PanelDiag**, the bring-up sketch — nothing drawn off the panel, every
+    string in a font that has its characters.
 
-And on the Android side, **249 JVM unit tests against the real Kotlin** (not the
-Python ports):
+Then **end to end**: 1,942 + 1,853 generated frames through the exact parser the
+sketch compiles, zero rejected.
+
+`make render` draws every screen of both themes (59 dash, 54 E60) as PNGs into
+`arduino/test/out/`, and fails on any pinhole, on a manoeuvre glyph (arrows,
+U-turn, roundabouts) without smooth edges or with a seam inside it, or on a
+field that the rest of the screen paints over or its own clear leaves behind.
+CI runs `make check`, `make render` and the real ESP8266 compile on every
+firmware change.
+
+And on the Android side, **719 JVM unit tests against the real Kotlin** (not the
+Python ports), run by CI on every push to `main`:
 
 ```bash
-cd android && ./gradlew testReleaseUnitTest
+cd android && ./gradlew :app:testDebugUnitTest
 ```
 
-These cover the same ground as stages 2–4 but on the shipping code, plus the
+These cover the same ground as stages 3–5 but on the shipping code, plus the
 things that only exist on the phone: the polyline decoder against Google's
 canonical vector, the divided-highway heading case, a full simulated drive
 through `RouteTracker`, the frame encoder producing byte-for-byte the checksums
@@ -211,12 +237,17 @@ numeral from 0 to 3000, lane guidance in all three states including the
 reconstruction when the router omits `active_direction`, the eleven-lane window
 that must not drop the exit lane, the sign colour of every European country
 including Belgium's inverted rule, point-in-polygon against a low-emission zone,
-and the reach of a level-crossing warning at 30 and at 120 km/h.
+and the reach of a level-crossing warning at 50 and at 120 km/h. Newer suites
+cover the arrow's heading (GPS against the compass, and the HUD compass's
+correction learned from GPS), the car's speed from the CAN bus, free-drive road
+data (both Overpass servers and the disk cache), per-country limits and camera
+rules, the over-limit warning (also with the app swiped away), speed cameras,
+the keystone, roundabout exits, network failures, and the offline map chunks
+along a route.
 
-What is still unverified: the Android UI itself. There's no KVM in the build
-environment, so no emulator ran — `MapActivity`, `SearchActivity` and the USB
-permission flow are compile-checked and lint-clean (zero errors), but nobody has
-watched them draw. That's what the demo drive is for.
+What is still unverified: the Android UI itself. There is no emulator in CI, so
+`MapActivity`, `SearchActivity` and the USB permission flow are only compiled
+there; they are checked on the head unit, on the road.
 
 ## Known limits
 
@@ -233,5 +264,5 @@ watched them draw. That's what the demo drive is for.
   free source, and pretending otherwise would be worse than saying so.
 - Speed-camera coverage is OpenStreetMap's: good in Belgium and France, thinner
   east of Vienna. It is an assist, not a guarantee.
-- No emulator ran in the build environment, so the UI is compile-checked and
-  lint-clean but not screenshot-tested. The demo drive is what exercises it.
+- No emulator runs in CI, so the UI is compiled but not screenshot-tested; it is
+  checked on the head unit, on the road.
