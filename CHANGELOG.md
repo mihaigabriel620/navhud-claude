@@ -1,5 +1,41 @@
 # Changelog
 
+## App 1.31 — regression check and drive walkthrough
+
+Fixes from a check against the earlier bug lists and an end-to-end drive
+walkthrough. Firmware unchanged.
+
+- France (and other "danger zone" countries): "zone de danger" is said once,
+  when the zone starts, and the zone stays up for a while after the camera.
+  Before, it was said again at 500/200 m and ended at the camera, which gave
+  away where the camera stands.
+- The speed gauge shows the car's own speed when there is no GPS fix (before
+  the first fix, in free drive, in a long tunnel), instead of "--".
+- Off the route (for example while a reroute keeps failing offline), the old
+  route's cameras are no longer announced.
+- The over-limit warning no longer repeats after a quick 50-70-50 flicker of
+  the limit; only a lower limit than the one warned about counts as new.
+- Parked without the car's speed (phone only, or no CAN), GPS wander no
+  longer makes the arrow creep along the road.
+- Off the route, the speed limit comes from the road you are actually on,
+  not from the route you left.
+- Forks and slip roads in town get two voice calls instead of three; motorway
+  exits keep 1200/500/200 m.
+- No more reroute loop ("Recalculating" every few seconds) when a route is
+  started from a car park, or when parked just off the road near the end.
+- Roundabout arrow: now uses the exit angle Mapbox gives for the roundabout
+  instead of the angle at the entry. Needs confirming on the road.
+- After a reroute the HUD no longer keeps the missed exit's lane arrows.
+- Leaving Germany (camera alerts off) on a route, cameras come back as soon
+  as alerts are allowed again, not up to 30 minutes later.
+- In a car park with a good GPS fix, the arrow no longer jumps to the street
+  80 m away; a weak indoor fix still snaps to the nearest road.
+- "Resume route?" is offered again after the head unit restarts.
+- Opening the map abroad no longer resets the country to Belgium (which
+  showed camera positions in Germany for up to 25 km).
+- The parked heading is restored from the first GPS fix; a rough network fix
+  used to use up the only attempt.
+
 ## App 1.30 — final sweep
 
 Fixes from two full read-through audits. Firmware unchanged.
