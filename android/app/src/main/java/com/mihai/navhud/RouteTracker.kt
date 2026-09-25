@@ -419,6 +419,7 @@ class RouteTracker(val route: Route) {
         if (arrived) flags = flags or HudFrame.FLAG_ARRIVED
         if (lowConf) flags = flags or HudFrame.FLAG_LOW_CONF
         if (night) flags = flags or HudFrame.FLAG_NIGHT
+        if (next?.leftHand == true) flags = flags or HudFrame.FLAG_LEFT_HAND
 
         return HudFrame(
             speedKph = speedKph,

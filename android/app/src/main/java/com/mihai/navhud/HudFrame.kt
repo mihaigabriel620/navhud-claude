@@ -43,6 +43,17 @@ data class HudFrame(
          */
         const val FLAG_ROUTE = 64
 
+        /**
+         * Traffic keeps left where the next maneuver is, so a roundabout runs
+         * clockwise and the HUD draws its path round the other way.
+         *
+         * A bit on $HUD rather than a frame of its own: firmware before 2.8
+         * tests only the bits it knows and ignores this one, and firmware 2.8
+         * talking to an older app sees it clear -- right-hand traffic, which is
+         * every country between Belgium and Romania.
+         */
+        const val FLAG_LEFT_HAND = 128
+
         const val STREET_MAX = 20
 
         fun checksum(body: String): Int {

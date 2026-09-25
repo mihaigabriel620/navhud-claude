@@ -26,66 +26,117 @@ class RoundaboutBearingTest {
     private fun parse(json: String): Route =
         MapboxProvider(token = "test", language = "en").parseRoute(JSONObject(json))
 
-    /** Approach heading, exit heading, and whether Mapbox reports them at all. */
-    private fun route(before: String, after: String, exit: Int = 2): String = """
+    /**
+     * A roundabout step as Mapbox documents it: the maneuver at the entry,
+     * then the intersections round the ring. Approach heading 2 degrees
+     * (north). Right-hand traffic, so the ring runs anticlockwise: the east
+     * exit first, then an inbound one-way road (entry=false: not an exit),
+     * then the north exit, then the west one.
+     *
+     *   entry  in 182 (back south)  out 62 (veer right onto the ring)  302 ring in
+     *   east   side road 95                          -> exit 1, +93
+     *   NE     inbound road 40, entry false          -> not counted
+     *   north  side road 3                           -> exit 2, +1
+     *   west   side road 268                         -> exit 3, -94
+     */
+    private fun ring(exit: Int, side: String = "right", banner: String = "",
+                     before: String = ""","bearing_before":2.0,"bearing_after":62.0""",
+                     withIntersections: Boolean = true, lastNode: String? = null): String {
+        fun out(n: Int) = if (exit == n) 1 else 2
+        val west = lastNode
+            ?: """{"location":[4.3094,50.8004],"bearings":[20,268,170],"entry":[false,true,true],"in":0,"out":${out(3)}}"""
+        val ints = if (!withIntersections) "" else """,
+         "intersections":[
+           {"location":[4.3100,50.8000],"bearings":[182,62,302],"entry":[false,true,false],"in":0,"out":1},
+           {"location":[4.3104,50.8003],"bearings":[200,95,350],"entry":[false,true,true],"in":0,"out":${out(1)}},
+           {"location":[4.3101,50.8007],"bearings":[160,40,300],"entry":[false,false,true],"in":0,"out":2},
+           {"location":[4.3098,50.8008],"bearings":[110,3,250],"entry":[false,true,true],"in":0,"out":${out(2)}},
+           $west
+         ]"""
+        return """
     {"distance":900.0,"duration":90.0,
       "geometry":"_wq{_B_mmeG?owH?_pRg^_pR",
       "legs":[{"steps":[
-        {"name":"Grote Baan","distance":400.0,
+        {"name":"Grote Baan","distance":400.0,"driving_side":"$side"$banner,
          "maneuver":{"type":"depart","modifier":"","location":[4.30,50.80]}},
-        {"name":"Ring","distance":200.0,
-         "maneuver":{"type":"roundabout","modifier":"straight","exit":$exit,
-                     "location":[4.31,50.80]$before$after}},
+        {"name":"Ring","distance":200.0,"driving_side":"$side",
+         "maneuver":{"type":"roundabout","modifier":"slight right","exit":$exit,
+                     "location":[4.3100,50.8000]$before}$ints},
         {"name":"Steenweg","distance":300.0,
          "maneuver":{"type":"turn","modifier":"left","location":[4.32,50.80]}}
       ]}]}
     """.trimIndent()
+    }
 
-    private fun bearings(before: Double, after: Double) =
-        route(""","bearing_before":$before""", ""","bearing_after":$after""")
+    /** Exit 3's node, leaving by the road straight back south: 182 from a heading of 2. */
+    private val uturnNode =
+        """{"location":[4.3094,50.8004],"bearings":[20,170,182],"entry":[false,true,true],"in":0,"out":2}"""
+
+    private fun exitOf(json: String, exit: Int) =
+        parse(json).maneuvers.first { it.code == Man.ROUNDABOUT && it.exit == exit }
 
     // ---- reading the real angle off the route ------------------------------
 
-    @Test fun `a straight-ahead exit is zero, not the table's thirty`() {
-        val r = parse(bearings(90.0, 90.0))
-        val m = r.maneuvers.first { it.exit == 2 }
-        assertEquals(0, m.exitBearing)
+    @Test fun `the first exit, east, is to the right`() {
+        assertEquals(93, exitOf(ring(1), 1).exitBearing)
     }
 
-    @Test fun `a right-hand exit is positive`() {
-        val m = parse(bearings(0.0, 90.0)).maneuvers.first { it.exit == 2 }
-        assertEquals(90, m.exitBearing)
+    @Test fun `the second exit, north, is straight on -- not the table's thirty`() {
+        assertEquals(1, exitOf(ring(2), 2).exitBearing)
     }
 
-    @Test fun `a left-hand exit is negative`() {
-        val m = parse(bearings(0.0, 270.0)).maneuvers.first { it.exit == 2 }
-        assertEquals(-90, m.exitBearing)
-    }
-
-    /** 350 -> 10 is a twenty-degree turn to the right, not 340 to the left. */
-    @Test fun `the wrap at north is a small turn, not a huge one`() {
-        val m = parse(bearings(350.0, 10.0)).maneuvers.first { it.exit == 2 }
-        assertEquals(20, m.exitBearing)
-    }
-
-    @Test fun `the wrap the other way is a small turn too`() {
-        val m = parse(bearings(10.0, 350.0)).maneuvers.first { it.exit == 2 }
-        assertEquals(-20, m.exitBearing)
+    @Test fun `the third exit, west, is to the left, and the inbound road is not counted`() {
+        // Counting the one-way road into the ring would make "exit 3" the north
+        // one and point the arrow straight ahead.
+        assertEquals(-94, exitOf(ring(3), 3).exitBearing)
     }
 
     /**
-     * Mapbox omits these on some steps, and a missing field read as 0.0 would
-     * mean "straight ahead" -- stated with total confidence, on a roundabout
-     * where the route might go hard left.
+     * bearing_after is "the direction of travel immediately after the
+     * maneuver", and a roundabout's maneuver is the ENTRY: it is the veer onto
+     * the ring (62 here, the "slight right"), whatever the exit. Until 1.32 it
+     * was the fallback and pointed every such roundabout a little right.
      */
-    @Test fun `no bearings at all means null, never zero`() {
-        val m = parse(route("", "")).maneuvers.first { it.exit == 2 }
-        assertNull(m.exitBearing)
+    @Test fun `bearing_after is the veer into the ring, never the exit`() {
+        assertNull(exitOf(ring(3, withIntersections = false), 3).exitBearing)
     }
 
-    @Test fun `half the pair is not enough`() {
-        val m = parse(route(""","bearing_before":90.0""", "")).maneuvers.first { it.exit == 2 }
-        assertNull(m.exitBearing)
+    @Test fun `no bearings and no intersections means null, never zero`() {
+        assertNull(exitOf(ring(2, before = "", withIntersections = false), 2).exitBearing)
+    }
+
+    @Test fun `the banner's own figure wins over the intersections`() {
+        val banner = ""","bannerInstructions":[{"distanceAlongGeometry":400.0,
+            "primary":{"text":"Ring","type":"roundabout","degrees":270,"driving_side":"right"}}]"""
+        assertEquals(-90, exitOf(ring(3, banner = banner), 3).exitBearing)
+    }
+
+    @Test fun `with no bearing_before the heading comes from the entry node`() {
+        // in = 182 points back along the approach, so the heading is 2.
+        assertEquals(-94, exitOf(ring(3, before = ""), 3).exitBearing)
+    }
+
+    @Test fun `a U-turn is all the way round, anticlockwise where traffic keeps right`() {
+        assertEquals(-180, exitOf(ring(3, lastNode = uturnNode), 3).exitBearing)
+    }
+
+    @Test fun `left-hand traffic is marked, and its U-turn goes the other way round`() {
+        val m = exitOf(ring(3, side = "left", lastNode = uturnNode), 3)
+        assertTrue(m.leftHand)
+        assertEquals(180, m.exitBearing)
+        assertTrue(!exitOf(ring(3), 3).leftHand)
+    }
+
+    @Test fun `too few exits on the ring means null, not the last one found`() {
+        assertNull(exitOf(ring(4), 4).exitBearing)
+    }
+
+    @Test fun `left-hand traffic reaches the HUD as flags bit 7, and nothing else moves`() {
+        assertEquals(128, HudFrame.FLAG_LEFT_HAND)
+        val f = HudFrame(maneuver = Man.ROUNDABOUT, roundaboutExit = 2,
+                         flags = HudFrame.FLAG_ROUTE or HudFrame.FLAG_LEFT_HAND, street = "A1")
+        val body = f.encode().substringAfter('$').substringBefore('*')
+        assertEquals("HUD,-1,0,13,2,0,0,0,192,A1", body)
     }
 
     // ---- what goes on the wire ---------------------------------------------

@@ -295,40 +295,33 @@ class MapboxProvider(
                 )
                 // Where the exit really points, for roundabouts only.
                 //
-                // First the banner's `degrees` (bannerExitAngle). The bearings are
-                // only the fallback: on a roundabout step Mapbox/OSRM put the
-                // maneuver at the ENTRY, so their difference is the veer into the
-                // circle, not the exit (1.31; to be confirmed on the road).
-                //
-                // bearing_before is the compass heading as you arrive, bearing_after
-                // the heading as you leave; the difference is the turn. Normalised to
-                // -180..180 so 0 is straight on and positive is to the right, which is
-                // what both the HUD and ManeuverView draw in.
-                //
-                // Only when Mapbox gave BOTH -- it omits them on some steps, and a
-                // missing field read as 0.0 would mean "straight ahead", stated with
-                // total confidence. Null instead, and the old exit-number table remains
-                // as the fallback.
-                val exitBearing: Int? = bannerExitAngle(banners, step) ?: run {
-                    if (!man.has("bearing_before") || !man.has("bearing_after")) return@run null
-                    val before = man.optDouble("bearing_before", Double.NaN)
-                    val after  = man.optDouble("bearing_after",  Double.NaN)
-                    if (before.isNaN() || after.isNaN()) return@run null
-                    var d = after - before
-                    while (d > 180.0)  d -= 360.0
-                    while (d < -180.0) d += 360.0
-                    Math.round(d).toInt()
-                }
+                // First the banner's `degrees` (bannerExitAngle), then the exit
+                // road's own bearing from the step's intersections
+                // (roundaboutExitAngles). NOT bearing_after - bearing_before: on
+                // a roundabout step the maneuver is the ENTRY, and bearing_after
+                // is "the direction of travel immediately after the maneuver" --
+                // the veer into the circle, not the exit. Until 1.32 that was the
+                // fallback, and it pointed a little right at every roundabout
+                // whatever the exit. Null when nothing is known: the old
+                // exit-number table remains as the fallback on both displays.
+                val code = Man.fromMapbox(man.optString("type"), man.optString("modifier"))
+                val exitNo = man.optInt("exit", 0)
+                val leftHand = drivingSide(banners, step) == "left"
+                val exitBearing: Int? = bannerExitAngle(banners, step)
+                    ?: if (code == Man.ROUNDABOUT && exitNo in 1..12)
+                           roundaboutExitAngle(step, man, exitNo, leftHand)
+                       else null
 
                 maneuvers.add(
                     ManeuverPoint(
                         alongM = cum[vertex],
-                        code = Man.fromMapbox(man.optString("type"), man.optString("modifier")),
-                        exit = man.optInt("exit", 0),
+                        code = code,
+                        exit = exitNo,
                         name = street,
                         lanes = LaneGuidance.fromBanners(banners),
                         sign = if (sign.isEmpty) null else sign,
-                        exitBearing = exitBearing
+                        exitBearing = exitBearing,
+                        leftHand = leftHand
                     )
                 )
                 walkedM += step.optDouble("distance", 0.0)
@@ -420,6 +413,78 @@ class MapboxProvider(
             val side = p.optString("driving_side").ifEmpty { step.optString("driving_side") }
             val turn = 180.0 - deg
             return Math.round(if (side == "left") -turn else turn).toInt()
+        }
+        return null
+    }
+
+    /** "left" or "right": the nearest banner's, else the step's. */
+    private fun drivingSide(banners: JSONArray?, step: JSONObject): String {
+        if (banners != null) {
+            for (i in banners.length() - 1 downTo 0) {
+                val s = banners.optJSONObject(i)?.optJSONObject("primary")
+                    ?.optString("driving_side").orEmpty()
+                if (s.isNotEmpty()) return s
+            }
+        }
+        return step.optString("driving_side")
+    }
+
+    /**
+     * The exit taken at a roundabout, as an angle from the road you come in on
+     * (0 ahead, positive right, -180..180, the $RAB convention), from the
+     * step's intersections. Null when the step does not say enough.
+     *
+     * As documented (OSRM / Mapbox v5): intersections[0] is the maneuver
+     * itself, the entry; then one per crossway "until the next turn
+     * instruction". Each lists `bearings` (every road at the node, pointing
+     * away from it), `entry` (whether each may be taken) and the indices `in`
+     * and `out` of the roads you arrive and leave by. On the ring a road you
+     * could leave by is an entry=true bearing that is neither `in` nor `out`,
+     * and exits are counted per node that has one, as Mapbox counts `exit`.
+     * At the node where the count reaches `exit`, `out` is the exit road
+     * itself (the ring going on is the entry=true one there), and its bearing
+     * against the heading you arrived with is the angle.
+     *
+     * Only the fallback: the banner's `degrees` is Mapbox's own figure and
+     * wins when it is there (bannerExitAngle).
+     */
+    internal fun roundaboutExitAngle(
+        step: JSONObject, man: JSONObject, exit: Int, leftHand: Boolean
+    ): Int? {
+        val ints = step.optJSONArray("intersections") ?: return null
+        if (ints.length() < 2) return null
+        val approach: Double = when {
+            man.has("bearing_before") -> man.optDouble("bearing_before", Double.NaN)
+            else -> {
+                val x0 = ints.optJSONObject(0)
+                val b = x0?.optJSONArray("bearings")
+                val i = x0?.optInt("in", -1) ?: -1
+                if (b != null && i in 0 until b.length()) b.optDouble(i) + 180.0 else Double.NaN
+            }
+        }
+        if (approach.isNaN()) return null
+
+        var counted = 0
+        for (k in 1 until ints.length()) {
+            val x = ints.optJSONObject(k) ?: continue
+            val b = x.optJSONArray("bearings") ?: continue
+            val e = x.optJSONArray("entry") ?: continue
+            val inI = x.optInt("in", -1)
+            val outI = x.optInt("out", -1)
+            if (outI !in 0 until b.length()) continue
+            var canLeave = false
+            for (j in 0 until b.length()) {
+                if (j != inI && j != outI && e.optBoolean(j, false)) { canLeave = true; break }
+            }
+            if (!canLeave) continue                      // no exit at this node
+            if (++counted < exit) continue
+            var turn = b.optDouble(outI) - approach
+            while (turn > 180.0) turn -= 360.0
+            while (turn <= -180.0) turn += 360.0
+            // Straight back is a U-turn, all the way round: -180 where the ring
+            // runs anticlockwise, +180 where it runs clockwise.
+            if (kotlin.math.abs(turn) >= 179.5) turn = if (leftHand) 180.0 else -180.0
+            return Math.round(turn).toInt()
         }
         return null
     }

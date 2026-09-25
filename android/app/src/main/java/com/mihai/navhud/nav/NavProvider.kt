@@ -23,8 +23,12 @@ data class ManeuverPoint(
      * roundabout "exit 2" is almost always dead ahead and the table said 30
      * degrees. Mapbox has carried the real answer all along -- bearing_before
      * and bearing_after on the step's maneuver -- and nobody was reading it.
+     * (1.32: not quite. bearing_after is the veer INTO the ring; the angle now
+     * comes from the banner or from the exit road's own bearing.)
      */
-    val exitBearing: Int? = null
+    val exitBearing: Int? = null,
+    /** Traffic keeps left here, so a roundabout runs clockwise. */
+    val leftHand: Boolean = false
 )
 
 /**

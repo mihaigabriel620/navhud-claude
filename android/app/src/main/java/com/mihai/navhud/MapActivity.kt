@@ -1385,6 +1385,7 @@ class MapActivity : AppCompatActivity() {
         maneuverView.maneuver = f.maneuver
         maneuverView.roundaboutExit = f.roundaboutExit
         maneuverView.roundaboutBearing = f.roundaboutBearing
+        maneuverView.leftHand = (f.flags and HudFrame.FLAG_LEFT_HAND) != 0
         maneuverView.color = if (f.distToManeuverM in 1..150) Color.parseColor("#FFD24D") else amber
 
         distView.setIfChanged(when {

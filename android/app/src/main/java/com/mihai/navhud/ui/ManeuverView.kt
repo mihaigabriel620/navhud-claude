@@ -28,7 +28,13 @@ class ManeuverView @JvmOverloads constructor(
 
     var maneuver: Int = Man.STRAIGHT
         set(v) { if (field != v) { field = v; invalidate() } }
+    // Invalidates like the rest: two roundabouts in a row with the same
+    // maneuver kept the first one's digit until something else changed.
     var roundaboutExit: Int = 0
+        set(v) { if (field != v) { field = v; invalidate() } }
+    /** Traffic keeps left (HudFrame.FLAG_LEFT_HAND): the ring runs clockwise. */
+    var leftHand: Boolean = false
+        set(v) { if (field != v) { field = v; invalidate() } }
 
     /**
      * The real exit direction in degrees from the approach, or null to guess.
@@ -117,52 +123,88 @@ class ManeuverView @JvmOverloads constructor(
         head(c, cx, cy, angle, r, hw)
     }
 
-    private fun drawRoundabout(c: Canvas, cx: Float, cy: Float, r: Float) {
-        val ring = r * 0.46f
-        val stub = r * 0.2f
-        stroke.strokeWidth = r * 0.11f
-        c.drawCircle(cx, cy - r * 0.08f, ring, stroke)
-        thick(c, cx, cy + r, cx, cy - r * 0.08f + ring, stub)
-        val ry = cy - r * 0.08f
+    /**
+     * The HUD's roundabout (arduino/NavHud/hud_arrows.h, roundaboutArt), drawn
+     * with the same numbers so the card and the glass show the same picture: a
+     * thick ring, the part you drive in [color], the rest dimmed, the exit
+     * number in the hole and the arrow at the exit's real angle. Everything is
+     * in the firmware's -60..60 glyph box;
+     * [r] is 60 of its units.
+     */
+    private fun drawRoundabout(c: Canvas, cx: Float, cy0: Float, r: Float) {
+        val u = r / 60f
+        val cy = cy0 - RAB_UP * u
+        val dim = Color.rgb((Color.red(color) * DIM).toInt(),
+                            (Color.green(color) * DIM).toInt(),
+                            (Color.blue(color) * DIM).toInt())
+        fun px(deg: Float, rr: Float) = cx + (sin(Math.toRadians(deg.toDouble())) * rr * u).toFloat()
+        fun py(deg: Float, rr: Float) = cy - (cos(Math.toRadians(deg.toDouble())) * rr * u).toFloat()
+        val oval = android.graphics.RectF(cx - RAB_RMID * u, cy - RAB_RMID * u,
+                                          cx + RAB_RMID * u, cy + RAB_RMID * u)
+        stroke.strokeWidth = (RAB_R - RAB_RI) * u
+        stroke.strokeCap = Paint.Cap.BUTT
+        fun road(deg: Float, r1: Float, w: Float, col: Int) {
+            stroke.strokeWidth = w * u
+            stroke.strokeCap = Paint.Cap.ROUND
+            stroke.color = col
+            c.drawLine(px(deg, RAB_RM), py(deg, RAB_RM), px(deg, r1), py(deg, r1), stroke)
+            stroke.strokeCap = Paint.Cap.BUTT
+        }
 
-        // Which way the exit points.
-        //
-        // The real bearing if the router gave one, otherwise the old guess from
-        // the exit number. That table is a guess and worth naming as one: an
-        // exit NUMBER is not an angle, and on a three-exit roundabout "exit 2"
-        // is almost always dead ahead while the table says 30 degrees. It is
-        // kept only for routers and steps that do not report a bearing, and the
-        // firmware carries the identical table for the identical reason.
-        //
-        // Null means we have no idea which exit, either: Mapbox omits `exit` on
-        // "roundabout turn" and "exit rotary" steps. Drawing index 0 there once
-        // claimed the FIRST exit -- a hard right, with no digit to contradict it
-        // -- so at a mini-roundabout where the route went left, the card pointed
-        // right. A plain ring with no stub is the honest answer.
+        // Which way the exit points: the route's angle, else the old guess
+        // from the exit number (the firmware's table, mirrored where traffic
+        // keeps left), else nothing. That table is a guess and worth naming as
+        // one: an exit NUMBER is not an angle. Null also covers Mapbox's
+        // "roundabout turn" and "exit rotary", which carry no exit at all --
+        // drawing one there once claimed the first exit, a hard right, at a
+        // mini-roundabout where the route went left.
         val guess = floatArrayOf(100f, 30f, -30f, -80f, -120f, -150f, -170f)
         val bearing: Float? = roundaboutBearing?.toFloat()
-            ?: if (roundaboutExit in 1..7) guess[roundaboutExit - 1] else null
+            ?: if (roundaboutExit in 1..7) guess[roundaboutExit - 1] * (if (leftHand) -1f else 1f)
+               else null
 
-        if (bearing != null) {
-            // Keep the exit arrow off the road you came in on. With a real
-            // bearing a roundabout that doubles you back can ask for exactly
-            // 180, which lays the arrow on top of the entry stub and reads as
-            // one line through a circle. The old table stopped at -170 for the
-            // same reason.
-            val aim = bearing.coerceIn(-170f, 170f)
-            val a = Math.toRadians(aim.toDouble())
-            thick(c, cx + (sin(a) * ring).toFloat(), ry - (cos(a) * ring).toFloat(),
-                  cx + (sin(a) * ring * 1.6).toFloat(), ry - (cos(a) * ring * 1.6).toFloat(), stub)
-            head(c, cx, ry, aim, ring * 2.2f, ring * 0.75f)
+        if (bearing == null) {
+            stroke.color = color
+            stroke.strokeWidth = (RAB_R - RAB_RI) * u
+            c.drawCircle(cx, cy, RAB_RMID * u, stroke)
+            road(180f, RAB_IN_R1, RAB_ROAD_W, color)
+            return
+        }
 
-            // The number only when there is an arrow to put it beside. A digit
-            // on a bare ring says which exit without saying where it is, and 8
-            // and 9 used to print on top of the 7th exit's arrow.
-            if (roundaboutExit in 1..12) {
-                text.textSize = ring * 0.9f
-                text.isFakeBoldText = true
-                c.drawText(roundaboutExit.toString(), cx, ry + ring * 0.32f, text)
-            }
+        // Kept 40 degrees off the road in, as on the HUD.
+        val aim = bearing.coerceIn(-RAB_MAX_AIM, RAB_MAX_AIM)
+        val over = Math.toDegrees(((RAB_ROAD_W * 0.5f + 1.5f) / RAB_RM).toDouble()).toFloat()
+        var from = if (leftHand) 180f - over else aim - over     // the bold arc, clockwise
+        val to = if (leftHand) aim + over else 180f + over
+        var sweep = ((to - from) % 360f + 360f) % 360f
+        if (360f - sweep < 2f * over) { from = 0f; sweep = 360f }  // a U-turn: all of it
+
+        // Android measures arcs from three o'clock, clockwise: bearing - 90.
+        stroke.strokeWidth = (RAB_R - RAB_RI) * u
+        stroke.color = dim
+        if (sweep < 360f) c.drawArc(oval, to - 90f, 360f - sweep, false, stroke)
+        stroke.color = color
+        c.drawArc(oval, from - 90f, sweep, false, stroke)
+        road(180f, RAB_IN_R1, RAB_ROAD_W, color)
+        road(aim, RAB_HEAD_R0 + 2f, RAB_ROAD_W, color)
+
+        val a = Math.toRadians(aim.toDouble())
+        val hx = (cos(a) * RAB_HEAD_W * u).toFloat()
+        val hy = (sin(a) * RAB_HEAD_W * u).toFloat()
+        path.reset()
+        path.moveTo(px(aim, RAB_TIP_R), py(aim, RAB_TIP_R))
+        path.lineTo(px(aim, RAB_HEAD_R0) + hx, py(aim, RAB_HEAD_R0) + hy)
+        path.lineTo(px(aim, RAB_HEAD_R0) - hx, py(aim, RAB_HEAD_R0) - hy)
+        path.close()
+        paint.color = color
+        c.drawPath(path, paint)
+
+        // The number in the hole, no box -- only beside an arrow.
+        if (roundaboutExit in 1..12) {
+            text.textSize = 30f * u
+            text.isFakeBoldText = true
+            text.color = color
+            c.drawText(roundaboutExit.toString(), cx, cy - (text.ascent() + text.descent()) / 2f, text)
         }
     }
 
@@ -182,5 +224,22 @@ class ManeuverView @JvmOverloads constructor(
         // with a triangle floating unattached six-tenths of a radius below it.
         head(c, cx - rr, top + r * 0.7f, 180f, r * 0.5f, r * 0.42f)
         thick(c, cx - rr, top, cx - rr, top + r * (0.7f + 0.5f - 0.42f), w)
+    }
+
+    private companion object {
+        // hud_arrows.h, in its -60..60 glyph box.
+        const val RAB_R = 30f
+        const val RAB_RI = 19f
+        const val RAB_RM = 24.5f
+        const val RAB_RMID = (RAB_R + RAB_RI) / 2f
+        const val RAB_UP = 4f
+        const val RAB_ROAD_W = 11f
+        const val RAB_IN_R1 = 48f
+        const val RAB_HEAD_R0 = 40f
+        const val RAB_TIP_R = 57f
+        const val RAB_HEAD_W = 13f
+        const val RAB_MAX_AIM = 140f
+        /** The undriven ring: DASH_DIM is 62 % of DASH_AMBER. */
+        const val DIM = 0.62f
     }
 }
