@@ -207,6 +207,23 @@ data class LaneGuidance(
          */
         const val MAX_LANES = 8
 
+        /**
+         * The $LANE line to send this tick, or null for none.
+         *
+         * Lanes that apply go out on EVERY tick, as $CAM does, and the clearing
+         * line once, when they stop applying. They used to go out only when they
+         * changed -- but the board forgets them whenever it hears nothing for two
+         * seconds (a cable glitch, a restart), and with nothing changed on this
+         * side they were never sent again: the E60 lane strip stayed empty up to
+         * the junction. A repeat costs the board nothing; it redraws only what
+         * differs.
+         */
+        fun lineFor(want: LaneGuidance?, lastSent: LaneGuidance?): String? = when {
+            want != null -> com.mihai.navhud.HudFrame.wrap(want.encodeBody())
+            lastSent != null -> com.mihai.navhud.HudFrame.wrap("LANE,0,0")
+            else -> null
+        }
+
         fun fromBanners(banners: JSONArray?): LaneGuidance? {
             if (banners == null) return null
             // Take the last banner that actually carries lanes: Mapbox emits a

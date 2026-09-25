@@ -2296,15 +2296,15 @@ class HudService : Service(), LocationListener {
         }
     }
 
-    /** Lane guidance only matters near the junction; send it, then clear it. */
+    /** Lane guidance only matters near the junction: send it while it applies, then clear it. */
     private fun pushLanes(t: RouteTracker, l: SerialLink?, speedKph: Int) {
         val next = t.nextManeuver
         val want = if (next?.lanes != null &&
             (next.alongM - t.alongM) <= laneRange(maxOf(0, speedKph) / 3.6)) next.lanes else null
         lanes = want
-        if (want == lastLanesSent) return
+        val line = LaneGuidance.lineFor(want, lastLanesSent)
         lastLanesSent = want
-        l?.write(HudFrame.wrap(want?.encodeBody() ?: "LANE,0,0"))
+        line?.let { l?.write(it) }
     }
 
     private fun pushCameras(t: RouteTracker, l: SerialLink?, f: HudFrame, bearing: Double?) {

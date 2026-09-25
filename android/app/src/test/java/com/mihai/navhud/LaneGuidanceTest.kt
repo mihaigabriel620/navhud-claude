@@ -88,6 +88,21 @@ class LaneGuidanceTest {
         assertEquals(2, g.lastActive)
     }
 
+    /**
+     * The board forgets the lanes whenever it hears nothing for two seconds
+     * (a cable glitch, a restart). Sent only on a change, they never came back
+     * while they stayed the same; now they go out every tick while they apply.
+     */
+    @Test fun `lanes that apply are sent on every tick, the clear only once`() {
+        val g = LaneGuidance(intArrayOf(Lane.STRAIGHT, Lane.RIGHT), activeMask = 0b10)
+        val first = LaneGuidance.lineFor(g, null)
+        assertNotNull(first)
+        assertTrue(first!!, first.startsWith("\$LANE,2,2,"))
+        assertEquals(first, LaneGuidance.lineFor(g, g))                  // again, unchanged
+        assertTrue(LaneGuidance.lineFor(null, g)!!.startsWith("\$LANE,0,0*"))
+        assertEquals(null, LaneGuidance.lineFor(null, null))             // nothing to clear
+    }
+
     @Test fun `turn side falls back to where the usable lanes sit`() {
         // Nothing but "straight" arrows, but only the rightmost lane is ours:
         // that is a keep-right, whatever the arrows say.
