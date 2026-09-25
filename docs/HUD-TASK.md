@@ -32,7 +32,22 @@ B. **Tests + CI**: make `make check` fully green; add
    esp8266:esp8266 3.1.2, TFT_eSPI 2.5.43 with `arduino/config/User_Setup.h`
    copied into the library, mcp_can 1.5.1). A cloud machine may be unable to
    download the core; CI can.
-C. **Roundabout, Google-style**: thick ring; the driven path bold
+C. **Roundabout — the owner's exact picks are in `docs/reference-icons/owner-picks/`.**
+   `00-current-hud-roundabout-photo.jpg` is a photo of the real HUD today:
+   the ring looks **dotted/speckled with black dots**, a boxed "2" in the
+   middle and a thin arrow — "ugly, not polished". `01…16-liked.png` are the
+   styles the owner likes (Google Maps): a smooth thick ring where the part
+   of the ring you drive is bold and the rest faded, a big clean exit arrow,
+   and "progress ring" variants where the exit's sector of the ring is
+   highlighted. Their white/grey colours do not fit: convert to the HUD
+   theme — driven path and arrow in the theme's bright amber, the rest of the
+   ring in a dim amber, on black (and the E60 theme's own palette). Draw it
+   smooth: TFT_eSPI 2.5.x has anti-aliased primitives (drawSmoothArc,
+   drawArc, drawWideLine/drawWedgeLine, fillSmoothCircle — verify in 2.5.43)
+   instead of whatever produces the dots today (find and explain the cause);
+   the renderer stub must support whatever you use so the PNGs are faithful.
+   Mind the ESP8266: no full-screen sprite (RAM), no new IRAM code.
+   Google-style details: thick ring; the driven path bold
    (entry → around the ring → exit), the rest faded; a big exit arrow at the
    real angle; the exit number; **stubs for every other exit**; mirrored for
    left-hand traffic; both themes; stays inside its zone (layout tests).
