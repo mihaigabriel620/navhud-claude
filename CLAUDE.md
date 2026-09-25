@@ -41,7 +41,7 @@ Waze / Google Maps everywhere.
 ## Build and test
 - CI (GitHub Actions) runs the unit tests and builds the signed APK on every
   push to `main`; check the Actions tab / `gh run list` after pushing.
-- Locally: `cd android && ./gradlew :app:testDebugUnitTest` (664 tests) and
+- Locally: `cd android && ./gradlew :app:testDebugUnitTest` (~692 tests) and
   `./gradlew :app:assembleRelease`. Needs JDK 17 and Android SDK platform 34.
 - `android/local.properties` is committed with `sdk.dir=C:/Android` for the
   owner's Windows PC. Elsewhere, overwrite it locally and run
@@ -50,6 +50,32 @@ Waze / Google Maps everywhere.
   repo); release builds sign automatically.
 - A cloud session may not reach dl.google.com / jitpack.io; if the SDK or
   dependencies cannot be installed, push and let CI build and test instead.
+
+## HUD firmware (`arduino/NavHud`, v2.7)
+- Hardware: Wemos D1 mini (ESP8266) + ST7796 4" 480x320 SPI (landscape,
+  mirrored for the windscreen) + MCP2515 CAN (BMW E60 K-CAN, listen-only) +
+  QMC5883P compass (I2C). Pins: `hud_pins.h` (CAN CS D8, TFT CS D2, backlight
+  D0). Two themes: `theme_dash.h`, `theme_e60.h`. Protocol with the app:
+  `PROTOCOL.md` ($HUD, $RAB, $CAM, $LANE, $CAR …) — app side in
+  `android/.../HudFrame.kt`, `HudService.kt`.
+- Build: `arduino-cli compile --fqbn esp8266:esp8266:d1_mini arduino/NavHud`
+  with core esp8266:esp8266 3.1.2, libraries TFT_eSPI 2.5.43 and mcp_can 1.5.1;
+  **copy `arduino/config/User_Setup.h` into the TFT_eSPI library folder** or it
+  compiles fine and drives the wrong pins. Baseline: flash 55 %, RAM 45 %,
+  IRAM 94 % (IRAM is the tight one — no new IRAM_ATTR code).
+- Host tests and screen images: `cd arduino/test && make check` and
+  `make render` (PNGs of every screen state, both themes, into
+  `arduino/test/out/`, readable orientation). On the owner's PC use
+  `mingw32-make` from WinLibs GCC (not on PATH in older shells:
+  `%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*\mingw64\bin`).
+  Some host tests are stale since the 2.x rewrite (`can*`, `mount`,
+  `sketch_*` want Arduino.h / removed headers; stage 0 needs python3).
+- Only the owner flashes the board (USB to the D1 mini, on their PC). Show them
+  the rendered screens before anything is flashed.
+- Design references for graphics: `docs/reference-icons/` (Waze/Google Maps,
+  inspiration only).
+- Firmware releases are recorded as `## X.Y — …` sections in CHANGELOG.md
+  (app entries are `## App X.Y`).
 
 ## Where things are
 - `MapActivity.kt` driving screen (camera loop, arrow, route line, gestures);
