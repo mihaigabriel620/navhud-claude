@@ -46,8 +46,7 @@ static void loadGeom() {
   tft.geom.corners = GeomCorners{{0, 0, 0, 0}, {0, 0, 0, 0}};
   tft.geom.rebuild(HUD_SCR_W, HUD_SCR_H);
   savedGeom = tft.geom;
-  diag("  HUD_BENCH: unmirrored, saved alignment ignored, Save disabled,");
-  diag("             backlight forced on regardless of the key.");
+  diag("  bench   : HUD_BENCH -- unmirrored, no saved alignment, backlight always on");
   return;
 #endif
 #ifdef HUD_HAVE_EEPROM

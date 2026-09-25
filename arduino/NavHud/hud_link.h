@@ -368,6 +368,21 @@ static void cmdStatus() {
     diag(b);
     snprintf(b, sizeof b, "            north offset %+.1f deg", heading.northOffsetDeg);
     diag(b);
+    // The raw field, to check the compass's axes against the MPU's. In Europe
+    // the field dips downwards, so with Z up its z is negative, about -40.
+    snprintf(b, sizeof b, "            raw field %+.1f %+.1f %+.1f uT, CTRL1 0x%02X CTRL2 0x%02X",
+             heading.field[0], heading.field[1], heading.field[2],
+             (unsigned)compass.ctrl1, (unsigned)compass.ctrl2);
+    diag(b);
+    if (heading.haveUp) {
+      float vertical = 0;
+      for (uint8_t i = 0; i < 3; i++) vertical += (heading.field[i] - heading.offset[i]) * heading.up[i];
+      if (vertical > 10.0f) {
+        diag("            The field points UP, and in Europe it points down: the");
+        diag("            compass's Z is the wrong way up (once the MPU reads level,");
+        diag("            below). Set MAG_AXIS_SIGN's third value to -1 in hud_config.h.");
+      }
+    }
     if (heading.calibrating()) {
       snprintf(b, sizeof b, "            CALIBRATING: %u samples of %d needed",
                (unsigned)heading.calCount(), (int)COMPASS_CAL_MIN_SAMPLES);
@@ -381,6 +396,13 @@ static void cmdStatus() {
              (unsigned)motion.whoAmI, heading.pitchDeg(), heading.rollDeg(),
              heading.haveUp ? "" : "  <- no gravity reading yet");
     diag(b);
+    // A HUD box is never more than about 45 degrees off level, so gravity more
+    // than 60 degrees from the box's Z is the axis settings, not the mounting.
+    if (heading.haveUp && heading.up[2] < 0.5f) {
+      diag("            That is upside down or on its side. With the box level,");
+      diag("            pitch and roll must read near 0: see MPU_AXIS_SIGN in");
+      diag("            hud_config.h.");
+    }
     snprintf(b, sizeof b, "            gyro bias %+.2f %+.2f %+.2f deg/s%s",
              heading.bias[0], heading.bias[1], heading.bias[2],
              heading.biasKnown ? "" : "  <- not learned yet: it needs the car parked");

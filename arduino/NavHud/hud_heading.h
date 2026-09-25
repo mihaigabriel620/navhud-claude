@@ -66,6 +66,8 @@ class HudHeading {
   float deg = NAN;
   /** Magnitude of the field after the hard-iron offset, microtesla. */
   float fieldUt = 0;
+  /** The last compass sample as it came in, box frame, microtesla. */
+  float field[3] = { 0, 0, 0 };
   /** Gravity: unit vector pointing up, box frame. Z until the MPU says. */
   float up[3] = { 0, 0, 1 };
   bool  haveUp = false;
@@ -170,6 +172,7 @@ class HudHeading {
   bool mag(const float m[3]) {
     if (calOn_) calFeed_(m);
     magAdd_(m);
+    memcpy(field, m, sizeof field);
 
     float c[3];
     for (uint8_t i = 0; i < 3; i++) c[i] = m[i] - offset[i];

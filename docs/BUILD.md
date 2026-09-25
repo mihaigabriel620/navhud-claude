@@ -195,12 +195,16 @@ Nothing to switch on: the firmware looks for it at boot, and again every three
 seconds if it is missing. `status` on the serial monitor says what it found.
 
 **Mounting.** In the same box as the compass, fixed to it — the two have to
-agree about which way the box points. Its X arrow forward and Y arrow to the
-left (the driver's side here) is the default; mounted any other way round, set
-`MPU_AXIS_ORDER` and `MPU_AXIS_SIGN` in `hud_config.h`, the same way as the
-compass's `MAG_AXIS_*`. To check: type `status`, lift the front of the box, and
-the pitch must go positive; lower its right side, and the roll must. The box
-itself can then sit at any angle on the dash.
+agree about which way the box points. As shipped, `MPU_AXIS_SIGN` in
+`hud_config.h` is set for the GY-521 on the back of the screen PCB, components
+facing the dash, X arrow forward (`1, -1, -1`: upside down). Components-up
+with X forward and Y left would be `1, 1, 1`; any other way round, set
+`MPU_AXIS_ORDER` and `MPU_AXIS_SIGN` the same way as the compass's
+`MAG_AXIS_*`. To check: type `status` with the box level. Pitch and roll must
+be near 0 (it says so when the MPU reads upside down); lift the front and the
+pitch must go positive; lower its right side and the roll must. The compass's
+raw field z must be negative, about −40 µT (it says so when it is not). The
+box itself can then sit at any angle on the dash.
 
 **Calibration.** The gyro's zero is learned by itself whenever the car is
 parked — two seconds after the key goes in, and topped up at every stop. The

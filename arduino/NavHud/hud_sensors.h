@@ -25,20 +25,20 @@ static void sensorsBegin() {
   // Three attempts at each, not one. The first transaction of a board's life
   // happens while the 3V3 rail is still settling, and a chip that NAKs once at
   // that moment used to be written off for the rest of the run.
+  // One line per chip when it is fine; the reason when it is not. `status`
+  // has the rest.
   char b[120];
   bool ok = false;
   for (uint8_t i = 0; i < 3 && !(ok = compass.begin(true)); i++) delay(30);
-  snprintf(b, sizeof b, "  compass : %s", compass.describe());
-  diag(b);
   if (!ok) {
     // Say what the BUS says before the driver gets a vote. "no compass found"
     // covers a dead bus, a chip at the wrong address and a chip that answers
     // with the wrong ID, and those are three different faults.
     uint8_t id = 0;
     const bool acked = compass.probe(id);
-    snprintf(b, sizeof b,
-             "            0x2C %s, chip id 0x%02X (want 80). Check SDA/SCL and 3V3.",
-             acked ? "ACKed" : "did NOT ack", (unsigned)id);
+    snprintf(b, sizeof b, "  compass : %s -- 0x2C %s, chip id 0x%02X (want 80)%s",
+             compass.describe(), acked ? "ACKed" : "did NOT ack", (unsigned)id,
+             acked ? "" : ": check SDA D3, SCL D4, 3V3");
     diag(b);
   } else {
     // A configured chip that never finishes a measurement is the most
@@ -47,9 +47,8 @@ static void sensorsBegin() {
     bool seen = false;
     for (uint8_t i = 0; i < 40 && !(seen = compass.read(m)); i++) delay(10);
     if (seen) heading.mag(m);
-    snprintf(b, sizeof b, "            CTRL1 0x%02X  CTRL2 0x%02X  range +-%u G  %s",
-             (unsigned)compass.ctrl1, (unsigned)compass.ctrl2, (unsigned)compass.rangeG,
-             seen ? "producing data" : "NO DATA -- configured but silent");
+    snprintf(b, sizeof b, "  compass : %s, +-%u G%s", compass.describe(),
+             (unsigned)compass.rangeG, seen ? "" : " -- NO DATA: configured but silent");
     diag(b);
   }
   // Whether or not the compass answered: a compass found later on a retry uses
@@ -58,9 +57,9 @@ static void sensorsBegin() {
 
   ok = false;
   for (uint8_t i = 0; i < 3 && !(ok = motion.begin()); i++) delay(30);
-  snprintf(b, sizeof b, "  mpu     : %s", motion.describe());
+  snprintf(b, sizeof b, "  mpu     : %s%s", motion.describe(),
+           ok ? "" : " (optional: the heading then assumes the box is level)");
   diag(b);
-  if (!ok) diag("            optional: without it the heading assumes the box is level.");
 }
 
 /**

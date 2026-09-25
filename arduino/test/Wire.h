@@ -13,11 +13,13 @@
 // firmware makes of it.
 //
 // FRAMES. World: x east, y north, z up. Box: X forward, Y left, Z up -- the
-// car's frame, which is also what both chips measure in (they are mounted
-// with their axes the car's way). An accelerometer reads the reaction to
-// gravity, so a level box reads +1 g on Z. A gyro reads rotation about its own
-// axes, right-hand rule: turning right (clockwise seen from above) is a
-// NEGATIVE rate about Z.
+// car's frame. The compass measures in it (the owner's QMC reads the car's way
+// round). The MPU is mounted like the owner's: on the back of the screen PCB,
+// components facing the dash, X arrow forward -- upside down, so it reads the
+// box's Y and Z negated, which hud_config.h's MPU_AXIS_SIGN undoes. An
+// accelerometer reads the reaction to gravity, so a level box reads +1 g up. A
+// gyro reads rotation about its own axes, right-hand rule: turning right
+// (clockwise seen from above) is a NEGATIVE rate about up.
 #include <stdint.h>
 #include <stddef.h>
 #include <cmath>
@@ -74,9 +76,15 @@ class TwoWire {
   bool qmcPresent = true;           // false: nothing ACKs at 0x2C
   /** The bench part ignores the range write and reads back 0 (+-30 G). */
   bool qmcRangeSticks = true;
+  /**
+   * False: CTRL1 reads back 0x00 whatever was written, while the chip runs on
+   * what was written. The owner's part answers 0x80 and then fails a CTRL1
+   * read-back check, and measured fine under 2.9, which never read it.
+   */
+  bool qmcCtrl1ReadBack = true;
   bool mpuPresent = true;           // false: nothing ACKs at 0x68
   uint8_t mpuWhoAmI = 0x68;         // 0x70 for an MPU-6500, 0x98 for some clones
-  /** What an uncalibrated MPU adds: accel offsets (g), gyro bias (deg/s). */
+  /** What an uncalibrated MPU adds, in its own axes: accel offsets (g), gyro bias (deg/s). */
   double mpuAccelErr[3] = { 0, 0, 0 };
   double mpuGyroBias[3] = { 0, 0, 0 };
   /** Transactions each chip has seen, so a test can see reads happening. */
@@ -159,6 +167,7 @@ class TwoWire {
         // DRDY only in continuous (or normal) mode: after power-on, a brown-out
         // or a soft reset the chip is in suspend until it is told to measure.
         case 0x09: return (qmc_[0x0A] & 0x03) ? 0x01 : 0x00;
+        case 0x0A: return qmcCtrl1ReadBack ? qmc_[0x0A] : 0x00;
         case 0x0B: return ctrl2;
         default:   return qmc_[r];
       }
@@ -172,10 +181,11 @@ class TwoWire {
       const double lsbPerDps = 131.0 / (1 << ((mpu_[0x1B] >> 3) & 3));
       double acc[3]; box.accelG(acc);
       const double rate[3] = { box.rateXDps, box.rateYDps, box.rateZDps };
+      static const int mount[3] = { 1, -1, -1 };             // upside down, X forward
       int v[7];
-      for (int i = 0; i < 3; i++) v[i] = clip_((acc[i] + mpuAccelErr[i]) * lsbPerG);
+      for (int i = 0; i < 3; i++) v[i] = clip_((acc[i] * mount[i] + mpuAccelErr[i]) * lsbPerG);
       v[3] = clip_((25.0 - 36.53) * 340.0);                  // 25 C
-      for (int i = 0; i < 3; i++) v[4 + i] = clip_((rate[i] + mpuGyroBias[i]) * lsbPerDps);
+      for (int i = 0; i < 3; i++) v[4 + i] = clip_((rate[i] * mount[i] + mpuGyroBias[i]) * lsbPerDps);
       const int k = r - 0x3B;                                // big-endian pairs
       return (k & 1) ? lo_(v[k / 2]) : hi_(v[k / 2]);
     }

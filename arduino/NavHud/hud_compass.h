@@ -15,10 +15,17 @@
 //  0BH first, 0AH LAST, because writing the mode into 0AH is what STARTS the
 //  chip -- suspend is the default after power-on and after a soft reset
 //  (6.2.4). Starting it and then reconfiguring it while it runs left the bench
-//  part present, addressable, configured, and never measuring. So the
-//  library's setters are called in QST's order, the mode last, and 29H, which
-//  the library does not know about, is written first through its bus layer.
-//  0AH ends up 0xCB: QST's example, but at 100 Hz rather than 10.
+//  part present, addressable, configured, and never measuring. 0AH is written
+//  0xCB: QST's example, but at 100 Hz rather than 10.
+//
+//  WHOLE BYTES, NOT THE LIBRARY'S SETTERS. Each setter reads its register,
+//  changes its own bits and writes it back, and the owner's part does not read
+//  its control registers back as written (0BH, below; and in 3.0, 0AH). 3.0
+//  configured it through the setters and then required 0AH to read back
+//  "continuous": the chip answered 0x80 at 0x2C and was reported "not found".
+//  2.9 wrote the three bytes and never read 0AH, and measured fine. So the
+//  bytes go down whole, through the library's bus layer, and the library does
+//  the rest: finding the chip and reading the field.
 //
 //  THE SCALE IS READ BACK, NEVER ASSUMED. On the bench part, 0BH reads 0x00
 //  after being written 0x08: the range write does not stick and it sits at
@@ -37,6 +44,12 @@
 #define QMCP_REG_STATUS 0x09      // bit0 DRDY, bit1 OVFL
 #define QMCP_REG_CTRL1  0x0A      // OSR2[7:6] OSR1[5:4] ODR[3:2] MODE[1:0]
 #define QMCP_REG_CTRL2  0x0B      // SOFT_RST[7] SELF_TEST[6] rfu RNG[3:2] SETRESET[1:0]
+
+// 0xCB = OSR2 11, OSR1 00, ODR 10 (100 Hz), MODE 11 (continuous). QST's literal
+// example is 0xC3, the same but at 10 Hz.
+#define QMCP_CTRL1_RUN  0xCB
+// Set/reset on, range 8 G. Requested; not necessarily granted -- see above.
+#define QMCP_CTRL2_RUN  0x08
 
 /**
  * No new sample for this long and the chip is not measuring: it browned out
@@ -60,30 +73,28 @@ class HudCompass {
   }
 
   /**
-   * Find the chip and start it, in QST's order. `reset` soft-resets it first,
-   * which the library follows with a 50 ms wait -- setup() only. A chip found
-   * again on a retry has just come back from a brown-out, which is a reset.
+   * Find the chip and start it, in QST's order. `reset` soft-resets it first
+   * and waits 50 ms -- setup() only. A chip found again on a retry has just
+   * come back from a brown-out, which is a reset.
    */
   bool begin(bool reset) {
     present_ = false;
     if (!chip_.begin(QMCP_ADDR, &Wire)) return false;    // ACK, and chip id 0x80
-    if (reset && !chip_.softReset()) return false;
+    if (reset) {
+      reg_(QMCP_REG_CTRL2).write(0x80);                   // 7.6 soft reset
+      delay(50);                                          // no figure given; generous
+    }
+    // Set/reset on (CTRL2 bits 1:0 = 00) is the setting that matters: 9.2.3
+    // says "in SET ONLY ON or SET AND RESET OFF mode, the offset is not renewed
+    // during measuring", so these bits at 00 buy the per-measurement degaussing.
+    if (!reg_(QMCP_REG_SIGN).write(0x06)) return false;              // sign for X Y Z
+    if (!reg_(QMCP_REG_CTRL2).write(QMCP_CTRL2_RUN)) return false;   // set/reset on, 8 G
+    if (!reg_(QMCP_REG_CTRL1).write(QMCP_CTRL1_RUN)) return false;   // continuous <- starts it
 
-    if (!reg_(QMCP_REG_SIGN).write(0x06)) return false;
-    // Set/reset on is the setting that matters: 9.2.3 says "in SET ONLY ON or
-    // SET AND RESET OFF mode, the offset is not renewed during measuring", so
-    // these bits at 00 are what buy the per-measurement degaussing.
-    chip_.setSetResetMode(QMC5883P_SETRESET_ON);
-    chip_.setRange(QMC5883P_RANGE_8G);                    // asked; see above
-    chip_.setDSR(QMC5883P_DSR_8);
-    chip_.setOSR(QMC5883P_OSR_8);
-    chip_.setODR(QMC5883P_ODR_100HZ);
-    chip_.setMode(QMC5883P_MODE_CONTINUOUS);              // <- starts it
-
-    // The library's setters cannot say whether a write landed; the registers
-    // can.
-    if (!reg_(QMCP_REG_CTRL1).read(&ctrl1) || !reg_(QMCP_REG_CTRL2).read(&ctrl2)) return false;
-    if ((ctrl1 & 0x03) != QMC5883P_MODE_CONTINUOUS) return false;
+    // For `status`, and the range: read back, never assumed. CTRL1 is only
+    // reported -- see above for why it cannot be a test.
+    reg_(QMCP_REG_CTRL1).read(&ctrl1);
+    if (!reg_(QMCP_REG_CTRL2).read(&ctrl2)) return false;
     static const float   lsbPerG[4] = { 1000.0f, 2500.0f, 3750.0f, 15000.0f };
     static const uint8_t rangeOf[4] = { 30, 12, 8, 2 };
     const uint8_t rng = (uint8_t)((ctrl2 >> 2) & 0x03);

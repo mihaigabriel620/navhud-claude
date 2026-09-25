@@ -44,7 +44,17 @@ int main() {
 
   printf("1. setup() runs and announces itself\n");
   g_millis = 0;
+#ifdef HUD_MAG
+  // The owner's QMC5883P: the range write does not stick (it runs at +-30 G
+  // and reads back 0), and CTRL1 does not read back as written.
+  Wire.qmcRangeSticks = false;
+  Wire.qmcCtrl1ReadBack = false;
+#endif
   setup();
+#ifdef HUD_MAG
+  CHECK(compass.present(), "the owner's compass comes up at boot");
+  CHECK(compass.rangeG == 30, "at the range it reports, not the one asked for");
+#endif
 #if BACKLIGHT_PIN >= 0
   // Grabbed here rather than in group 17, because by then sixteen groups have
   // run and the panel is long past its power-on state.
@@ -768,10 +778,11 @@ int main() {
     CHECK(heading.biasKnown, "the gyro's bias was learned in the first parked seconds");
     // The bias moves -- the cabin warmed up. Each parked second may nudge it by
     // a tenth of a degree per second, so 1.2 takes twelve, plus the second the
-    // change landed in, which was not steady.
+    // change landed in, which was not steady. The chip is upside down, so its
+    // +1.2 about its own Z is -1.2 about the box's.
     Wire.mpuGyroBias[2] = 1.2;
     drive(0, 15000);
-    CHECK(fabsf(heading.bias[2] - 1.2f) < 0.02f, "and it follows a bias that moves");
+    CHECK(fabsf(heading.bias[2] + 1.2f) < 0.02f, "and it follows a bias that moves");
     float f[4] = { 0, 0, 0, 0 };
     CHECK(lastImu(f) && fabsf(f[3]) < 0.05f, "and $IMU says a parked car is not turning");
     Serial.out_.clear();
@@ -797,6 +808,20 @@ int main() {
     printf("    level %.1f deg, tilted %.1f deg\n", level, tilted);
     Wire.box.pitchDeg = 0; Wire.box.rollDeg = 0;
     drive(0, 3000);
+  }
+
+  printf("18g2. `status` says the axis settings match the mounting\n");
+  {
+    Serial.out_.clear();
+    Serial.feed("status\r\n");
+    g_millis += 10; pump(1);
+    CHECK(Serial.out_.find("raw field") != std::string::npos, "the raw field is shown");
+    CHECK(Serial.out_.find("upside down") == std::string::npos,
+          "the MPU, mounted upside down and set so, reads level");
+    CHECK(Serial.out_.find("wrong way up") == std::string::npos,
+          "and the compass's Z agrees with it");
+    const size_t at = Serial.out_.find("raw field");
+    if (at != std::string::npos) printf("    %s\n", Serial.out_.substr(at, Serial.out_.find('\r', at) - at).c_str());
   }
 
   printf("18h. an MPU that browns out is found again\n");

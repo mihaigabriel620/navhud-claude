@@ -19,34 +19,21 @@ static void diag(const char* s);
 
 // ---- screen geometry -------------------------------------------------------
 
-/** What the panel and the driver think they are, on the serial line. */
+/**
+ * The first lines on the serial line: a name, then what the driver thinks the
+ * panel is. One line when it is right. A white panel with a working backlight
+ * is PanelDiag's job, and docs/BUILD.md's; the driver being the right one is
+ * already guaranteed by the #error in NavHud.ino.
+ */
 static void reportPanel() {
-  char b[72];
+  char b[80];
   diag("");
-  diag("NavHUD panel report");
-#if defined(ST7796_DRIVER)
-  diag("  driver  : ST7796 (correct)");
-#else
-  diag("  driver  : NOT ST7796 -- User_Setup.h is not the file being compiled");
-#endif
-  snprintf(b, sizeof b, "  pins    : CS %d  DC %d  RST %d  MOSI %d  SCK %d",
-           (int)TFT_CS, (int)TFT_DC, (int)TFT_RST, (int)TFT_MOSI, (int)TFT_SCLK);
+  diag("NavHUD");
+  const bool sizeOk = rawTft.width() == HUD_SCR_W && rawTft.height() == HUD_SCR_H;
+  snprintf(b, sizeof b, "  panel   : ST7796 %dx%d, SPI %ld Hz%s",
+           (int)rawTft.width(), (int)rawTft.height(), (long)SPI_FREQUENCY,
+           sizeOk ? "" : " -- want 480x320");
   diag(b);
-  snprintf(b, sizeof b, "  spi     : %ld Hz", (long)SPI_FREQUENCY);
-  diag(b);
-  snprintf(b, sizeof b, "  size    : %d x %d  (want %d x %d)",
-           (int)rawTft.width(), (int)rawTft.height(), HUD_SCR_W, HUD_SCR_H);
-  diag(b);
-  // The saved mirror is read out of flash further down, so this reports the
-  // compiled-in default rather than what will end up on the glass. Saying so
-  // beats printing a number that quietly disagrees with the panel.
-  snprintf(b, sizeof b, "  mirror  : default x=%d y=%d -> rotation %u (flash may override)",
-           HUD_DEFAULT_MIRROR_X, HUD_DEFAULT_MIRROR_Y,
-           (unsigned)geomRotation(HUD_DEFAULT_MIRROR_X, HUD_DEFAULT_MIRROR_Y));
-  diag(b);
-  diag("  If you can read this but the panel is white, the controller is not");
-  diag("  listening: wrong driver, a dead control wire, or SPI too fast.");
-  diag("");
 }
 
 /**

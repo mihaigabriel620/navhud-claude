@@ -71,9 +71,12 @@ Waze / Google Maps everywhere.
   MPU's gravity, gyro-carried and re-read only when parked or driving steadily;
   turn rate about the true vertical for `$IMU`; `spin` in the true horizontal),
   host-tested by `test_heading.cpp`. The chips are `hud_compass.h` (Adafruit
-  QMC5883P library, QST's write order, range read back) and `hud_motion.h`
-  (GY521 library); `hud_sensors.h` runs them, one chip per loop pass so CAN is
-  drained between. Without the MPU it is the flat compass of 2.9.
+  QMC5883P library to find and read it; its setup bytes written whole in QST's
+  order, never read-modify-write or checked by reading CTRL1 back — the
+  owner's part does not read them back, and 3.0's first build rejected it) and
+  `hud_motion.h` (GY521 library; `MPU_AXIS_SIGN 1, -1, -1` for the owner's
+  upside-down mounting); `hud_sensors.h` runs them, one chip per loop pass so
+  CAN is drained between. Without the MPU it is the flat compass of 2.9.
 - The MCP2515 must never transmit: listen-only, re-checked on every drain
   (`canPump`), and the host tests assert no transmit command ever reaches it.
 - Roundabout glyph: `hud_arrows.h` `roundaboutArt()` (dim ring, bright driven

@@ -144,14 +144,19 @@
 #define MAG_AXIS_SIGN   1, 1, 1
 
 /**
- * The same for the MPU-6050. Its board has the axes printed on it; the
- * identity means the X arrow points out of the windscreen and the Y arrow at
- * the driver's door on a left-hand-drive car. To check: type `status`, lift
- * the front of the box, and the pitch must go positive; lower the right side
- * and the roll must.
+ * The same for the MPU-6050, whose board has its X and Y arrows printed on it.
+ *
+ * As set, for the owner's HUD: the GY-521 on the back of the screen PCB,
+ * components facing the dash, X arrow forward. That is upside down, so the
+ * chip's Y and Z are the car's -Y and -Z. Mounted components-up with the X
+ * arrow forward and the Y arrow to the left, it would be 1, 1, 1.
+ *
+ * To check: type `status` with the box level. Pitch and roll must be near 0
+ * (a roll near 180 means Z is the wrong way up); lift the front and the pitch
+ * must go positive; lower the right side and the roll must.
  */
 #define MPU_AXIS_ORDER  0, 1, 2
-#define MPU_AXIS_SIGN   1, 1, 1
+#define MPU_AXIS_SIGN   1, -1, -1
 
 /** Samples that must be collected before a calibration can be saved. */
 #define COMPASS_CAL_MIN_SAMPLES   120

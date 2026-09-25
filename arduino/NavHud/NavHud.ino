@@ -280,7 +280,7 @@ void setup() {
 #ifdef HUD_MAG
     if (!compass.present()) missing = true;
 #endif
-    if (missing) diag("  (something is missing -- type `status`. For the MCP2515 on its own, flash CanTest.)");
+    if (missing) diag("  (something is missing: type `status`)");
   }
 
   // ---- the backlight, last ------------------------------------------------

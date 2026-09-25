@@ -31,15 +31,27 @@ circle, then `spin stop`. The saved calibration changed format and the 2.9 one
 is refused rather than misread. `north` is optional since app 1.34.
 
 **Wiring**: GY-521 SDA → D3, SCL → D4 (in parallel with the compass), VCC →
-3V3, GND; AD0 as it comes (0x68). If its X arrow does not point forward and Y
-to the left, set `MPU_AXIS_ORDER`/`MPU_AXIS_SIGN` in `hud_config.h`; `status`
-shows the pitch and roll to check them (nose up and right side down are
-positive).
+3V3, GND, AD0 → GND (0x68). `MPU_AXIS_SIGN` in `hud_config.h` is set for the
+owner's mounting — the GY-521 on the back of the screen PCB, components facing
+the dash, X arrow forward, which is upside down: `1, -1, -1`. Components-up
+with X forward and Y left would be `1, 1, 1`. `status` shows pitch and roll
+(nose up and right side down are positive, both near 0 with the box level) and
+says so when the MPU reads upside down. It also shows the compass's raw field:
+with the box level its z must be negative, about −40 µT; if it is positive,
+set `MAG_AXIS_SIGN`'s third value to −1.
 
 **New libraries** (Library Manager): **GY521** 0.6.2 (Rob Tillaart),
 **Adafruit QMC5883P Library** 1.0.2 and **Adafruit BusIO** 1.17.4. The compass
-is now driven through Adafruit's library, still in QST's order and with the
-range read back.
+is found and read through Adafruit's library, but its three setup registers
+are written whole, in QST's order, exactly as 2.9 did. The library's setters
+read each register back and change only their own bits, and this chip does not
+read its control registers back as written: the first 3.0 build configured it
+that way, then checked CTRL1, and reported a chip that answered 0x80 at 0x2C as
+"not found". The host tests now model that chip.
+
+**A shorter boot report**: one line per device — panel, CAN, compass, MPU —
+and the reason only when one fails; the details are in `status`. (The two
+"…Successful!" lines come from the mcp_can library itself.)
 
 **Cleaner inside, same on the glass.** `loop()` only orchestrates now: the
 screen switching went to `hud_display.h`, the `$CAR` report to `hud_link.h`,
