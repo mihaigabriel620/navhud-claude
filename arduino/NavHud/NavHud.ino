@@ -407,31 +407,8 @@ void loop() {
 #endif  // HUD_MAG
 
 #ifdef HUD_CAN
-  if (canOk && now - lastCanReportMs >= CAN_REPORT_MS) {
-    lastCanReportMs = now;
-    // Read and clear the overflow flags whether or not anybody is listening.
-    // They latch, so gating this on the phone being connected meant a
-    // phone-free drive left them set and the count stopped counting.
-    // Read and clear the hardware flags either way -- see above.
-    const uint32_t ovf = canOverflows();
-    if (up) {
-      sendCar();
-      // Only when it CHANGED. The counter is cumulative and never resets, so
-      // reporting `if (ovf)` meant one unavoidable overflow during the first
-      // repaint put a CANDROP line on the wire twice a second for the rest of
-      // the drive -- which is the same latch this code exists to have fixed,
-      // moved from the hardware into software. "Is it still climbing" is the
-      // only question worth answering, and now the line only appears when it is.
-      static uint32_t ovfReported = 0;
-      if (ovf != ovfReported) {
-        ovfReported = ovf;
-        char body[48];
-        snprintf(body, sizeof body, "CANDROP,%lu,%lu",
-                 (unsigned long)ovf, (unsigned long)canFrameCount());
-        sendLine(body);
-      }
-    }
-  }
+  // ---- the car, up the cable (hud_link.h) --------------------------------
+  linkReportCar(now, up);
 #endif
 
   // 5 ms is more than the two RX buffers hold (about 2.2 ms of this bus), so
