@@ -292,9 +292,8 @@ a proper red-and-white roundel, white speed turning red. Easier to read at a
 glance; looks nothing like a BMW.
 
 Both are plain C++ headers implementing the same five functions, so writing a
-third is a copy-paste job. `tools/layout_preview.html` renders both in a browser
-with the layout constants pulled straight from the headers — change them there
-first, it is a much faster loop than reflashing.
+third is a copy-paste job. `cd arduino/test && make render` draws every screen
+of both on a PC — a much faster loop than reflashing.
 
 ### Making the E60 typography authentic
 

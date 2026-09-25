@@ -312,17 +312,6 @@ static void arriveArt(int cx, int cy, float u, uint16_t col, uint16_t bg) {
   tft.drawArc(cx, cy, (int)(14 * u), 0, 0, 360, col, bg, true);
 }
 
-/** The old pin, kept only so the shape is not lost if it is ever wanted. */
-static void arrivePinArt(int cx, int cy, float u, uint16_t col) {
-  const int r = (int)(24 * u);
-  for (int i = 0; i < (int)(9 * u); i++)
-    tft.drawCircle(cx, cy - (int)(12 * u), r - i, col);
-  // the taper down to the point
-  tft.fillTriangle(cx - r * 0.72f, cy - 12 * u + r * 0.66f,
-                   cx + r * 0.72f, cy - 12 * u + r * 0.66f,
-                   cx,             cy + 44 * u, col);
-}
-
 /**
  * Draw the manoeuvre. `size` is the box the glyph lives in; everything scales
  * from it, so one number moves the whole family.

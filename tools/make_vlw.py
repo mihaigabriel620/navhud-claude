@@ -101,9 +101,8 @@ CAP_REF = "8"
 def cap_ref(chars):
     """The glyph whose lit height *is* the size, for this character set.
 
-    Digits where there are digits, "E" otherwise. It has to be the same glyph
-    tools/check_layout.py measures, or the two disagree by a pixel and the
-    check cries wolf.
+    Digits where there are digits, "E" otherwise: the glyph the layout's
+    sizes were measured on, so a size here and a size there mean the same.
     """
     return CAP_REF if CAP_REF in chars else "E"
 

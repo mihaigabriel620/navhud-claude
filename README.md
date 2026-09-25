@@ -41,8 +41,7 @@ drawing, rendered on a PC: `cd arduino/test && make docs-images`.
 
 To see every screen exactly as the firmware draws it before you flash
 anything, run `cd arduino/test && make render` (PNGs of both themes in
-`arduino/test/out/`). `tools/layout_preview.html` is the old 320×240 browser
-preview and no longer matches the HUD.
+`arduino/test/out/`).
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in 1.8.1, and
 [docs/FEATURES.md](docs/FEATURES.md) for the full list of what it does.
@@ -72,7 +71,6 @@ arduino/NavHud/     the sketch: protocol parser + two pluggable themes
 arduino/test/       host-compiled tests, incl. a stub TFT that checks layout
 arduino/config/     TFT_eSPI User_Setup.h for this wiring
 tools/hud_sim.py          replays a synthetic drive into the board from a PC
-tools/layout_preview.html  the display in a browser, for tuning the layout
 tools/geo_reference.py     Python port of Geo.kt, verifies the geometry
 tools/tracker_reference.py Python port of RouteTracker.kt, verifies the logic
 tools/voice_reference.py   Python port of VoiceGuide.kt, prints the transcript

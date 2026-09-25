@@ -89,12 +89,9 @@ bringup_diag: test_bringup.cpp $(BRINGUP_DEPS)
 # The whole suite: protocol, screen and map geometry, the compass maths,
 # navigation logic, both themes' layout, the CAN half, the real sketch running
 # against a scripted serial stream, and two end-to-end passes of generated
-# frames through the exact parser the sketch compiles.
-#
-# tools/check_layout.py (the dash layout against the hud-editor.html bench) is
-# not run: the bench page did not survive the 1.26 restore, so there is nothing
-# to compare against. theme_dash.h is the layout's only source now, and the
-# layout tests below still catch a field off the panel or on top of another.
+# frames through the exact parser the sketch compiles. theme_dash.h is the
+# layout's only source; the layout tests catch a field off the panel or on top
+# of another, and `make render` below shows it.
 check: all
 	@echo "=== 1/12 protocol unit tests ==="
 	./t

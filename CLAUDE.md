@@ -90,8 +90,6 @@ Waze / Google Maps everywhere.
   On the owner's PC use `mingw32-make` from WinLibs GCC (not on PATH in older
   shells:
   `%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*\mingw64\bin`).
-  `tools/check_layout.py` is not run: its bench page `hud-editor.html` was lost
-  in the 1.26 restore.
 - Only the owner flashes the board (USB to the D1 mini, on their PC). Show them
   the rendered screens before anything is flashed.
 - Design references for graphics: `docs/reference-icons/` (Waze/Google Maps,
