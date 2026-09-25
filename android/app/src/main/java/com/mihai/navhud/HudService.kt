@@ -905,7 +905,10 @@ class HudService : Service(), LocationListener {
         // Arm the offer, if this start was a restart and there is something to
         // offer. Deliberately after startForegroundCompat(): there is no point
         // advertising a resume on a notification we were not allowed to post.
-        if (restarted) {
+        // Also on a plain start with no route running: a head unit restarting
+        // (boot, or the app opened) sends ACTION_START, not a null intent, and
+        // a destination still saved then is one no arrival, X or Stop ended.
+        if (restarted || destination == null) {
             resumeLabel = Prefs.activeDestination(this)?.let {
                 Prefs.activeDestinationLabel(this) ?: "previous destination"
             }
