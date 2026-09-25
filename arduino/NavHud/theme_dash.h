@@ -468,8 +468,10 @@ static void dashLimit_(const HudState& s, bool phoneUp) {
   tft.fillRect(DASH_LIM_X - r, DASH_LIM_Y - r, r * 2 + 1, r * 2 + 1, DASH_BG);
   if (lim == 0) return;                             // nothing known: draw nothing
 
-  for (int i = 0; i < DASH_LIM_RING; i++)
-    tft.drawCircle(DASH_LIM_X, DASH_LIM_Y, r - i, DASH_AMBER);
+  // One smooth ring, DASH_LIM_RING px thick (drawArc's radii are inclusive).
+  // Stacked one-pixel circles left a pinhole at every diagonal.
+  tft.drawArc(DASH_LIM_X, DASH_LIM_Y, r, r - DASH_LIM_RING + 1, 0, 360,
+              DASH_AMBER, DASH_BG, true);
 
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(DASH_AMBER, DASH_BG);

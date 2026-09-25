@@ -19,65 +19,54 @@ extern HudCanvas tft;
 
 static const int SCR_W = HUD_SCR_W, SCR_H = HUD_SCR_H;
 
+#include "hud_aa.h"           // anti-aliased glyphs, drawn as one shape
+
 // ---------------------------------------------------------------------------
 //  primitives
 // ---------------------------------------------------------------------------
 
-static void thickLine(int x0, int y0, int x1, int y1, int w, uint16_t col) {
-  float dx = x1 - x0, dy = y1 - y0;
-  float len = sqrtf(dx * dx + dy * dy);
-  if (len < 0.001f) return;
-  float px = -dy / len * (w * 0.5f);
-  float py =  dx / len * (w * 0.5f);
-  tft.fillTriangle(x0 + px, y0 + py, x0 - px, y0 - py, x1 + px, y1 + py, col);
-  tft.fillTriangle(x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, col);
-}
+// The flat strokes and plain triangles these glyphs were drawn with are
+// replaced by hud_aa.h's aaCap and aaHead (same head geometry).
 
-// Arrow head pointing `angle` degrees from centre. 0 = up, +90 = right.
-static void arrowHead(int cx, int cy, float angle, float r, float headW, uint16_t col) {
-  float a = angle * DEG_TO_RAD;
-  float ux = sinf(a), uy = -cosf(a);
-  float tipX = cx + ux * r,             tipY = cy + uy * r;
-  float baseX = cx + ux * (r - headW),  baseY = cy + uy * (r - headW);
-  float px = -uy * headW * 0.62f, py = ux * headW * 0.62f;
-  tft.fillTriangle(tipX, tipY, baseX + px, baseY + py, baseX - px, baseY - py, col);
-}
-
-// One arrow, parameterised so both themes share it.
+// One arrow, parameterised so both themes share it: a stem up from the
+// bottom, bending to `angle` at the centre, and a head. Anti-aliased and
+// drawn as one shape (hud_aa.h). The strokes have round ends, so the free end
+// of the stem is pulled in by its radius to end where the flat one did, and
+// the bend is round without a separate disc.
 static void turnArrow(int cx, int cy, int r, int shaftW, int headW,
-                      float angle, uint16_t col) {
+                      float angle, uint16_t col, uint16_t bg) {
+  const float sr = shaftW * 0.5f;
+  AaPrim p[3];
   if (fabsf(angle) < 1.0f) {
-    thickLine(cx, cy + r, cx, cy - r + headW, shaftW, col);
-    arrowHead(cx, cy, 0, r, headW, col);
+    p[0] = aaCap(cx, cy + r - sr, cx, cy - r + headW, sr);
+    p[1] = aaHead(cx, cy, 0, r, headW);
+    aaFill(p, 2, col, bg);
     return;
   }
-  thickLine(cx, cy + r, cx, cy, shaftW, col);
-  float a = angle * DEG_TO_RAD;
-  thickLine(cx, cy, cx + sinf(a) * (r - headW * 0.8f),
-            cy - cosf(a) * (r - headW * 0.8f), shaftW, col);
-  tft.fillCircle(cx, cy, shaftW / 2, col);      // round off the elbow
-  arrowHead(cx, cy, angle, r, headW, col);
+  const float a = angle * DEG_TO_RAD;
+  p[0] = aaCap(cx, cy + r - sr, cx, cy, sr);
+  p[1] = aaCap(cx, cy, cx + sinf(a) * (r - headW * 0.8f),
+               cy - cosf(a) * (r - headW * 0.8f), sr);
+  p[2] = aaHead(cx, cy, angle, r, headW);
+  aaFill(p, 3, col, bg);
 }
 
-static void drawUturnArt(int cx, int cy, int r, int w, uint16_t col) {
-  for (int d = 180; d <= 360; d += 6) {
-    float a0 = d * DEG_TO_RAD, a1 = (d + 6) * DEG_TO_RAD;
-    thickLine(cx + cosf(a0) * r, cy + sinf(a0) * r,
-              cx + cosf(a1) * r, cy + sinf(a1) * r, w, col);
-  }
-  thickLine(cx + r, cy, cx + r, cy + r + 10, w, col);
-  // The returning leg has to reach the head. It used to stop at cy + 8 while
-  // the head was drawn from cy + r + 10, leaving the triangle floating about
-  // r + 4 pixels clear of the shaft it belongs to -- the app fixed the same
-  // bug in its own U-turn icon and this one was never followed up.
-  //
-  // arrowHead measures r from the point passed in, so with the head anchored
-  // at cy + 8 its base lands at (cy + 8) + (r + 4) - (r + 2) = cy + 10. The
-  // leg therefore has to run to cy + 12, not cy + 8: thickLine has flat caps
-  // and stops dead where it is told, so ending it at the anchor left a
-  // two-pixel hole across the shaft rather than the overlap intended.
-  thickLine(cx - r, cy, cx - r, cy + 12, w, col);
-  arrowHead(cx - r, cy + 8, 180, r + 4, r + 2, col);
+// The U-turn: up one leg, round the top of a ring, down the other to the
+// head. The bend is the top half of a ring (it used to be thirty short flat
+// strokes, which left gaps and spikes round the curve). The legs start two
+// pixels up inside the bend so the two parts overlap instead of meeting on a
+// line, and the leg in is pulled in by its radius to end where the flat one
+// did. The returning leg runs to cy + 12, past the head's base at cy + 10:
+// the head is anchored at cy + 8 and measured from there, so its base lands
+// at (cy + 8) + (r + 4) - (r + 2).
+static void drawUturnArt(int cx, int cy, int r, int w, uint16_t col, uint16_t bg) {
+  const float hw = w * 0.5f;
+  AaPrim p[4];
+  p[0] = aaTopRing(cx, cy, r, hw);
+  p[1] = aaCap(cx + r, cy - 2, cx + r, cy + r + 10 - hw, hw);
+  p[2] = aaCap(cx - r, cy - 2, cx - r, cy + 12, hw);
+  p[3] = aaHead(cx - r, cy + 8, 180, r + 4, r + 2);
+  aaFill(p, 4, col, bg);
 }
 
 /** Arrow angle for a maneuver code. 0 = straight on. */

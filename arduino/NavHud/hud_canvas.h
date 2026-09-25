@@ -159,9 +159,10 @@ class HudCanvas {
   }
 
   /**
-   * One pixel. Only the roundabout's arrow head uses it, and only with keystone
-   * off: under keystone a pixel is mapped to one pixel and a stretched area
-   * would come out with holes, so that path draws the head as a triangle.
+   * One pixel. Only the anti-aliased glyphs use it (hud_aa.h, the roundabout's
+   * arrow head), and only with keystone off: under keystone a pixel is mapped
+   * to one pixel and a stretched area would come out with holes, so those
+   * paths draw with the library's smooth primitives or a triangle instead.
    */
   void drawPixel(int x, int y, uint16_t col) {
     if (geom.identity) { t_.drawPixel(x, y, col); return; }

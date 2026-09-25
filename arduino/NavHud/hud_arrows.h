@@ -138,15 +138,6 @@ static void rabArc_(int cx, int cy, int ro, int ri, float from, float to,
   tft.drawArc(cx, cy, ro, ri, a0, a1, col, bg, smooth);
 }
 
-/** TFT_eSPI's fastBlend (TFT_eSPI.h), so the head blends exactly as the rest. */
-static uint16_t rabBlend_(uint8_t alpha, uint16_t fgc, uint16_t bgc) {
-  uint32_t rxb = bgc & 0xF81F;
-  rxb += ((fgc & 0xF81F) - rxb) * (alpha >> 2) >> 6;
-  uint32_t xgx = bgc & 0x07E0;
-  xgx += ((fgc & 0x07E0) - xgx) * alpha >> 8;
-  return (uint16_t)((rxb & 0xF81F) | (xgx & 0x07E0));
-}
-
 /**
  * The arrow head, anti-aliased, as one shape with the end of its shaft.
  *
@@ -156,10 +147,15 @@ static uint16_t rabBlend_(uint8_t alpha, uint16_t fgc, uint16_t bgc) {
  * no seam -- which is what three smooth lines round a filled triangle left at
  * every corner. The shaft's edge pixels inside the box come out exactly as
  * drawWideLine draws them (same distance rule, same thresholds, same blend).
+ *
+ * Pixels within `keepR` of (rcx, rcy) -- the ring and its soft outer edge --
+ * are left alone. The box's bottom row can reach into the ring, and painting
+ * the shaft's soft edge there (blended against the background) put a dark
+ * pixel on the solid band; the ring's own passes have those pixels right.
  */
 static void rabHead_(float tx, float ty, float w1x, float w1y, float w2x, float w2y,
                      float s0x, float s0y, float s1x, float s1y, float shaftW,
-                     uint16_t col, uint16_t bg) {
+                     uint16_t col, uint16_t bg, float rcx, float rcy, float keepR) {
   if (!tft.geom.identity) { tft.fillTriangle(tx, ty, w1x, w1y, w2x, w2y, col); return; }
   const float vx[3] = { tx, w1x, w2x }, vy[3] = { ty, w1y, w2y };
   // Edge normals pointing out of the triangle, whichever way round it is wound.
@@ -180,8 +176,10 @@ static void rabHead_(float tx, float ty, float w1x, float w1y, float w2x, float 
   const int x1 = (int)ceilf (fmaxf(tx, fmaxf(w1x, w2x))) + 1;
   const int y0 = (int)floorf(fminf(ty, fminf(w1y, w2y))) - 1;
   const int y1 = (int)ceilf (fmaxf(ty, fmaxf(w1y, w2y))) + 1;
+  const float keep2 = keepR * keepR;
   for (int y = y0; y <= y1; y++) {
     for (int x = x0; x <= x1; x++) {
+      if ((x - rcx) * (x - rcx) + (y - rcy) * (y - rcy) <= keep2) continue;
       // Triangle: half a pixel of ramp either side of the nearest edge.
       float sd = -1e9f;
       for (int i = 0; i < 3; i++) {
@@ -196,7 +194,7 @@ static void rabHead_(float tx, float ty, float w1x, float w1y, float w2x, float 
       const float as = ar - sqrtf(dx * dx + dy * dy);
       if (as > a) a = as;
       if (a <= 1.0f / 32.0f) continue;
-      tft.drawPixel(x, y, a > 31.0f / 32.0f ? col : rabBlend_((uint8_t)(a * 255.0f), col, bg));
+      tft.drawPixel(x, y, a > 31.0f / 32.0f ? col : aaBlend((uint8_t)(a * 255.0f), col, bg));
     }
   }
 }
@@ -267,8 +265,25 @@ static void roundaboutArt(int cx, int cy, float u, const RabDraw& d, uint16_t co
   // edges were blended against `bg` on top of it.
   rabArc_(cx, cyc, ro, ri, from, to, col, bg, false);
 
+  // ---- where the shaft and the road in leave the ring ----------------------
+  // Just outside the band the road's soft edge was blended against `bg` on
+  // top of the ring's own soft edge: one darker pixel in the corner. Both
+  // edges repainted as one there (the ring exactly as drawArc drew it). The
+  // ring is bold for well over half a road either side of both, so `col` is
+  // right for every pixel this touches.
+  {
+    const AaPrim band = aaRing(cx, cyc, (ro + ri) * 0.5f, (ro - ri) * 0.5f + 0.5f);
+    const float half = roadW * 0.5f + 2.0f;
+    float ex, ey;
+    rabPt_(cx, cyc, u, aim, RAB_R, &ex, &ey);
+    aaMendSeam(band, aaCap(sx0, sy0, sx1, sy1, roadW * 0.5f), ex, ey, half, col, bg);
+    rabPt_(cx, cyc, u, 180.0f, RAB_R, &ex, &ey);
+    aaMendSeam(band, aaCap(inX0, inY0, inX1, inY1, roadW * 0.5f), ex, ey, half, col, bg);
+  }
+
   // ---- the head, last, as one shape with the end of the shaft -------------
-  rabHead_(tx, ty, w1x, w1y, w2x, w2y, sx0, sy0, sx1, sy1, roadW, col, bg);
+  rabHead_(tx, ty, w1x, w1y, w2x, w2y, sx0, sy0, sx1, sy1, roadW, col, bg,
+           cx, cyc, ro + 1.0f);
 
   // The number sits in the hole, in the path's colour, with no box: the hole
   // is `bg` already, so there is nothing to paint behind it.
@@ -288,12 +303,13 @@ static void roundaboutArt(int cx, int cy, float u, const RabDraw& d, uint16_t co
  * themes all draw the target, so arriving showed you two different symbols on
  * two screens a hand's width apart.
  */
-static void arriveArt(int cx, int cy, float u, uint16_t col) {
+static void arriveArt(int cx, int cy, float u, uint16_t col, uint16_t bg) {
   const int rr = (int)(34 * u);
   const int rw = (int)(9 * u);
-  for (int i = 0; i < rw; i++) tft.drawCircle(cx, cy, rr - i, col);
-  tft.fillCircle(cx, cy, (int)(14 * u), col);
-  return;
+  // Smooth arcs: the ring rw px thick (the radii are inclusive), and the dot
+  // as an arc with no hole. Stacked one-pixel circles left pinholes.
+  tft.drawArc(cx, cy, rr, rr - rw + 1, 0, 360, col, bg, true);
+  tft.drawArc(cx, cy, (int)(14 * u), 0, 0, 360, col, bg, true);
 }
 
 /** The old pin, kept only so the shape is not lost if it is ever wanted. */
@@ -322,24 +338,30 @@ static void arrowArt(int cx, int cy, int size, uint8_t man, const RabDraw& rb,
       return;
 
     case MAN_ARRIVE:
-      arriveArt(cx, cy, u, col);
+      arriveArt(cx, cy, u, col, bg);
       return;
 
     case MAN_UTURN:
-      drawUturnArt(cx, cy, (int)(22 * u), w, col);
+      drawUturnArt(cx, cy, (int)(22 * u), w, col, bg);
       return;
 
     case MAN_LEFT:
     case MAN_RIGHT: {
-      // A square elbow: up the near lane, then across. Reads as a junction
-      // rather than as a generic arrow, which is the whole point of drawing
-      // 90-degree turns differently from the shallow ones.
+      // An elbow: up the near lane, then across. Reads as a junction rather
+      // than as a generic arrow, which is the whole point of drawing 90-degree
+      // turns differently from the shallow ones. Round-ended strokes, so the
+      // corner is round like a kerb (the flat strokes left a notch in it),
+      // and the stem's free end is pulled in by its radius to end where the
+      // flat one did. Anti-aliased, one shape (hud_aa.h).
       const float s = (man == MAN_RIGHT) ? 1.0f : -1.0f;
-      thickLine(cx - s * 14 * u, cy + 46 * u, cx - s * 14 * u, cy - 8 * u, w, col);
-      thickLine(cx - s * 14 * u, cy - 8 * u,  cx + s * 12 * u, cy - 8 * u, w, col);
-      tft.fillTriangle(cx + s * 6  * u, cy - 32 * u,
-                       cx + s * 44 * u, cy - 8  * u,
-                       cx + s * 6  * u, cy + 16 * u, col);
+      const float hw = w * 0.5f;
+      AaPrim p[3];
+      p[0] = aaCap(cx - s * 14 * u, cy + 46 * u - hw, cx - s * 14 * u, cy - 8 * u, hw);
+      p[1] = aaCap(cx - s * 14 * u, cy - 8 * u,       cx + s * 12 * u, cy - 8 * u, hw);
+      p[2] = aaTri(cx + s * 6  * u, cy - 32 * u,
+                   cx + s * 44 * u, cy - 8  * u,
+                   cx + s * 6  * u, cy + 16 * u);
+      aaFill(p, 3, col, bg);
       return;
     }
 
@@ -369,16 +391,19 @@ static void arrowArt(int cx, int cy, int size, uint8_t man, const RabDraw& rb,
       const float branch = 30 * u;                 // how far the bend runs
       const float headL  = 26 * u;                 // and the head beyond it
 
-      thickLine(cx, cy + 46 * u, cx, elbowY, w, col);   // the road you are on
-      thickLine(cx, elbowY,                              // the turn
-                cx + dx * branch, elbowY + dy * branch, w, col);
-      // Fills the inside of the bend: two thick lines meeting at an angle
-      // leave a notch on the outside of the corner otherwise.
-      tft.fillCircle(cx, elbowY, w / 2, col);
+      // Round-ended strokes drawn as one anti-aliased shape (hud_aa.h): the
+      // bend comes out round with no disc to fill it, and nothing is drawn
+      // over anything else, so there is no seam. The stem's free end is
+      // pulled in by its radius to end where the flat one did.
+      const float hw = w * 0.5f;
+      AaPrim p[3];
+      p[0] = aaCap(cx, cy + 46 * u - hw, cx, elbowY, hw);          // the road you are on
+      p[1] = aaCap(cx, elbowY, cx + dx * branch, elbowY + dy * branch, hw);   // the turn
       // Measured from the elbow, not from the branch end, so the head's base
       // lands exactly where the line stops. Measuring from the tip left a few
       // pixels of daylight between shaft and head at every angle.
-      arrowHead(cx, elbowY, ang, branch + headL, headL, col);
+      p[2] = aaHead(cx, elbowY, ang, branch + headL, headL);
+      aaFill(p, 3, col, bg);
       return;
     }
   }

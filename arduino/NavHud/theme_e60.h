@@ -80,29 +80,24 @@ static void e60DrawLimit(const HudState& s) {
   tft.fillRect(E60_LIM_CX - E60_LIM_R - 3, E60_LIM_CY - E60_LIM_R - 3,
                (E60_LIM_R + 3) * 2, (E60_LIM_R + 3) * 2, E60_BG);
 
+  // The dashes below are smooth arcs. drawArc counts from six o'clock where
+  // these count from three, both clockwise: +270. Straight chords between
+  // the dash ends were jagged and did not follow the circle.
   if (s.limit == 0) {                       // no data: a broken ring
-    for (int d = 0; d < 360; d += 24) {
-      float a0 = d * DEG_TO_RAD, a1 = (d + 12) * DEG_TO_RAD;
-      thickLine(E60_LIM_CX + cosf(a0) * E60_LIM_R, E60_LIM_CY + sinf(a0) * E60_LIM_R,
-                E60_LIM_CX + cosf(a1) * E60_LIM_R, E60_LIM_CY + sinf(a1) * E60_LIM_R,
-                3, E60_AMBER_FAINT);
-    }
+    for (int d = 0; d < 360; d += 24)
+      tft.drawArc(E60_LIM_CX, E60_LIM_CY, E60_LIM_R + 1, E60_LIM_R - 1,
+                  (d + 270) % 360, (d + 282) % 360, E60_AMBER_FAINT, E60_BG, true);
     return;
   }
 
-  // A ring, not a filled sign -- a white disc would blow out the reflection.
-  for (int i = 0; i < 5; i++) tft.drawCircle(E60_LIM_CX, E60_LIM_CY, E60_LIM_R - i, col);
-
   if (s.flags & FLAG_LOW_CONF) {            // held over: dashed inner ring
-    for (int d = 0; d < 360; d += 30) {
-      float a0 = d * DEG_TO_RAD, a1 = (d + 15) * DEG_TO_RAD;
-      int r = E60_LIM_R - 8;
-      thickLine(E60_LIM_CX + cosf(a0) * r, E60_LIM_CY + sinf(a0) * r,
-                E60_LIM_CX + cosf(a1) * r, E60_LIM_CY + sinf(a1) * r,
-                2, E60_AMBER_DIM);
-    }
+    const int r = E60_LIM_R - 8;
+    for (int d = 0; d < 360; d += 30)
+      tft.drawArc(E60_LIM_CX, E60_LIM_CY, r, r - 1,
+                  (d + 270) % 360, (d + 285) % 360, E60_AMBER_DIM, E60_BG, true);
   }
 
+  // The number's cell box hides the dashes behind a wide number...
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(col, E60_BG);
   if (s.limit < 0) {
@@ -110,6 +105,12 @@ static void e60DrawLimit(const HudState& s) {
   } else {
     tft.drawNumber(s.limit, E60_LIM_CX, E60_LIM_CY, 6);
   }
+
+  // ...and the ring goes on last, because for "120" the box's corners reach
+  // into it and cut notches. A ring, not a filled sign -- a white disc would
+  // blow out the reflection. One smooth arc, 5 px thick; stacked one-pixel
+  // circles left pinholes.
+  tft.drawArc(E60_LIM_CX, E60_LIM_CY, E60_LIM_R, E60_LIM_R - 4, 0, 360, col, E60_BG, true);
 }
 
 // The speed block, brackets included, lives between these two columns. The
@@ -171,11 +172,12 @@ static void e60DrawManeuver(const HudState& s) {
                     E60_AMBER_DIM, E60_BG, 4, col);
       break;
     case MAN_UTURN:
-      drawUturnArt(E60_ARR_CX, E60_ARR_CY - 10, 24, 15, col);
+      drawUturnArt(E60_ARR_CX, E60_ARR_CY - 10, 24, 15, col, E60_BG);
       break;
     case MAN_ARRIVE:
-      for (int i = 0; i < 6; i++) tft.drawCircle(E60_ARR_CX, E60_ARR_CY, 28 - i, col);
-      tft.fillCircle(E60_ARR_CX, E60_ARR_CY, 11, col);
+      // Smooth: the ring 6 px thick (radii inclusive), the dot an arc with no hole.
+      tft.drawArc(E60_ARR_CX, E60_ARR_CY, 28, 23, 0, 360, col, E60_BG, true);
+      tft.drawArc(E60_ARR_CX, E60_ARR_CY, 11, 0, 0, 360, col, E60_BG, true);
       break;
     case MAN_NONE:
       // Nothing to say. The fillRect above has already cleared the box, so
@@ -190,7 +192,7 @@ static void e60DrawManeuver(const HudState& s) {
       break;
     default:
       turnArrow(E60_ARR_CX, E60_ARR_CY, E60_ARR_R, 18, 30,
-                angleForManeuver(s.maneuver), col);
+                angleForManeuver(s.maneuver), col, E60_BG);
       break;
   }
 }
@@ -263,25 +265,33 @@ static void e60DrawLanes(const HudState& s) {
     // follow, so: full amber for it, dim for the lane's other movements, faint
     // for lanes that are not ours.
     if (on) tft.fillRect(w * i + 1, y0, w - 2, h, E60_LANE_LIT);
+    // Smooth arrows (hud_aa.h), blended against what is under them. The stems
+    // have round ends; the free bottom end is pulled in by its radius to end
+    // where the flat one did.
+    const uint16_t under = on ? E60_LANE_LIT : E60_BG;
+    AaPrim p[2];
 
     uint8_t drawn = 0;
     for (uint8_t k = 0; k < 8 && drawn < 3; k++) {
       if (!(bits & order[k])) continue;
       if (order[k] == pick) continue;            // drawn last, on top
       const uint16_t col = on ? E60_AMBER_DIM : E60_AMBER_FAINT;
-      arrowHead(cx, cy, ang[k], 16, 12, col);
-      thickLine(cx, cy + 15, cx, cy - 3, 4, col);
+      p[0] = aaHead(cx, cy, ang[k], 16, 12);
+      p[1] = aaCap(cx, cy + 13, cx, cy - 3, 2);
+      aaFill(p, 2, col, under);
       drawn++;
     }
     if (pick) {
       for (uint8_t k = 0; k < 8; k++) {
         if (order[k] != pick) continue;
-        arrowHead(cx, cy, ang[k], 19, 14, E60_AMBER);
-        thickLine(cx, cy + 15, cx, cy - 3, 6, E60_AMBER);
+        p[0] = aaHead(cx, cy, ang[k], 19, 14);
+        p[1] = aaCap(cx, cy + 12, cx, cy - 3, 3);
+        aaFill(p, 2, E60_AMBER, under);
         break;
       }
     } else if (drawn == 0) {
-      thickLine(cx, cy + 15, cx, cy - 10, 4, on ? E60_AMBER : E60_AMBER_FAINT);
+      p[0] = aaCap(cx, cy + 13, cx, cy - 8, 2);
+      aaFill(p, 1, on ? E60_AMBER : E60_AMBER_FAINT, under);
     }
     if (i + 1 < s.laneCount) tft.drawFastVLine(w * (i + 1), y0 + 5, h - 10, E60_AMBER_FAINT);
   }

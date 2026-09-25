@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.9 — everything drawn smooth
+
+Firmware only; works with app 1.31 and 1.32 like 2.8. Includes 2.8 (below),
+which has not been flashed yet either. Not flashed — the owner flashes.
+
+Every shape on the HUD is now anti-aliased and has no holes or seams. The
+screens were checked pixel by pixel on the host, both themes:
+
+- **The black dots are gone everywhere.** The speed-limit ring, the
+  destination target and the U-turn were built from stacked one-pixel circles
+  or short flat strokes, which leave pinholes at the diagonals. They are now
+  smooth arcs.
+- **Turn arrows, U-turn and (E60) lane arrows are anti-aliased**, drawn as one
+  shape each (new `hud_aa.h`): round-ended strokes and the head are painted as
+  their union, pixel by pixel, so the edges are smooth and there is no darker
+  line where two parts overlap. The strokes have round ends like the
+  roundabout's road in, so bends are round: the left/right turn's corner had a
+  notch, and the sharp turn a hole next to its head. The glyphs keep their
+  sizes and places.
+- The roundabout lost its last flaw: one dark pixel where the exit shaft
+  leaves the ring (the arrow head's repaint reached into the ring).
+- E60: the "no data" and "held-over limit" dashed rings are smooth arcs that
+  follow the circle, and a three-digit limit no longer cuts notches out of the
+  ring.
+- With keystone on, the glyphs fall back to the library's smooth line and arc
+  (still smooth; the parts may show faint seams where they overlap).
+
+A glyph is redrawn only when the manoeuvre changes, never on the 4 Hz distance
+tick; working out every pixel costs roughly 50 ms at 80 MHz (estimate).
+
+**Tests**: `make render` now fails on any pinhole on any screen, and checks
+every manoeuvre glyph alone: it must have smooth edges, no seam inside the
+shape, and its own clear must take all of it off again. Before: pinholes on 48
+dash screens (both themes had them), no smooth edge on any arrow, and the seam
+in the roundabout.
+
 ## App 1.32 — the HUD sweep, and the new roundabout
 
 Goes with HUD firmware 2.8 (below). Both halves work with the other's older

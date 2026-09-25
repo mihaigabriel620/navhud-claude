@@ -60,6 +60,16 @@ static void screen(const std::string& name, F draw) {
     return;
   }
   printf("  %s", path);
+  // A pinhole: one background pixel with lit pixels on all four sides. What a
+  // ring drawn as stacked one-pixel circles leaves at every diagonal.
+  const std::vector<uint16_t>& fb = rawTft.ras.fb;
+  int holes = 0;
+  for (int y = 1; y < HUD_SCR_H - 1; y++)
+    for (int x = 1; x < HUD_SCR_W - 1; x++) {
+      const size_t i = (size_t)y * HUD_SCR_W + x;
+      if (fb[i] == 0 && fb[i - 1] && fb[i + 1] && fb[i - HUD_SCR_W] && fb[i + HUD_SCR_W]) holes++;
+    }
+  if (holes) { printf("   FAIL %d pinhole(s)", holes); g_failed++; }
   if (rawTft.ras.glyphBoxes > boxes0)
     printf("   [%d hollow glyph box(es)]", rawTft.ras.glyphBoxes - boxes0);
   if (rawTft.ras.font1Calls > font1)
@@ -169,8 +179,71 @@ static void expectSurvives(const std::string& what, const std::vector<uint16_t>&
   }
 }
 
+/**
+ * Every manoeuvre glyph, drawn alone: its edges are anti-aliased (blended
+ * pixels exist), no blended pixel sits inside the shape (a seam -- a smooth
+ * edge drawn over another part of the glyph; inside means no background pixel
+ * within two), and its own clear takes all of it off again.
+ */
+static void glyphChecks() {
+#if defined(HUD_THEME_E60_CLASSIC)
+  const uint16_t plain[] = { E60_AMBER, E60_AMBER_DIM };
+#else
+  const uint16_t plain[] = { DASH_AMBER, DASH_DIM, DASH_FAINT };
+#endif
+  std::vector<std::pair<std::string, HudState>> glyphs;
+  const std::vector<HudState> states = corpus();
+  for (int m = 1; m < MAN_COUNT; m++) glyphs.push_back({corpusName(m), states[m]});
+  for (const auto& e : roundabouts()) glyphs.push_back(e);
+  for (auto& e : glyphs) {
+    HudState s = e.second;
+    HudState none = s;
+    none.maneuver = MAN_NONE;
+    tft.fillScreen(0);
+#if !defined(HUD_THEME_E60_CLASSIC)
+    s.distToMan = none.distToMan = -1;              // the glyph without its distance
+    dashForget_();
+    dashTurn_(s, true);
+#else
+    e60DrawManeuver(s);
+#endif
+    const std::vector<uint16_t> fb = snap();
+    int blended = 0, seams = 0;
+    for (int y = 2; y < HUD_SCR_H - 2; y++)
+      for (int x = 2; x < HUD_SCR_W - 2; x++) {
+        const uint16_t p = fb[(size_t)y * HUD_SCR_W + x];
+        if (p == 0) continue;
+        bool isPlain = false;
+        for (uint16_t c : plain) isPlain |= (p == c);
+        if (isPlain) continue;
+        blended++;
+        bool nearBg = false;
+        for (int dy = -2; dy <= 2 && !nearBg; dy++)
+          for (int dx = -2; dx <= 2 && !nearBg; dx++)
+            nearBg = fb[(size_t)(y + dy) * HUD_SCR_W + x + dx] == 0;
+        if (!nearBg) seams++;
+      }
+#if !defined(HUD_THEME_E60_CLASSIC)
+    dashTurn_(none, true);
+#else
+    e60DrawManeuver(none);
+#endif
+    int left = 0;
+    for (uint16_t p : snap()) if (p) left++;
+    if (blended == 0 || seams || left) {
+      printf("  FAIL glyph %s: %d blended edge px, %d seam px, %d px left after its clear\n",
+             e.first.c_str(), blended, seams, left);
+      g_failed++;
+    } else {
+      printf("  ok   glyph %s: smooth (%d edge px), no seams, inside its clear\n",
+             e.first.c_str(), blended);
+    }
+  }
+}
+
 static void pixelChecks() {
   printf("pixel checks\n");
+  glyphChecks();
 #if !defined(HUD_THEME_E60_CLASSIC)
   // The battery reading beside every PS value the field can show, including
   // the overrun values and one past the widest.

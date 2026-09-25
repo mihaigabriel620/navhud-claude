@@ -53,7 +53,7 @@ Waze / Google Maps everywhere.
 - A cloud session may not reach dl.google.com / jitpack.io; if the SDK or
   dependencies cannot be installed, push and let CI build and test instead.
 
-## HUD firmware (`arduino/NavHud`, v2.8)
+## HUD firmware (`arduino/NavHud`, v2.9)
 - Hardware: Wemos D1 mini (ESP8266) + ST7796 4" 480x320 SPI (landscape,
   mirrored for the windscreen) + MCP2515 CAN (BMW E60 K-CAN, listen-only) +
   QMC5883P compass (I2C). Pins: `hud_pins.h` (CAN CS D8, TFT CS D2, backlight
@@ -66,6 +66,11 @@ Waze / Google Maps everywhere.
   path, arrow at the real `$RAB` angle, no exit stubs — the owner's choice),
   drawn with TFT_eSPI's smooth `drawArc`/`drawWideLine`; the phone's
   `ui/ManeuverView.kt` uses the same numbers.
+- Everything is anti-aliased (the owner wants it as polished as 480x320
+  allows): rings with smooth `drawArc`, never stacked `drawCircle`s (pinholes);
+  arrows, U-turn and lanes as one union per glyph with `hud_aa.h` `aaFill`
+  (round-ended strokes + triangles, per pixel, no seams). `make render` fails
+  on any pinhole, on an arrow without smooth edges, or on a seam inside one.
 - Build: `arduino-cli compile --fqbn esp8266:esp8266:d1_mini arduino/NavHud`
   with core esp8266:esp8266 3.1.2, libraries TFT_eSPI 2.5.43 and mcp_can 1.5.1;
   **copy `arduino/config/User_Setup.h` into the TFT_eSPI library folder** or it
