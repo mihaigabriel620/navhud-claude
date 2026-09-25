@@ -591,6 +591,22 @@ int main() {
     CHECK(backlightNow > 0, "the key coming back lights it again");
     printf("    car: boot %u, key-in %u, key-out 0, slept 0, key-in %u\n",
            bootBacklight, litWith, backlightNow);
+
+    // At night, with the phone still connected: key out, key back in. The
+    // phone has already said it is night, so the panel comes back at the
+    // night level -- not at full daylight until the next $HUD frame.
+    Serial.feed(wrap("HUD,0,50,0,0,0,0,0,36,"));   // GPS_OK | NIGHT
+    g_millis += 50; pump(1);
+    CHECK(backlightNow == BACKLIGHT_NIGHT, "night level while the phone says night");
+    ign[0] = 0x00;
+    SPI.deliver(false, CAR_ID_IGNITION, ign, 1);
+    g_millis += 50; pump(1);
+    CHECK(backlightNow == 0, "key out, dark");
+    ign[0] = 0x45;
+    SPI.deliver(false, CAR_ID_IGNITION, ign, 1);
+    g_millis += 50; pump(1);
+    CHECK(backlightNow == BACKLIGHT_NIGHT,
+          "key back in at night: the night level at once, not a flash of daylight");
  #endif
   }
 

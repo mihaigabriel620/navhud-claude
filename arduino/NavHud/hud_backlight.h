@@ -128,9 +128,11 @@ static void backlightUpdate(bool phoneUp, bool gotFrame) {
   } else if (phoneUp && gotFrame) {
     applyBacklight((cur.flags & FLAG_NIGHT) ? BACKLIGHT_NIGHT : BACKLIGHT_DAY);
   } else if (backlightNow == 0) {
-    // Coming back from dark with no phone frame to say day or night: daylight,
-    // because too bright is a squint and too dim is unreadable.
-    applyBacklight(BACKLIGHT_DAY);
+    // Coming back from dark. With the phone connected its last frame -- under
+    // LINK_TIMEOUT_MS old -- already says day or night, and a key cycled at
+    // night used to flash full daylight until the next one. With no phone:
+    // daylight, because too bright is a squint and too dim is unreadable.
+    applyBacklight((phoneUp && (cur.flags & FLAG_NIGHT)) ? BACKLIGHT_NIGHT : BACKLIGHT_DAY);
   }
 }
 
