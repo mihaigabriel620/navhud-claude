@@ -968,7 +968,10 @@ class HudService : Service(), LocationListener {
             }
         }
 
-        country = Prefs.homeCountry(this)
+        // Home only until a lookup has said otherwise: every start (the map
+        // screen sends one each time it comes to the front) used to reset it,
+        // and the 25 km recheck then kept Belgian camera rules in Germany.
+        country = country ?: Prefs.homeCountry(this)
         cameraPolicy = CountryRules.effective(country, Prefs.cameraPreference(this))
 
         provider = MapboxProvider(Prefs.mapboxToken(this), Prefs.phrases(this).code)
