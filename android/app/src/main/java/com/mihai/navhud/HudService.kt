@@ -1298,8 +1298,10 @@ class HudService : Service(), LocationListener {
         // Which way the car is pointing, and remembering it for next time.
         // The restore gets exactly one attempt, on the first usable fix of the
         // run: retrying on later fixes would let a heading be adopted after
-        // the car had already driven away from where it was saved.
-        if (!parkedRestoreTried) {
+        // the car had already driven away from where it was saved. A GPS fix
+        // only: a network fix is too wide to meet the 15 m match, and spending
+        // the one attempt on it meant the heading was never restored.
+        if (!parkedRestoreTried && f.isGps) {
             parkedRestoreTried = true
             runCatching {
                 parked.restore(Prefs.parkedHeading(this), used.latitude, used.longitude,
