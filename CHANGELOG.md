@@ -1,5 +1,29 @@
 # Changelog
 
+## App 1.33 — the speed limit without a route, and warnings with the app closed
+
+Works with any HUD firmware; nothing changes on the board.
+
+- **The speed limit shows without a destination.** With a route the limits
+  come from Mapbox; without one they come from OpenStreetMap, through a single
+  free public server that is often busy. When it refused, the app waited from
+  30 seconds up to 10 minutes before asking again, with no limit on the HUD or
+  the phone meanwhile. Now a second server (overpass.private.coffee, run by an
+  Austrian non-profit, the whole planet) is asked straight away, and a server
+  that stops answering is skipped for a few minutes.
+- **The limit shows at once on roads driven before.** Road data already on the
+  phone is shown immediately, even if it is old, instead of after the network
+  has answered or failed (up to about 40 seconds).
+- **Swiping the app away no longer blanks the limit.** It used to throw the
+  road data away along with the route; the HUD now keeps the speed, the limit
+  and the camera warnings without a gap.
+- **With the app swiped away, the voice still warns** when you are over the
+  limit, and about cameras. Nothing else is said (no turns, no level
+  crossings or bumps). Before, closing the app made it completely silent.
+- The over-limit warning is unchanged: more than +10 km/h up to 50, +20 in 70–90,
+  +30 from 100, for 3 seconds; then quiet for 3 minutes unless you slow down or
+  the limit drops. It works with and without a destination.
+
 ## 2.9 — everything drawn smooth
 
 Firmware only; works with app 1.31 and 1.32 like 2.8. Includes 2.8 (below),
