@@ -295,6 +295,11 @@ class MapboxProvider(
                 )
                 // Where the exit really points, for roundabouts only.
                 //
+                // First the banner's `degrees` (bannerExitAngle). The bearings are
+                // only the fallback: on a roundabout step Mapbox/OSRM put the
+                // maneuver at the ENTRY, so their difference is the veer into the
+                // circle, not the exit (1.31; to be confirmed on the road).
+                //
                 // bearing_before is the compass heading as you arrive, bearing_after
                 // the heading as you leave; the difference is the turn. Normalised to
                 // -180..180 so 0 is straight on and positive is to the right, which is
@@ -304,7 +309,7 @@ class MapboxProvider(
                 // missing field read as 0.0 would mean "straight ahead", stated with
                 // total confidence. Null instead, and the old exit-number table remains
                 // as the fallback.
-                val exitBearing: Int? = run {
+                val exitBearing: Int? = bannerExitAngle(banners, step) ?: run {
                     if (!man.has("bearing_before") || !man.has("bearing_after")) return@run null
                     val before = man.optDouble("bearing_before", Double.NaN)
                     val after  = man.optDouble("bearing_after",  Double.NaN)
@@ -395,6 +400,28 @@ class MapboxProvider(
         val v = o.optInt("speed", 0)
         if (v <= 0) return 0
         return if (o.optString("unit") == "mph") Math.round(v * 1.609344).toInt() else v
+    }
+
+    /**
+     * A roundabout exit's turn from the banner's `degrees`, -180..180, positive
+     * right; null when no banner carries one.
+     *
+     * Mapbox documents `degrees` as "the degrees at which you will be exiting a
+     * roundabout, assuming 180 indicates going straight through": how far round
+     * the circle, in the direction of travel. So 180 - degrees is the turn where
+     * roundabouts run anticlockwise, mirrored where `driving_side` is left.
+     */
+    private fun bannerExitAngle(banners: JSONArray?, step: JSONObject): Int? {
+        if (banners == null) return null
+        for (i in banners.length() - 1 downTo 0) {   // the nearest banner first
+            val p = banners.optJSONObject(i)?.optJSONObject("primary") ?: continue
+            val deg = p.optDouble("degrees", Double.NaN)
+            if (deg.isNaN() || deg < 0.0 || deg > 360.0) continue
+            val side = p.optString("driving_side").ifEmpty { step.optString("driving_side") }
+            val turn = 180.0 - deg
+            return Math.round(if (side == "left") -turn else turn).toInt()
+        }
+        return null
     }
 
     /**

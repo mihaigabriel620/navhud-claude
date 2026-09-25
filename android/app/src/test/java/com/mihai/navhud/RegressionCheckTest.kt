@@ -203,4 +203,49 @@ class RegressionCheckTest {
         j.update(off[0], off[1], 10f, null, hasFix = true, nowMs = 2_000L)
         assertTrue(j.offRoute)
     }
+
+    // ---- W2: a roundabout arrow shows the exit, not the entry veer ---------
+
+    /**
+     * A roundabout reached from a depart step, shaped as the Mapbox Directions
+     * docs show it: the banner on the step *before* the roundabout, `degrees`
+     * and `driving_side` on its primary. The bearings sit at the entry: 0 -> 60,
+     * the veer into the circle.
+     */
+    private fun roundabout(banner: String, side: String = "right"): Int? {
+        val json = """
+        {"distance":900.0,"duration":90.0,
+          "geometry":"_wq{_B_mmeG?owH?_pRg^_pR",
+          "legs":[{"steps":[
+            {"name":"Grote Baan","distance":400.0,"driving_side":"$side",
+             "maneuver":{"type":"depart","modifier":"","location":[4.30,50.80]},
+             "bannerInstructions":[
+               {"distanceAlongGeometry":400.0,
+                "primary":{"text":"Steenweg","components":[{"text":"Steenweg","type":"text"}],
+                           "type":"roundabout","modifier":"right"$banner},
+                "secondary":null,"sub":null}]},
+            {"name":"Ring","distance":200.0,"driving_side":"$side",
+             "maneuver":{"type":"roundabout","modifier":"right","exit":2,
+                         "location":[4.31,50.80],"bearing_before":0.0,"bearing_after":60.0}},
+            {"name":"Steenweg","distance":300.0,"driving_side":"$side",
+             "maneuver":{"type":"arrive","modifier":"","location":[4.32,50.80]}}
+          ]}]}
+        """.trimIndent()
+        return com.mihai.navhud.nav.MapboxProvider(token = "test", language = "en")
+            .parseRoute(org.json.JSONObject(json)).maneuvers.first { it.exit == 2 }.exitBearing
+    }
+
+    @Test fun `the roundabout angle comes from the banner's degrees`() {
+        assertEquals("first exit, right-hand traffic", 90,
+            roundabout(""","degrees":90,"driving_side":"right""""))
+        assertEquals("straight through", 0,
+            roundabout(""","degrees":180,"driving_side":"right""""))
+        assertEquals("third exit of four", -90,
+            roundabout(""","degrees":270,"driving_side":"right""""))
+        assertEquals("first exit where they drive on the left", -90,
+            roundabout(""","degrees":90,"driving_side":"left"""", side = "left"))
+        assertEquals("side from the step when the banner has none", -90,
+            roundabout(""","degrees":90""", side = "left"))
+        assertEquals("no degrees: the bearings, as before", 60, roundabout(""))
+    }
 }
