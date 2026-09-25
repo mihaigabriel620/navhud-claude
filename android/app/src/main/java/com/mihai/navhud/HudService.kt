@@ -2293,7 +2293,10 @@ class HudService : Service(), LocationListener {
 
     private fun pushCameras(t: RouteTracker, l: SerialLink?, f: HudFrame, bearing: Double?) {
         val w = watcher
-        if (w == null) {
+        // Off the route its cameras are not ours: t.alongM is then only our
+        // projection onto a road we have left, and it can run past the old
+        // route's cameras -- for as long as an offline reroute keeps retrying.
+        if (w == null || t.offRoute) {
             if (cameraAlert != null) { cameraAlert = null; l?.write(HudFrame.wrap("CAM,0,0,0")) }
             return
         }
