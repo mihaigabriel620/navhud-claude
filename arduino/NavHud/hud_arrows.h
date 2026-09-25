@@ -17,37 +17,48 @@
 #ifndef HUD_ARROWS_H
 #define HUD_ARROWS_H
 
-// ---- roundabout geometry, measured off real road-sign icons ---------------
-// Relative to the ring's outer radius R: stroke 0.42R, entry stub 0.81R,
-// shaft to 1.3R, head 0.5R half-wide and 0.88R long, tip 2.04R.
+// ---- the roundabout ----------------------------------------------------------
 //
-// THREE RULES. Each one was learned by drawing it wrong:
-//   1. the shaft must run PAST the head's notch, not stop at the wing roots,
-//      or the swept-back rear bites a V out of the middle of the arrow;
-//   2. the shaft must start INSIDE the ring stroke, so ring and arrow are one
-//      continuous shape -- a gap reads as two objects;
-//   3. hypot(WING_R, WING_W) must exceed R, or the head's base corners fold
-//      back over the circle and it reads as a fin.
-#define RAB_R        26
-#define RAB_RING_W   11
-#define RAB_ROAD_W   10
-#define RAB_IN_R1    47
-#define RAB_SHAFT_R0 15
-#define RAB_SHAFT_R1 42
-#define RAB_WING_R   30
-#define RAB_WING_W   13
-#define RAB_NOTCH_R  38
-#define RAB_TIP_R    53
+// Drawn the way the owner picked from the Google Maps / Waze references
+// (docs/reference-icons/owner-picks): a thick ring, the part you drive --
+// in, round, out -- bold in the theme's bright colour, the rest of the ring
+// dim, a stub for every other exit the phone knows about, the exit number in
+// the middle with no box round it, and a big arrow on the exit. Anti-aliased
+// with TFT_eSPI's smooth arc and wide line.
+//
+// Authored in the glyph box (-60..+60, units of u = size/120):
+#define RAB_R         30     // ring, outer edge
+#define RAB_RI        19     // ring, inner edge: the hole the exit number sits in
+#define RAB_RM        24.5f  // middle of the band: attachments start here, hidden
+#define RAB_UP         4     // the ring sits this far above the glyph centre
+#define RAB_ROAD_W    11     // the road in, and the exit arrow's shaft
+#define RAB_IN_R1     48     // the road in ends here (centre of its round end)
+#define RAB_HEAD_R0   40     // arrow head: base
+#define RAB_TIP_R     57     //             tip
+#define RAB_HEAD_W    13     //             half-width at the base
+#define RAB_STUB_W     7     // another exit
+#define RAB_STUB_R1   38     //   ends here
+// The exit arrow is kept this far round from the road in. A U-turn asks for
+// 180, which would lay the arrow on top of the entry road and read as one line
+// through a circle; 40 degrees apart the head clears the road in by 7 px and
+// they read as out-and-back. This is a symbol, not a survey.
+#define RAB_MAX_AIM  140
+// Stubs closer than this to the road in or to the arrow are left out: they
+// would merge with it.
+#define RAB_STUB_GAP  24
 
 /**
- * "We have no idea which way this exit points."
+ * How far the distance to the manoeuvre may have grown since an angle arrived
+ * and still be about the same roundabout, in metres.
  *
- * A bearing, not a flag, so it threads through the existing signature without
- * adding a parameter to every call. 1000 is outside any real angle and outside
- * anything the parser will accept.
+ * $RAB and $RBX arrive as their own frames, so an angle measured at one
+ * roundabout could be aimed at the next. The exit number alone does not stop
+ * that -- two roundabouts in a row, both "exit 2", is ordinary -- so each
+ * angle is stamped with the distance to the manoeuvre as it arrives. Driving
+ * towards one roundabout that only ever comes down; the next one starts far
+ * away again. The slack is GPS jitter.
  */
-#define RAB_NO_BEARING 1000.0f
-static inline bool rabAimable(float b) { return b > -360.0f && b < 360.0f; }
+#define RAB_DIST_SLACK 30
 
 // THE FALLBACK, and it is only a fallback now.
 //
@@ -63,98 +74,236 @@ static inline bool rabAimable(float b) { return b > -360.0f && b < 360.0f; }
 // degrees. On a five-exit one it might be 45. The arrow came out plausible and
 // rarely right, which is the worst way for a display to be wrong.
 //
-// So these are used only when the phone has not sent a real bearing on $RAB.
-// When it has, the real one wins -- see rabBearing().
+// So these are used only when the phone has sent no angle for this roundabout
+// on $RBX or $RAB -- see rabResolve().
 static const float RAB_BEARINGS[7] =
     { 100.f, 30.f, -30.f, -80.f, -120.f, -150.f, -170.f };
 
 /** True when the exit number is one the fallback table can point at. */
 static inline bool rabHasExit(uint8_t exitNo) { return exitNo >= 1 && exitNo <= 7; }
 
-static float rabBearingFor(uint8_t exitNo) {
-  return rabHasExit(exitNo) ? RAB_BEARINGS[exitNo - 1] : RAB_NO_BEARING;
+/** Everything the glyph shows, resolved from the frames. Compared whole. */
+struct RabDraw {
+  int16_t aim;                            // the exit to take; HUD_RB_ANGLE_NONE = bare ring
+  uint8_t exitNo;
+  uint8_t left;                           // left-hand traffic: the ring runs clockwise
+  uint8_t nStubs;
+  int16_t stubs[HUD_RB_MAX_EXITS - 1];    // the exits before it
+};
+
+/** Is an angle stamped at `stampDist` still about the manoeuvre in `s`? */
+static inline bool rabSameOne_(const HudState& s, int32_t stampDist) {
+  return s.distToMan <= stampDist + RAB_DIST_SLACK;
 }
 
 /**
- * The bearing to actually draw: the phone's if it sent one for THIS exit,
- * otherwise the guess, otherwise nothing.
+ * What to draw for the roundabout in `s`: the phone's $RBX if it is about
+ * this roundabout, else its $RAB, else the table, else a bare ring.
  *
- * The exit check is the load-bearing part. $RAB arrives as its own frame, so
- * without it an angle measured at the last roundabout would be aimed at the
- * next one -- and it would look every bit as authoritative as a correct one.
+ * Zero-filled first, so two of these compare with memcmp.
  */
-static float rabBearing(uint8_t exitNo, int16_t angle, uint8_t angleExit) {
-  if (angle != HUD_RB_ANGLE_NONE && exitNo >= 1 && angleExit == exitNo)
-    return (float)angle;
-  return rabBearingFor(exitNo);
+static RabDraw rabResolve(const HudState& s) {
+  RabDraw d;
+  memset(&d, 0, sizeof d);
+  d.aim = HUD_RB_ANGLE_NONE;
+  if (s.maneuver != MAN_ROUNDABOUT || s.rbExit < 1) return d;
+  d.exitNo = s.rbExit;
+
+  if (s.rbxExit == s.rbExit && rabSameOne_(s, s.rbxDist)) {
+    d.left = s.rbxLeft;
+    if (s.rbxCount == s.rbExit) {
+      d.aim = s.rbxAngles[s.rbExit - 1];
+      d.nStubs = (uint8_t)(s.rbExit - 1);
+      for (uint8_t i = 0; i < d.nStubs; i++) d.stubs[i] = s.rbxAngles[i];
+      return d;
+    }
+  }
+  if (s.rbAngle != HUD_RB_ANGLE_NONE && s.rbAngleExit == s.rbExit &&
+      rabSameOne_(s, s.rbAngleDist)) {
+    d.aim = s.rbAngle;
+  } else if (rabHasExit(s.rbExit)) {
+    // The table assumes the ring runs anticlockwise; mirror it where it does not.
+    const float t = RAB_BEARINGS[s.rbExit - 1];
+    d.aim = (int16_t)(d.left ? -t : t);
+  }
+  // No angle and no table entry: a bare ring. Mapbox omits the exit on
+  // "roundabout turn" and "exit rotary", and drawing one anyway means picking
+  // a direction at random and stating it with total confidence. A ring with no
+  // arrow reads as "a roundabout, follow the voice", which is honest.
+  return d;
 }
 
-/** Roundabout, road-sign style: ring, entry stub, one exit arrow. */
-static void roundaboutArt(int cx, int cy, float u, float bearing,
-                          uint8_t exitNo, uint16_t col, uint8_t numFont) {
-  const float ringR = RAB_R * u, w = RAB_RING_W * u;
-  const int   cyc   = cy - (int)(4 * u);          // the ring sits a little high
+/** A point on the glyph at a bearing (0 up, positive clockwise) and radius. */
+static void rabPt_(int cx, int cy, float u, float deg, float r, float* x, float* y) {
+  const float a = deg * DEG_TO_RAD;
+  *x = cx + sinf(a) * r * u;
+  *y = cy - cosf(a) * r * u;
+}
 
-  // ring: concentric circles are cheaper and rounder than a stroked path
-  for (float r = ringR; r > ringR - w; r -= 0.8f)
-    tft.drawCircle(cx, cyc, (int)(r + 0.5f), col);
+/** The ring clockwise from bearing `from` to bearing `to`. */
+static void rabArc_(int cx, int cy, int ro, int ri, float from, float to,
+                    uint16_t col, uint16_t bg, bool smooth) {
+  if (to - from >= 360.0f) { tft.drawArc(cx, cy, ro, ri, 0, 360, col, bg, smooth); return; }
+  // TFT_eSPI measures arcs from six o'clock, clockwise: bearing + 180.
+  const int a0 = (((int)lroundf(from) + 180) % 360 + 360) % 360;
+  const int a1 = (((int)lroundf(to) + 180) % 360 + 360) % 360;
+  if (a0 == a1) return;
+  tft.drawArc(cx, cy, ro, ri, a0, a1, col, bg, smooth);
+}
 
-  // the road you came in on, from the bottom
-  thickLine(cx, cyc + (int)((RAB_R - RAB_RING_W) * u), cx, cyc + (int)(RAB_IN_R1 * u),
-            (int)(RAB_ROAD_W * u), col);
+/** TFT_eSPI's fastBlend (TFT_eSPI.h), so the head blends exactly as the rest. */
+static uint16_t rabBlend_(uint8_t alpha, uint16_t fgc, uint16_t bgc) {
+  uint32_t rxb = bgc & 0xF81F;
+  rxb += ((fgc & 0xF81F) - rxb) * (alpha >> 2) >> 6;
+  uint32_t xgx = bgc & 0x07E0;
+  xgx += ((fgc & 0x07E0) - xgx) * alpha >> 8;
+  return (uint16_t)((rxb & 0xF81F) | (xgx & 0x07E0));
+}
 
-  // No bearing, no arrow.
-  //
-  // Mapbox omits the exit on "roundabout turn" and "exit rotary", and drawing
-  // one anyway means picking a direction at random and stating it with total
-  // confidence -- the app hit exactly this and its fix is to draw a bare ring,
-  // so this matches. A ring with no arrow reads as "a roundabout, follow the
-  // voice", which is honest; an arrow pointing at the wrong exit does not.
-  //
-  // This used to test the exit NUMBER against the fallback table's 1..7, which
-  // meant exit 8 got no arrow even when the phone knew exactly where it was.
-  // Now it asks the only question that matters: do we have a direction.
-  if (!rabAimable(bearing)) return;
+/**
+ * The arrow head, anti-aliased, as one shape with the end of its shaft.
+ *
+ * Drawn per pixel over the head's own bounding box, which is small (about
+ * 25 x 25 px). Coverage is the UNION of the triangle and the shaft's capsule,
+ * so where the two meet there is no edge to blend against the background and
+ * no seam -- which is what three smooth lines round a filled triangle left at
+ * every corner. The shaft's edge pixels inside the box come out exactly as
+ * drawWideLine draws them (same distance rule, same thresholds, same blend).
+ */
+static void rabHead_(float tx, float ty, float w1x, float w1y, float w2x, float w2y,
+                     float s0x, float s0y, float s1x, float s1y, float shaftW,
+                     uint16_t col, uint16_t bg) {
+  if (!tft.geom.identity) { tft.fillTriangle(tx, ty, w1x, w1y, w2x, w2y, col); return; }
+  const float vx[3] = { tx, w1x, w2x }, vy[3] = { ty, w1y, w2y };
+  // Edge normals pointing out of the triangle, whichever way round it is wound.
+  const float cross = (w1x - tx) * (w2y - ty) - (w1y - ty) * (w2x - tx);
+  float nx[3], ny[3], nc[3];
+  for (int i = 0; i < 3; i++) {
+    const int j = (i + 1) % 3;
+    float ex = vx[j] - vx[i], ey = vy[j] - vy[i];
+    const float len = sqrtf(ex * ex + ey * ey);
+    ex /= len; ey /= len;
+    nx[i] = cross > 0 ? ey : -ey;
+    ny[i] = cross > 0 ? -ex : ex;
+    nc[i] = nx[i] * vx[i] + ny[i] * vy[i];
+  }
+  const float bax = s1x - s0x, bay = s1y - s0y, bb = bax * bax + bay * bay;
+  const float ar = shaftW * 0.5f + 0.5f;      // drawWedgeLine's radius
+  const int x0 = (int)floorf(fminf(tx, fminf(w1x, w2x))) - 1;
+  const int x1 = (int)ceilf (fmaxf(tx, fmaxf(w1x, w2x))) + 1;
+  const int y0 = (int)floorf(fminf(ty, fminf(w1y, w2y))) - 1;
+  const int y1 = (int)ceilf (fmaxf(ty, fmaxf(w1y, w2y))) + 1;
+  for (int y = y0; y <= y1; y++) {
+    for (int x = x0; x <= x1; x++) {
+      // Triangle: half a pixel of ramp either side of the nearest edge.
+      float sd = -1e9f;
+      for (int i = 0; i < 3; i++) {
+        const float d = nx[i] * x + ny[i] * y - nc[i];
+        if (d > sd) sd = d;
+      }
+      float a = 0.5f - sd;
+      // The shaft: drawWedgeLine's own alpha, radius minus distance.
+      float h = ((x - s0x) * bax + (y - s0y) * bay) / bb;
+      h = h < 0 ? 0 : (h > 1 ? 1 : h);
+      const float dx = x - s0x - bax * h, dy = y - s0y - bay * h;
+      const float as = ar - sqrtf(dx * dx + dy * dy);
+      if (as > a) a = as;
+      if (a <= 1.0f / 32.0f) continue;
+      tft.drawPixel(x, y, a > 31.0f / 32.0f ? col : rabBlend_((uint8_t)(a * 255.0f), col, bg));
+    }
+  }
+}
 
-  // Keep the exit arrow off the road you came in on.
-  //
-  // The entry stub is drawn straight down from the ring, and now that the
-  // bearing is real rather than one of seven table values, a roundabout that
-  // doubles you back can ask for exactly 180 -- which lays the exit arrow on
-  // top of the entry road and reads as one line through a circle. Ten degrees
-  // is enough to separate them and is invisible as an error: this is a symbol,
-  // not a survey. The old table stopped at -170 for the same reason.
-  float aim = bearing;
-  if (aim >  170.0f) aim =  170.0f;
-  if (aim < -170.0f) aim = -170.0f;
+static float rabAngleApart_(float a, float b) {
+  float d = fmodf(fabsf(a - b), 360.0f);
+  return d > 180.0f ? 360.0f - d : d;
+}
 
-  const float a  = aim * DEG_TO_RAD;
-  const float dx = sinf(a), dy = -cosf(a);
-  const float px = -dy,     py = dx;              // perpendicular
+/**
+ * Roundabout. `col` is the path, `dim` the rest; `bg` is what is under it
+ * (the smooth primitives blend their edges against it -- the panel cannot be
+ * read back). `numBg` is the exit number's background: the theme's own for a
+ * smooth font, `col` for a built-in one, which then draws with no cell box.
+ *
+ * Every smooth primitive blends its edge against `bg`, so wherever one lies
+ * on another -- the road in crossing the ring -- its edge leaves a darker
+ * line INSIDE the shape. Two things keep the glyph clean: the ring's band is
+ * painted again, plain, after everything that crosses it (its plain pixels
+ * stop exactly at the band, so the smooth outline is left alone), and the
+ * head is drawn as one shape with the end of its shaft (rabHead_).
+ */
+static void roundaboutArt(int cx, int cy, float u, const RabDraw& d, uint16_t col,
+                          uint16_t dim, uint16_t bg, uint8_t numFont, uint16_t numBg) {
+  const int cyc = cy - (int)lroundf(RAB_UP * u);
+  const int ro = (int)lroundf(RAB_R * u), ri = (int)lroundf(RAB_RI * u);
+  const float roadW = RAB_ROAD_W * u;
+  float inX0, inY0, inX1, inY1;
+  rabPt_(cx, cyc, u, 180.0f, RAB_RM, &inX0, &inY0);
+  rabPt_(cx, cyc, u, 180.0f, RAB_IN_R1, &inX1, &inY1);
 
-  // shaft: starts inside the ring stroke, ends PAST the notch
-  thickLine(cx + dx * RAB_SHAFT_R0 * u, cyc + dy * RAB_SHAFT_R0 * u,
-            cx + dx * RAB_SHAFT_R1 * u, cyc + dy * RAB_SHAFT_R1 * u,
-            (int)(RAB_ROAD_W * u), col);
+  if (d.aim == HUD_RB_ANGLE_NONE) {
+    tft.drawArc(cx, cyc, ro, ri, 0, 360, col, bg, true);
+    tft.drawWideLine(inX0, inY0, inX1, inY1, roadW, col, bg);
+    tft.drawArc(cx, cyc, ro, ri, 0, 360, col, bg, false);
+    return;
+  }
 
-  // head: tip, wing, notch, wing -- two triangles make the swept-back shape
-  const float tx = cx + dx * RAB_TIP_R * u,   ty = cyc + dy * RAB_TIP_R * u;
-  const float nx = cx + dx * RAB_NOTCH_R * u, ny = cyc + dy * RAB_NOTCH_R * u;
-  const float w1x = cx + dx * RAB_WING_R * u + px * RAB_WING_W * u;
-  const float w1y = cyc + dy * RAB_WING_R * u + py * RAB_WING_W * u;
-  const float w2x = cx + dx * RAB_WING_R * u - px * RAB_WING_W * u;
-  const float w2y = cyc + dy * RAB_WING_R * u - py * RAB_WING_W * u;
-  tft.fillTriangle(tx, ty, w1x, w1y, nx, ny, col);
-  tft.fillTriangle(tx, ty, w2x, w2y, nx, ny, col);
+  float aim = d.aim;
+  if (aim >  RAB_MAX_AIM) aim =  RAB_MAX_AIM;
+  if (aim < -RAB_MAX_AIM) aim = -RAB_MAX_AIM;
 
-  // Any exit we could aim at gets its number. Printing a digit with no arrow
-  // beside it is the confusing case, and that one returned above.
-  if (exitNo >= 1) {
+  // The bold arc runs past the middle of the road in and of the shaft by half
+  // a road and a bit, so both join the ring entirely inside the bold part.
+  const float over = ((RAB_ROAD_W * 0.5f + 1.5f) / RAB_RM) / DEG_TO_RAD;
+  float from, to;                                   // the bold arc, clockwise
+  if (d.left) { from = 180.0f - over; to = aim + over; }        // clockwise ring
+  else        { from = aim - over;    to = 180.0f + over; }     // anticlockwise ring
+
+  float sx0, sy0, sx1, sy1, tx, ty, nx, ny, w1x, w1y, w2x, w2y;
+  rabPt_(cx, cyc, u, aim, RAB_RM, &sx0, &sy0);
+  rabPt_(cx, cyc, u, aim, RAB_HEAD_R0 + 2, &sx1, &sy1);
+  rabPt_(cx, cyc, u, aim, RAB_TIP_R, &tx, &ty);
+  rabPt_(cx, cyc, u, aim, RAB_HEAD_R0, &nx, &ny);
+  const float a = aim * DEG_TO_RAD;
+  const float px = cosf(a) * RAB_HEAD_W * u, py = sinf(a) * RAB_HEAD_W * u;
+  w1x = nx + px; w1y = ny + py;
+  w2x = nx - px; w2y = ny - py;
+
+  // A U-turn drives nearly all of it: a sliver of the dim ring between the
+  // road in and the arrow would read as a flaw, not as information.
+  const float rest = fmodf(fmodf(from - to, 360.0f) + 360.0f, 360.0f);
+  if (rest < 2.0f * over) { from = 0.0f; to = 360.0f; }
+
+  // ---- pass 1: smooth ----------------------------------------------------
+  rabArc_(cx, cyc, ro, ri, to, from, dim, bg, true);     // the rest of the ring
+  rabArc_(cx, cyc, ro, ri, from, to, col, bg, true);     // the part you drive
+  for (uint8_t i = 0; i < d.nStubs; i++) {               // the other exits
+    const float b = d.stubs[i];
+    if (rabAngleApart_(b, 180.0f) < RAB_STUB_GAP || rabAngleApart_(b, aim) < RAB_STUB_GAP)
+      continue;
+    float x0, y0, x1, y1;
+    rabPt_(cx, cyc, u, b, RAB_RM, &x0, &y0);
+    rabPt_(cx, cyc, u, b, RAB_STUB_R1, &x1, &y1);
+    tft.drawWideLine(x0, y0, x1, y1, RAB_STUB_W * u, dim, bg);
+  }
+  tft.drawWideLine(inX0, inY0, inX1, inY1, roadW, col, bg);       // the road in
+  tft.drawWideLine(sx0, sy0, sx1, sy1, roadW, col, bg);           // the shaft
+
+  // ---- pass 2: the band, plain ---------------------------------------------
+  // The only seams are where the road in, the shaft and the stubs cross the
+  // band: their edges were blended against `bg` on top of it.
+  rabArc_(cx, cyc, ro, ri, from, to, col, bg, false);
+
+  // ---- the head, last, as one shape with the end of the shaft -------------
+  rabHead_(tx, ty, w1x, w1y, w2x, w2y, sx0, sy0, sx1, sy1, roadW, col, bg);
+
+  // The number sits in the hole, in the path's colour, with no box: the hole
+  // is `bg` already, so there is nothing to paint behind it.
+  if (d.exitNo >= 1) {
     tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(col, TFT_BLACK);
-    tft.setTextPadding((int)(RAB_R * u));
-    tft.drawNumber(exitNo, cx, cyc, numFont);
+    tft.setTextColor(col, numBg);
     tft.setTextPadding(0);
+    tft.drawNumber(d.exitNo, cx, cyc, numFont);
   }
 }
 
@@ -189,14 +338,14 @@ static void arrivePinArt(int cx, int cy, float u, uint16_t col) {
  * Draw the manoeuvre. `size` is the box the glyph lives in; everything scales
  * from it, so one number moves the whole family.
  */
-static void arrowArt(int cx, int cy, int size, uint8_t man, uint8_t exitNo,
-                     float rbBearingDeg, uint16_t col, uint8_t numFont) {
+static void arrowArt(int cx, int cy, int size, uint8_t man, const RabDraw& rb,
+                     uint16_t col, uint16_t dim, uint16_t bg, uint8_t numFont) {
   const float u = size / 120.0f;
   const int   w = (int)(18 * u);
 
   switch (man) {
     case MAN_ROUNDABOUT:
-      roundaboutArt(cx, cy, u, rbBearingDeg, exitNo, col, numFont);
+      roundaboutArt(cx, cy, u, rb, col, dim, bg, numFont, bg);
       return;
 
     case MAN_ARRIVE:

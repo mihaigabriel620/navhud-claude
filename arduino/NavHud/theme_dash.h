@@ -283,10 +283,9 @@ struct DashShown {
   uint8_t  maneuver = 255;
   int32_t  dist     = -1;
   // Part of the glyph's shape, not of its position: a roundabout with a
-  // different exit, or the same exit at a different real bearing, is a
-  // different picture and has to be repainted.
-  uint8_t  rbExit    = 255;
-  float    rbBearing = RAB_NO_BEARING;
+  // different exit, bearing, side of the road or set of stubs is a different
+  // picture and has to be repainted. Zero until a roundabout is drawn.
+  RabDraw  rb       = {};
   char     street[HUD_STREET_MAX] = { 0 };
   bool     camera   = false;
   bool     far      = false;   // the turn is far enough to be drawn dim
@@ -482,26 +481,23 @@ static void dashLimit_(const HudState& s, bool phoneUp) {
 static void dashTurn_(const HudState& s, bool phoneUp) {
   const uint8_t man = phoneUp ? s.maneuver : (uint8_t)MAN_NONE;
   const int32_t d   = phoneUp ? s.distToMan : -1;
-  // The exit number and its bearing are part of the SHAPE, and neither was
-  // being watched. Two roundabouts in a row with no other manoeuvre between
-  // them left the first one's arrow and the first one's digit on the glass for
-  // the second one, because `man` had not changed and `d` alone does not force
-  // a redraw. Resolved here so the comparison sees the same float the drawing
-  // will use.
-  const float rbB = (man == MAN_ROUNDABOUT)
-                      ? rabBearing(s.rbExit, s.rbAngle, s.rbAngleExit)
-                      : RAB_NO_BEARING;
-  const uint8_t rbE = (man == MAN_ROUNDABOUT) ? s.rbExit : 0;
-  if (man == dash_.maneuver && d == dash_.dist &&
-      rbE == dash_.rbExit && rbB == dash_.rbBearing) return;
+  // The roundabout's exit, bearings and stubs are part of the SHAPE. Two
+  // roundabouts in a row with no other manoeuvre between them once left the
+  // first one's arrow and digit on the glass for the second, because `man` had
+  // not changed and `d` alone does not force a redraw. Resolved here so the
+  // comparison sees exactly what the drawing will use.
+  RabDraw rb;
+  memset(&rb, 0, sizeof rb);
+  if (man == MAN_ROUNDABOUT) rb = rabResolve(s);
+  const bool rbChanged = memcmp(&rb, &dash_.rb, sizeof rb) != 0;
+  if (man == dash_.maneuver && d == dash_.dist && !rbChanged) return;
   // Past DASH_FAR_M the glyph is drawn dim. That is a COLOUR change, so it
   // needs the same clear a shape change does: paint dim over amber and the
   // bright pixels underneath survive, leaving a two-tone arrow.
   const bool far = (d > DASH_FAR_M);
-  const bool shapeChanged = (man != dash_.maneuver) || (far != dash_.far) ||
-                            (rbE != dash_.rbExit) || (rbB != dash_.rbBearing);
+  const bool shapeChanged = (man != dash_.maneuver) || (far != dash_.far) || rbChanged;
   dash_.maneuver = man; dash_.dist = d; dash_.far = far;
-  dash_.rbExit = rbE; dash_.rbBearing = rbB;
+  dash_.rb = rb;
 
   if (shapeChanged) {
     tft.fillRect(0, DASH_B2_TOP, DASH_ARROW_X + DASH_ARROW_SZ,
@@ -519,8 +515,9 @@ static void dashTurn_(const HudState& s, bool phoneUp) {
   // costs a visible shimmer.
   if (shapeChanged) {
     DASH_FONT(DF_UNIT);
-    arrowArt(DASH_ARROW_X, DASH_ARROW_Y, DASH_ARROW_SZ, man, s.rbExit, rbB, col,
-             DASH_FN_UNIT);
+    // The roundabout's undriven ring and stubs sit one step below the path.
+    arrowArt(DASH_ARROW_X, DASH_ARROW_Y, DASH_ARROW_SZ, man, rb, col,
+             far ? DASH_FAINT : DASH_DIM, DASH_BG, DASH_FN_UNIT);
   }
 
   if (d >= 0) {

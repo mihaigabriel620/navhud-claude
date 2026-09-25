@@ -208,6 +208,25 @@ class TFT_eSPI {
     int hi_y = (int)std::ceil (std::max({y0, y1, y2}));
     rec(lo_x, lo_y, hi_x, hi_y, "fillTriangle");
   }
+  void drawPixel(int32_t x, int32_t y, uint32_t c) {
+    (void)c; HUD_RAS(drawPixel(x, y, (uint16_t)c)); rec(x, y, x, y, "pixel");
+  }
+  // The anti-aliased pair the roundabout uses. Same signatures as TFT_eSPI
+  // 2.5.43; the box includes the one-pixel anti-alias fringe.
+  void drawArc(int32_t x, int32_t y, int32_t r, int32_t ir, uint32_t a0, uint32_t a1,
+               uint32_t fg, uint32_t bg, bool smooth = true) {
+    (void)ir; (void)a0; (void)a1; (void)fg; (void)bg; (void)smooth;
+    HUD_RAS(drawArc(x, y, r, ir, a0, a1, (uint16_t)fg, (uint16_t)bg, smooth));
+    rec(x - r - 1, y - r - 1, x + r + 1, y + r + 1, "drawArc");
+  }
+  void drawWideLine(float ax, float ay, float bx, float by, float wd,
+                    uint32_t fg, uint32_t bg = 0x00FFFFFF) {
+    (void)fg; (void)bg;
+    HUD_RAS(drawWideLine(ax, ay, bx, by, wd, (uint16_t)fg, (uint16_t)bg));
+    const float h = wd / 2 + 1;
+    rec((int)std::floor(std::min(ax, bx) - h), (int)std::floor(std::min(ay, by) - h),
+        (int)std::ceil(std::max(ax, bx) + h), (int)std::ceil(std::max(ay, by) + h), "drawWideLine");
+  }
   void drawFastHLine(int x, int y, int w, uint16_t c) {
     (void)c; HUD_RAS(drawFastHLine(x, y, w, c)); rec(x, y, x + w - 1, y, "hline");
   }

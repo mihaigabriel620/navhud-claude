@@ -45,6 +45,8 @@ static const int E60_UNIT_Y = 130;                      // baseline
 static const int E60_LIM_CX = 76,  E60_LIM_CY = 74, E60_LIM_R = 48;
 static const int E60_RULE_Y = 154;
 static const int E60_ARR_CX = 64,  E60_ARR_CY = 212, E60_ARR_R = 44;
+static const int E60_RAB_CY = 220;                      // roundabout glyph centre
+static const float E60_RAB_U = 0.86f;                   // ...and scale
 static const int E60_DIST_X = 132, E60_DIST_Y = 228;    // baseline
 static const int E60_ST_Y   = 262;                      // baseline
 static const int E60_FOOT_Y = 302;                      // baseline
@@ -159,8 +161,12 @@ static void e60DrawManeuver(const HudState& s) {
   const uint16_t col = E60_AMBER;
   switch (s.maneuver) {
     case MAN_ROUNDABOUT:
-      drawRoundaboutArt(E60_ARR_CX, E60_ARR_CY - 2, 27, 12, s.rbExit, col, 4,
-                        E60_ARR_CY + E60_ARR_R);
+      // The dash's roundabout (hud_arrows.h) in this theme's colours, scaled
+      // to fill the clear box above exactly: 51 px above the ring's centre to
+      // the arrow tip at u 0.86, 47 below to the road in, and 50 either side.
+      // The exit number is built-in font 4, drawn with no cell box.
+      roundaboutArt(E60_ARR_CX, E60_RAB_CY, E60_RAB_U, rabResolve(s), col,
+                    E60_AMBER_DIM, E60_BG, 4, col);
       break;
     case MAN_UTURN:
       drawUturnArt(E60_ARR_CX, E60_ARR_CY - 10, 24, 15, col);
@@ -369,7 +375,14 @@ static void themeRenderDelta(const HudState& cur, const HudState& shown) {
     e60DrawLimit(cur);
   if (cur.speed != shown.speed || (changed & FLAG_OVER_LIMIT))
     e60DrawSpeed(cur);
-  if (cur.maneuver != shown.maneuver || cur.rbExit != shown.rbExit)
+  // A roundabout's angles and stubs are part of its shape, not only its exit
+  // number: compare what would be drawn.
+  bool rbChanged = false;
+  if (cur.maneuver == MAN_ROUNDABOUT) {
+    const RabDraw a = rabResolve(cur), b = rabResolve(shown);
+    rbChanged = memcmp(&a, &b, sizeof a) != 0;
+  }
+  if (cur.maneuver != shown.maneuver || cur.rbExit != shown.rbExit || rbChanged)
     e60DrawManeuver(cur);
   if (cur.distToMan != shown.distToMan) e60DrawDistance(cur);
   if (strcmp(cur.street, shown.street) != 0) e60DrawStreet(cur);

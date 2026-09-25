@@ -96,6 +96,7 @@ static std::vector<std::pair<std::string, HudState>> extras() {
   v.push_back({"camera_zone", s});
   s = mk(34, 50, MAN_ROUNDABOUT, 2, 120, 700, 4100, FLAG_GPS_OK, "N5");
   s.rbAngle = -95; s.rbAngleExit = 2;              // the phone's measured bearing
+  s.rbAngleDist = s.distToMan;                     // ...stamped as it arrived
   v.push_back({"roundabout_exit2_real_bearing", s});
   v.push_back({"limit_unknown", mk(64, 0, MAN_SLIGHT_RIGHT, 0, 450, 1500, 21000,
                                    FLAG_GPS_OK, "RING R0")});
@@ -104,6 +105,44 @@ static std::vector<std::pair<std::string, HudState>> extras() {
                                        FLAG_GPS_OK, "Chaussee d'Ixelles")});
   v.push_back({"off_route", mk(57, 70, MAN_NONE, 0, 0, 900, 8000,
                                FLAG_GPS_OK | FLAG_OFF_ROUTE, "BOULEVARD DU ROI")});
+  return v;
+}
+
+/** A roundabout as the phone sends it: $HUD, then $RBX with every exit. */
+static HudState rab(int exitNo, bool left, std::initializer_list<int> angles, int dist = 150) {
+  HudState s = mk(38, 50, MAN_ROUNDABOUT, exitNo, dist, 700, 4100, FLAG_GPS_OK, "N5");
+  s.rbxExit = (uint8_t)exitNo; s.rbxLeft = left; s.rbxDist = dist;
+  for (int a : angles) s.rbxAngles[s.rbxCount++] = (int16_t)a;
+  return s;
+}
+
+/** The roundabout gallery: every case the owner is shown before flashing. */
+static std::vector<std::pair<std::string, HudState>> roundabouts() {
+  std::vector<std::pair<std::string, HudState>> v;
+  v.push_back({"rab_3exits_take1_right",    rab(1, false, {90})});
+  v.push_back({"rab_3exits_take2_straight", rab(2, false, {90, 0})});
+  v.push_back({"rab_3exits_take3_left",     rab(3, false, {90, 0, -90})});
+  v.push_back({"rab_4exits_take2",          rab(2, false, {75, 5})});
+  v.push_back({"rab_4exits_take4_uturn",    rab(4, false, {90, 0, -90, -178})});
+  v.push_back({"rab_5exits_take4",          rab(4, false, {110, 50, -10, -70})});
+  v.push_back({"rab_7exits_take6",          rab(6, false, {140, 95, 50, 5, -40, -85})});
+  v.push_back({"rab_left_traffic_take2",    rab(2, true, {-90, 0})});
+  v.push_back({"rab_left_traffic_take3",    rab(3, true, {-90, 0, 90})});
+  v.push_back({"rab_far_dimmed",            rab(3, false, {90, 0, -90}, 1400)});
+  // An older app: $RAB only, no $RBX -- path and arrow, no stubs.
+  HudState s = mk(38, 50, MAN_ROUNDABOUT, 3, 150, 700, 4100, FLAG_GPS_OK, "N5");
+  s.rbAngle = -80; s.rbAngleExit = 3; s.rbAngleDist = 150;
+  v.push_back({"rab_old_app_rab_only", s});
+  // No angle from anywhere: the exit-number table.
+  v.push_back({"rab_no_angle_table", mk(38, 50, MAN_ROUNDABOUT, 3, 150, 700, 4100,
+                                        FLAG_GPS_OK, "N5")});
+  // Exit 9, no angle, no table entry: a bare ring.
+  v.push_back({"rab_no_angle_bare_ring", mk(38, 50, MAN_ROUNDABOUT, 9, 150, 700, 4100,
+                                            FLAG_GPS_OK, "N5")});
+  // The last roundabout's angles, with the next one 400 m away: not used.
+  s = rab(2, false, {90, 0}, 5);
+  s.distToMan = 400;
+  v.push_back({"rab_stale_angles_ignored", s});
   return v;
 }
 
@@ -146,7 +185,40 @@ static void pixelChecks() {
     themeRenderCarOnly(kNow, true);
     expectSurvives("battery reading beside PS " + std::to_string(ps), alone, snap());
   }
+#endif
+  // Every roundabout: the glyph drawn alone must survive the whole screen (no
+  // other field's clear cuts into it), and the glyph's own clear must take
+  // every pixel of it off again when the manoeuvre changes (nothing left on
+  // the glass outside its box).
+  for (const auto& e : roundabouts()) {
+    const HudState s = e.second;
+    HudState none = s;
+    none.maneuver = MAN_NONE;
+    tft.fillScreen(0);
+#if !defined(HUD_THEME_E60_CLASSIC)
+    dashForget_();
+    dashTurn_(s, true);
+    const std::vector<uint16_t> alone = snap();
+    themeRenderFull(s);
+    expectSurvives(e.first + " survives the screen", alone, snap());
+    tft.fillScreen(0); dashForget_();
+    dashTurn_(s, true);
+    dashTurn_(none, true);
 #else
+    e60DrawManeuver(s);
+    const std::vector<uint16_t> alone = snap();
+    themeRenderFull(s);
+    expectSurvives(e.first + " survives the screen", alone, snap());
+    tft.fillScreen(0);
+    e60DrawManeuver(s);
+    e60DrawManeuver(none);
+#endif
+    int left = 0;
+    for (uint16_t p : snap()) if (p) left++;
+    if (left) { printf("  FAIL %s: %d px left after its clear\n", e.first.c_str(), left); g_failed++; }
+    else      printf("  ok   %s is inside its clear box\n", e.first.c_str());
+  }
+#if defined(HUD_THEME_E60_CLASSIC)
   // The speed digits under the km/h label, at two and three digits, over and
   // under the limit (over adds the brackets).
   const int speeds[] = { 72, 88, 188 };
@@ -195,6 +267,10 @@ int main(int argc, char** argv) {
     screen(corpusName(i), [&] { themeRenderFull(s); });
   }
   for (const auto& e : extras()) {
+    const HudState s = e.second;
+    screen(e.first, [&] { themeRenderFull(s); });
+  }
+  for (const auto& e : roundabouts()) {
     const HudState s = e.second;
     screen(e.first, [&] { themeRenderFull(s); });
   }

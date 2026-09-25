@@ -80,30 +80,6 @@ static void drawUturnArt(int cx, int cy, int r, int w, uint16_t col) {
   arrowHead(cx - r, cy + 8, 180, r + 4, r + 2, col);
 }
 
-// entryFromY: where the approach stub starts, so each theme can keep it inside
-// its own vertical budget.
-static void drawRoundaboutArt(int cx, int cy, int r, int stubW, uint8_t exitNo,
-                              uint16_t col, uint8_t numFont, int entryFromY) {
-  tft.drawCircle(cx, cy, r, col);
-  tft.drawCircle(cx, cy, r - 1, col);
-  tft.drawCircle(cx, cy, r - 2, col);
-  thickLine(cx, entryFromY, cx, cy + r, stubW, col);
-  // 1st ~ right, 2nd ~ ahead, 3rd ~ left, 4th+ further round
-  static const float ang[7] = { 100.f, 30.f, -30.f, -80.f, -120.f, -150.f, -170.f };
-  int idx = (exitNo >= 1 && exitNo <= 7) ? exitNo - 1 : 1;
-  float a = ang[idx] * DEG_TO_RAD;
-  thickLine(cx + sinf(a) * r, cy - cosf(a) * r,
-            cx + sinf(a) * (r + r * 0.6f), cy - cosf(a) * (r + r * 0.6f), stubW, col);
-  arrowHead(cx, cy, ang[idx], r * 2.2f, r * 0.75f, col);
-  if (exitNo >= 1) {
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(col, TFT_BLACK);
-    tft.setTextPadding(r);
-    tft.drawNumber(exitNo, cx, cy, numFont);
-    tft.setTextPadding(0);
-  }
-}
-
 /** Arrow angle for a maneuver code. 0 = straight on. */
 static float angleForManeuver(uint8_t man) {
   switch (man) {
@@ -150,6 +126,7 @@ static void formatRemaining(int32_t m, char* out, size_t n, bool upper) {
 //  theme selection
 // ---------------------------------------------------------------------------
 #if defined(HUD_THEME_E60_CLASSIC)
+  #include "hud_arrows.h"     // the roundabout, shared with the dash
   #include "theme_e60.h"      // the nav-only layout, before CAN
 #else
   #include "hud_arrows.h"

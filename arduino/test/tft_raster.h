@@ -214,6 +214,156 @@ class HudRaster {
     }
   }
 
+  // ---- anti-aliased primitives (TFT_eSPI.cpp 2.5.43, drawArc and
+  //      drawWedgeLine), transcribed with the library's constants --------
+  static constexpr float kPixelAlphaGain = 255.0f;
+  static constexpr float kLoAlpha = 1.0f / 32.0f;
+  static constexpr float kHiAlpha = 1.0f - kLoAlpha;
+  static constexpr float kDeg2Rad = 3.14159265359f / 180.0f;
+
+  static uint8_t sqrtFraction(uint32_t num) {
+    if (num > 0x40000000) return 0;
+    uint32_t bsh = 0x00004000, fpr = 0, osh = 0;
+    while (num > bsh) { bsh <<= 2; osh++; }
+    do {
+      uint32_t bod = bsh + fpr;
+      if (num >= bod) { num -= bod; fpr = bsh + bod; }
+      num <<= 1;
+    } while (bsh >>= 1);
+    return (uint8_t)(fpr >> osh);
+  }
+
+  void drawArc(int32_t x, int32_t y, int32_t r, int32_t ir, uint32_t startAngle,
+               uint32_t endAngle, uint16_t fg_color, uint16_t bg_color, bool smooth) {
+    if (endAngle > 360) endAngle = 360;
+    if (startAngle > 360) startAngle = 360;
+    if (startAngle == endAngle) return;
+    if (r < ir) std::swap(r, ir);
+    if (r <= 0 || ir < 0) return;
+    if (endAngle < startAngle) {
+      if (startAngle < 360) drawArc(x, y, r, ir, startAngle, 360, fg_color, bg_color, smooth);
+      if (endAngle == 0) return;
+      startAngle = 0;
+    }
+    int32_t xs = 0;
+    uint8_t alpha = 0;
+    uint32_t r2 = r * r;
+    if (smooth) r++;
+    uint32_t r1 = r * r;
+    int16_t w = r - ir;
+    uint32_t r3 = ir * ir;
+    if (smooth) ir--;
+    uint32_t r4 = ir * ir;
+    uint32_t startSlope[4] = {0, 0, 0xFFFFFFFF, 0};
+    uint32_t endSlope[4] = {0, 0xFFFFFFFF, 0, 0};
+    constexpr float minDivisor = 1.0f / 0x8000;
+    float fabscos = fabsf(cosf(startAngle * kDeg2Rad));
+    float fabssin = fabsf(sinf(startAngle * kDeg2Rad));
+    uint32_t slope = (fabscos / (fabssin + minDivisor)) * (float)(1UL << 16);
+    if (startAngle <= 90) startSlope[0] = slope;
+    else if (startAngle <= 180) startSlope[1] = slope;
+    else if (startAngle <= 270) { startSlope[1] = 0xFFFFFFFF; startSlope[2] = slope; }
+    else { startSlope[1] = 0xFFFFFFFF; startSlope[2] = 0; startSlope[3] = slope; }
+    fabscos = fabsf(cosf(endAngle * kDeg2Rad));
+    fabssin = fabsf(sinf(endAngle * kDeg2Rad));
+    slope = (uint32_t)((fabscos / (fabssin + minDivisor)) * (float)(1UL << 16));
+    if (endAngle <= 90) { endSlope[0] = slope; endSlope[1] = 0; startSlope[2] = 0; }
+    else if (endAngle <= 180) { endSlope[1] = slope; startSlope[2] = 0; }
+    else if (endAngle <= 270) endSlope[2] = slope;
+    else endSlope[3] = slope;
+
+    for (int32_t cy = r - 1; cy > 0; cy--) {
+      uint32_t len[4] = {0, 0, 0, 0};
+      int32_t xst[4] = {-1, -1, -1, -1};
+      uint32_t dy2 = (r - cy) * (r - cy);
+      while ((r - xs) * (r - xs) + dy2 >= r1) xs++;
+      for (int32_t cx = xs; cx < r; cx++) {
+        uint32_t hyp = (r - cx) * (r - cx) + dy2;
+        if (hyp > r2) {
+          alpha = ~sqrtFraction(hyp);
+        } else if (hyp >= r3) {
+          slope = ((r - cy) << 16) / (r - cx);
+          if (slope <= startSlope[0] && slope >= endSlope[0]) { xst[0] = cx; len[0]++; }
+          if (slope >= startSlope[1] && slope <= endSlope[1]) { xst[1] = cx; len[1]++; }
+          if (slope <= startSlope[2] && slope >= endSlope[2]) { xst[2] = cx; len[2]++; }
+          if (slope <= endSlope[3] && slope >= startSlope[3]) { xst[3] = cx; len[3]++; }
+          continue;
+        } else {
+          if (hyp <= r4) break;
+          alpha = sqrtFraction(hyp);
+        }
+        if (alpha < 16) continue;
+        uint16_t pcol = alphaBlend(alpha, fg_color, bg_color);
+        slope = ((r - cy) << 16) / (r - cx);
+        if (slope <= startSlope[0] && slope >= endSlope[0]) drawPixel(x + cx - r, y - cy + r, pcol);
+        if (slope >= startSlope[1] && slope <= endSlope[1]) drawPixel(x + cx - r, y + cy - r, pcol);
+        if (slope <= startSlope[2] && slope >= endSlope[2]) drawPixel(x - cx + r, y + cy - r, pcol);
+        if (slope <= endSlope[3] && slope >= startSlope[3]) drawPixel(x - cx + r, y - cy + r, pcol);
+      }
+      if (len[0]) drawFastHLine(x + xst[0] - len[0] + 1 - r, y - cy + r, len[0], fg_color);
+      if (len[1]) drawFastHLine(x + xst[1] - len[1] + 1 - r, y + cy - r, len[1], fg_color);
+      if (len[2]) drawFastHLine(x - xst[2] + r, y + cy - r, len[2], fg_color);
+      if (len[3]) drawFastHLine(x - xst[3] + r, y - cy + r, len[3], fg_color);
+    }
+    if (startAngle == 0 || endAngle == 360) drawFastVLine(x, y + r - w, w, fg_color);
+    if (startAngle <= 90 && endAngle >= 90) drawFastHLine(x - r + 1, y, w, fg_color);
+    if (startAngle <= 180 && endAngle >= 180) drawFastVLine(x, y - r + 1, w, fg_color);
+    if (startAngle <= 270 && endAngle >= 270) drawFastHLine(x + r - w, y, w, fg_color);
+  }
+
+  static float wedgeLineDistance(float xpax, float ypay, float bax, float bay, float dr) {
+    float h = fmaxf(fminf((xpax * bax + ypay * bay) / (bax * bax + bay * bay), 1.0f), 0.0f);
+    float dx = xpax - bax * h, dy = ypay - bay * h;
+    return sqrtf(dx * dx + dy * dy) + h * dr;
+  }
+
+  // bg_color is always given by the firmware (the panel cannot be read back),
+  // so the readPixel branch is not transcribed. setWindow + pushColor on a row
+  // is the same as consecutive drawPixel calls.
+  void drawWedgeLine(float ax, float ay, float bx, float by, float ar, float br,
+                     uint16_t fg_color, uint16_t bg_color) {
+    if ((ar < 0.0f) || (br < 0.0f)) return;
+    if ((fabsf(ax - bx) < 0.01f) && (fabsf(ay - by) < 0.01f)) bx += 0.01f;
+    int32_t x0 = (int32_t)floorf(fminf(ax - ar, bx - br));
+    int32_t x1 = (int32_t)ceilf(fmaxf(ax + ar, bx + br));
+    int32_t y0 = (int32_t)floorf(fminf(ay - ar, by - br));
+    int32_t y1 = (int32_t)ceilf(fmaxf(ay + ar, by + br));
+    // clipWindow(): the viewport is the whole panel
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > kW - 1) x1 = kW - 1;
+    if (y1 > kH - 1) y1 = kH - 1;
+    if (x0 > x1 || y0 > y1) return;
+    int32_t ys = ay;
+    if ((ax - ar) > (bx - br)) ys = by;
+    float rdt = ar - br;
+    float alpha = 1.0f;
+    ar += 0.5f;
+    float xpax, ypay, bax = bx - ax, bay = by - ay;
+    int32_t xs = x0;
+    for (int32_t pass = 0; pass < 2; pass++) {
+      const int32_t from = pass ? ys - 1 : ys, to = pass ? y0 : y1, step = pass ? -1 : 1;
+      xs = x0;
+      for (int32_t yp = from; pass ? yp >= to : yp <= to; yp += step) {
+        bool endX = false;
+        ypay = yp - ay;
+        for (int32_t xp = xs; xp <= x1; xp++) {
+          if (endX) if (alpha <= kLoAlpha) break;
+          xpax = xp - ax;
+          alpha = ar - wedgeLineDistance(xpax, ypay, bax, bay, rdt);
+          if (alpha <= kLoAlpha) continue;
+          if (!endX) { endX = true; xs = xp; }
+          if (alpha > kHiAlpha) { drawPixel(xp, yp, fg_color); continue; }
+          drawPixel(xp, yp, alphaBlend((uint8_t)(alpha * kPixelAlphaGain), fg_color, bg_color));
+        }
+      }
+    }
+  }
+  void drawWideLine(float ax, float ay, float bx, float by, float wd,
+                    uint16_t fg_color, uint16_t bg_color) {
+    drawWedgeLine(ax, ay, bx, by, wd / 2.0f, wd / 2.0f, fg_color, bg_color);
+  }
+
   static uint16_t alphaBlend(uint8_t alpha, uint16_t fgc, uint16_t bgc) {
     uint32_t rxb = bgc & 0xF81F;
     rxb += ((fgc & 0xF81F) - rxb) * (alpha >> 2) >> 6;

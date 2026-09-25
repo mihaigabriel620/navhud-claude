@@ -129,6 +129,47 @@ class HudCanvas {
     t_.drawCircle((int)lroundf(ox), (int)lroundf(oy), scaledLen(cx, cy, r), col);
   }
 
+  // ---- anti-aliased -------------------------------------------------------
+  //
+  // TFT_eSPI's smooth arc and wide line. The background colour is REQUIRED
+  // here although the library makes it optional: without it the library reads
+  // the pixel back from the panel to blend against, and this panel's SDO is
+  // not wired (TFT_MISO is -1), so it would blend against garbage.
+  //
+  // Under keystone the same approximation as the circles above: the centre or
+  // the end points are mapped, and radii and widths scaled by the local
+  // stretch.
+
+  void drawArc(int x, int y, int r, int ir, uint32_t startAngle, uint32_t endAngle,
+               uint16_t fg, uint16_t bg, bool smooth = true) {
+    if (geom.identity) { t_.drawArc(x, y, r, ir, startAngle, endAngle, fg, bg, smooth); return; }
+    float ox, oy;
+    geom.map((float)x, (float)y, &ox, &oy);
+    t_.drawArc((int)lroundf(ox), (int)lroundf(oy), scaledLen(x, y, r), scaledLen(x, y, ir),
+               startAngle, endAngle, fg, bg, smooth);
+  }
+
+  void drawWideLine(float ax, float ay, float bx, float by, float wd, uint16_t fg, uint16_t bg) {
+    if (geom.identity) { t_.drawWideLine(ax, ay, bx, by, wd, fg, bg); return; }
+    float mx0, my0, mx1, my1;
+    geom.map(ax, ay, &mx0, &my0);
+    geom.map(bx, by, &mx1, &my1);
+    t_.drawWideLine(mx0, my0, mx1, my1,
+                    wd * geom.scaleAt((ax + bx) * 0.5f, (ay + by) * 0.5f), fg, bg);
+  }
+
+  /**
+   * One pixel. Only the roundabout's arrow head uses it, and only with keystone
+   * off: under keystone a pixel is mapped to one pixel and a stretched area
+   * would come out with holes, so that path draws the head as a triangle.
+   */
+  void drawPixel(int x, int y, uint16_t col) {
+    if (geom.identity) { t_.drawPixel(x, y, col); return; }
+    float ox, oy;
+    geom.map((float)x, (float)y, &ox, &oy);
+    t_.drawPixel((int)lroundf(ox), (int)lroundf(oy), col);
+  }
+
   // ---- hairlines ----------------------------------------------------------
   //
   // A horizontal line stops being horizontal once the screen is keystoned, so
