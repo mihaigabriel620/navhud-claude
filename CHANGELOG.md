@@ -1,5 +1,87 @@
 # Changelog
 
+## App 1.32 — the HUD sweep, and the new roundabout
+
+Goes with HUD firmware 2.8 (below). Both halves work with the other's older
+version.
+
+- Roundabouts: the phone's card now draws the same roundabout as the HUD — a
+  dim ring, the part you drive bright, the exit number in the middle and the
+  arrow at the exit's real angle.
+- The exit angle when Mapbox's banner has none now comes from the exit road
+  itself. Before, it came from the angle at which you ENTER the roundabout
+  (Mapbox's `bearing_after` there is the veer onto the ring), so the arrow
+  pointed a little right at every such roundabout, whatever the exit.
+- Left-hand traffic (UK, Ireland): the HUD is told, so its roundabout runs the
+  other way round.
+- A "roundabout turn" with no exit number: the card now shows a plain ring,
+  as the HUD does, instead of an arrow the HUD could not show.
+- Lane arrows come back after the HUD link drops for a moment; before, they
+  stayed missing until the lanes changed.
+- The card's exit number updates when two roundabouts follow each other.
+
+## 2.8 — the HUD sweep: the roundabout, and nine bugs
+
+Flash this with app 1.32 (it also works with 1.31: you then get the new
+roundabout without left-hand traffic). Not flashed yet — the owner flashes.
+
+**The roundabout, redrawn** (the owner's choice from the Google Maps / Waze
+references): a thick smooth ring, dim; the part you drive — in, round, out —
+bright; the exit number in the middle with no box; a big arrow at the exit's
+real angle, any way round the clock. Mirrored for left-hand traffic. Both
+themes. Exits sharper than about 4:40 / 7:20 (a U-turn) are drawn there, so
+the arrow never lies on the road you came in on.
+
+- The black dots were the ring itself: it was built from 1-pixel circles every
+  0.8 px, and neighbouring integer circles leave gaps. It is now TFT_eSPI's
+  anti-aliased arc; the roads are anti-aliased wide lines; the arrow head is
+  drawn as one shape with its shaft, so nothing leaves a seam.
+- **The real angle never reached the screen.** The phone has sent it (`$RAB`)
+  since app 1.31, but the board read it into a scratch copy and threw it away,
+  so every roundabout was drawn from a guess based on the exit number. Fixed.
+- An angle is only used for the roundabout it was sent for: the exit number
+  must match AND the distance must not have grown since it arrived, so the
+  last roundabout's arrow is never aimed at the next "exit 2".
+
+**Bugs fixed** (each has a test that failed before the fix):
+
+- A CAN module losing power in the middle of reading could lock the board up
+  until the watchdog reset it.
+- After a long repaint the CAN speed could spike (200 km/h at a true 50) for a
+  moment, on the HUD and on the phone.
+- When the car's speed frame stopped, the board kept sending the last speed for
+  ever and the phone showed it frozen; it now says "no speed" and the phone
+  uses GPS.
+- One bad read from the CAN module switched the car data off for the rest of
+  the drive (and left the panel lit, since it could no longer see the key). The
+  read is checked twice, and a module that comes back is used again.
+- The CAN module is checked to be in listen-only mode (it can never send
+  anything on the car's bus) on every read, and put back at once if a glitch
+  on the shared SPI wires or a brown-out ever changed that. Tests prove no
+  transmit command ever reaches it.
+- A compass that browned out stopped for the rest of the drive; it is found
+  again within seconds.
+- `forget` typed while moving erased a NEW calibration made after it.
+- Dash theme: the PS number erased the "V" of the battery reading; a stale
+  battery reading stayed on the glass; the camera warning flickered four times
+  a second as it counted down.
+- E60 theme: the km/h label cut the bottom off the speed digits.
+- After the phone link dropped and came back, the last trip's speed limit and
+  turn flashed back up.
+- Key out and back in at night: a flash of full brightness.
+- The keystone grid could vanish while dragging a slider, and always vanished
+  after 15 s of just looking at it (the documented time is two minutes).
+
+**Tests**: `make check` is green again (the CAN and whole-sketch suites had not
+compiled since the 2.x rewrite), and a new GitHub workflow runs it, renders
+every screen to PNG (artifact `hud-screens`) and compiles the real firmware
+for the D1 mini on every push.
+
+Not changed, noted for later: the E60 theme still clears and redraws its speed
+and distance on every change; the dash ignores the "limit is a guess" flag; a
+`$GEOMSAVE` writes flash inside the serial read; a calibration waits for a CAN
+standstill before it is saved.
+
 ## App 1.31 — regression check and drive walkthrough
 
 Fixes from a check against the earlier bug lists and an end-to-end drive

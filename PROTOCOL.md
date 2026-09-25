@@ -23,6 +23,46 @@ $HUD,<spd>,<lim>,<man>,<rbx>,<dist>,<eta>,<rem>,<flags>,<street>*<CS>\r\n
 | 8 | `flags`  | int    | Bitfield, see below.                                           |
 | 9 | `street` | string | Road you end up on. Max 20 chars, ASCII, no `,` `*` `$`.       |
 
+### `$RAB` — where the roundabout exit really points (phone → Arduino, 4 Hz)
+
+```
+$RAB,<exit>,<bearing>*<CS>\r\n
+```
+
+Sent right after every `$HUD` frame whose maneuver is a roundabout, when the
+phone knows the angle. `exit` is 1..12 and must match the `$HUD` frame's `rbx`;
+`bearing` is degrees from the road you come in on, −180..180: 0 straight on,
+positive to the right, ±180 a U-turn. The phone takes it from the banner's
+`degrees`, else from the exit road's own bearing in the route's intersections.
+Which way round the ring runs comes from flags bit 7 (below).
+
+Its own frame because nothing can follow the street name on `$HUD`. The exit
+number rides along, and the board stamps each `$RAB` with the distance to the
+maneuver as it arrives: an angle is only drawn while the exit matches and the
+distance has not grown since (30 m of slack) — so the last roundabout's angle
+is never aimed at the next one, even when both are "exit 2". An angle outside
+±180 is refused, not clamped. With no usable `$RAB` the board falls back to a
+guess from the exit number (1..7, the same table as the app's card), and with
+no exit number to a bare ring.
+
+The board draws it as a thick ring: the part you drive — in, round, out —
+bright, the rest dim, the exit number in the middle and the arrow at the
+angle. Firmware before 2.7 ignores the frame.
+
+### `$CAR` — the car's own data, Arduino → phone (2 Hz, while the phone is up)
+
+```
+$CAR,<kmh>,<rpm>,<ps>,<peak>,<volts>,<ign>[,<voltsRaw>[,<coolantC>]]*<CS>
+```
+
+From the E60's K-CAN (listen-only: the board never transmits on the car's bus).
+`kmh` is **`-1` once the bus's speed frame is stale** (firmware 2.8; 2.7 repeated
+the last speed); the app refuses such a line and falls back to GPS. `ign` is 1
+with the engine running. `voltsRaw` is the undivided battery count, `coolantC`
+is −99 until the coolant frame is heard. The app reads the first six fields
+positionally and ignores the rest. `$CANDROP,<overflows>,<frames>` is sent
+only when the receive-overflow count changes.
+
 ### `$MAG` — compass heading, Arduino → phone (optional, 5 Hz)
 
 ```
@@ -38,13 +78,11 @@ right, the field magnitude reads the same at every heading, so a spread that
 will not go away means the calibration is stale or something magnetic has moved
 in beside the sensor.
 
-**`mount` is the field to act on.** `1` the board knows how it is bolted into
-the car, `2` it thought it did and gravity has since disagreed, `0` it does not
-know. Anything but `1` and `headingDeg` is not the direction the *car* points —
-it is the direction the *chip* points, which is out by however far the sensor is
-twisted from the car's nose, stated confidently to a tenth of a degree with
-nothing else to suggest it is wrong. The phone refuses to steer the arrow with
-it unless the field reads `1`.
+**`mount` is the field the app acts on**: anything but `1` and it ignores the
+heading and uses the phone's own sensors. Firmware 2.x sends `1` whenever the
+chip answers -- the heading is then the car's, aligned by the `north` offset
+(typed command below), which defaults to "the chip points forwards". Field 5
+(`spreadPct`) is always 0 on 2.x.
 
 Absent on firmware that predates the field, which the phone reads as `1` so an
 older board keeps behaving as it did.
@@ -60,13 +98,14 @@ every line that does not start with `$`.
 |---|---|
 | `help` | lists these |
 | `status` | everything the board currently knows: link, bus, sensors, calibration |
-| `spin` | start the compass calibration, then turn the board in your hand |
-| `spin save` / `spin stop` | keep it, or throw it away |
-| `mount` | start learning how the sensor is bolted in |
-| `mount save` / `mount stop` | keep it, or throw it away |
-| `forget` | erase both calibrations |
+| `wipe` | rebuild the screen in four stages, to find where a mark comes from |
+| `spin` | start the compass calibration: drive a slow circle, or turn the board round |
+| `spin stop` | finish it: kept if both axes swept far enough, otherwise it says why and keeps going |
+| `north <deg>` | "the car is pointing this way now" (0-359): sets the compass's north offset |
+| `forget` | erase the compass calibration |
 
-`save` and `forget` do not write to flash where they are typed. `EEPROM.commit()`
+A kept calibration, `north` and `forget` do not write to flash where they are
+typed. A calibration or `north` queued after a `forget` cancels it. `EEPROM.commit()`
 on an ESP8266 erases and rewrites a whole 4 KB sector with interrupts off — tens
 of milliseconds, and up to 400 ms by the datasheet — during which nothing fills
 the UART receive buffer. A `$CAM` or `$LANE` clearing frame lost in that window
@@ -74,18 +113,20 @@ is lost for good, because both are edge-triggered. So the write is deferred to
 the next standstill, or happens immediately when there is no CAN bus at all,
 which is the bench case.
 
-### `$CAM` — speed camera alert (phone → Arduino, on change)
+### `$CAM` — speed camera alert (phone → Arduino, 4 Hz while an alert is up)
 
 ```
 $CAM,<kind>,<distance>,<limit>*<CS>
 ```
 
+Sent with every frame while an alert is up (the distance counts down), and
+`$CAM,0,0,0` once when it ends.
 `kind`: 0 none, 1 fixed, 2 average-speed, 3 traffic-light, 4 danger zone.
 `distance` is metres, and is always 0 for kind 4 — a danger zone deliberately
 has no position (see docs/CAMERAS.md). `limit` is the enforced speed, 0 when the
 map does not have it.
 
-### `$LANE` — lane guidance (phone → Arduino, on change)
+### `$LANE` — lane guidance (phone → Arduino, 4 Hz while it applies)
 
 ```
 $LANE,<count>,<activeMask>,<d0>,…,<dN-1>[,<c0>,…,<cN-1>]*<CS>
@@ -95,7 +136,9 @@ $LANE,<count>,<activeMask>,<d0>,…,<dN-1>[,<c0>,…,<cN-1>]*<CS>
 `activeMask` is set when lane *i* can be used for the upcoming maneuver. Each
 `d` is a bitmask of every movement that lane allows: 1 u-turn, 2 sharp left,
 4 left, 8 slight left, 16 straight, 32 slight right, 64 right, 128 sharp right.
-`$LANE,0,0` clears the strip.
+`$LANE,0,0` clears the strip. Since app 1.32 the lanes go out with every frame
+while they apply, like `$CAM`, so a board that dropped them (it forgets both
+after two seconds with no frame) gets them back.
 
 Each `c` is the **one** movement to follow in that lane — a single bit out of
 that lane's `d`, or 0 when the lane is not yours or the router would not say.
@@ -110,30 +153,10 @@ and a phone running older software sends no tail at all. Both combinations work.
 
 A frame claiming more lanes than it carries is rejected rather than read past.
 
-### `$IMU` — yaw rate, Arduino → phone (optional, 20 Hz)
+### `$IMU` — no longer sent
 
-```
-$IMU,<yaw>,<pitch>,<roll>,<rateZ>*<CS>
-```
-
-Degrees, and degrees per second for `rateZ`, **clockwise positive** — the sign
-convention of a compass, so the phone can add it straight onto a heading.
-
-The app reads `rateZ` and ignores the other three. That is deliberate: a bare
-gyroscope cannot know absolute yaw, and GPS already supplies it to within a
-degree whenever the car is moving. What GPS cannot do is fill in the second
-*between* fixes, and that is exactly what the rate provides. `yaw` is the
-board's own integrated value, sent for diagnostics; `pitch` and `roll` come
-from the accelerometer and are there for a mounting sanity check.
-
-Enable it by uncommenting `#define HUD_IMU` in `hud_config.h` and wiring a
-GY-521 / MPU-6050 — `arduino/NavHud/hud_imu.h` has the wiring and the reasoning
-behind that particular module. A board with one fitted announces itself as
-`$HELLO,NAVHUD,2,IMU`.
-
-If nothing arrives on this sentence for a second, the app falls back to the
-phone's own gyroscope, and if the phone has not got one either, to plain GPS
-heading. All three paths work; they just get progressively less smooth.
+Firmware 2.x has no gyroscope and never sends `$IMU`; the app still reads it
+if a board ever does, and otherwise uses the phone's own gyroscope and GPS.
 
 ### `$PING` — heartbeat (phone → Arduino, 1 Hz)
 
@@ -141,9 +164,10 @@ heading. All three paths work; they just get progressively less smooth.
 $PING*<CS>\r\n
 ```
 
-Sent even when there is no active route. If the Arduino sees no frame of any
-kind for 3 seconds it blanks to a "NO LINK" screen — that is what tells you the
-cable fell out, rather than the display cheerfully showing a stale speed limit.
+Sent even when there is no active route. If the Arduino hears nothing for
+2 seconds it drops everything the phone told it and shows the car-only screen
+(a board with the CAN module) or "NO LINK" — never a stale speed limit. When
+the link comes back, nothing from before is shown until the phone resends it.
 
 ### `$HELLO` — Arduino → phone, once on boot
 
@@ -152,8 +176,7 @@ $HELLO,NAVHUD,3*<CS>\r\n
 ```
 
 Lets the app confirm it opened the right serial device and not, say, a 3D
-printer. The trailing number is the protocol version; a board with a gyroscope
-fitted appends `,IMU`.
+printer. The trailing number is the protocol version.
 
 Note that an ESP8266's boot ROM writes its own startup message on the same pins
 at 74880 baud, so the first thing the phone sees after a reset is a short burst
@@ -262,6 +285,12 @@ digits. Identical to NMEA 0183. A frame with a bad checksum is dropped silently.
 | 4   | 16    | Speed limit is from a lower-confidence source  |
 | 5   | 32    | Night mode requested (dim the backlight)       |
 | 6   | 64    | An itinerary is being followed                 |
+| 7   | 128   | Traffic keeps left here: roundabouts run clockwise |
+
+Bit 7 (app 1.32, firmware 2.8) only changes which way the HUD draws a
+roundabout's driven path and mirrors its exit-number guess. Firmware before
+2.8 tests only the bits it knows and ignores it; an app before 1.32 leaves it
+clear, which is right-hand traffic.
 
 ### Bit 6 is not optional, and the HUD acts on its absence
 
