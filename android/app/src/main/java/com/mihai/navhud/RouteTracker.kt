@@ -140,6 +140,12 @@ class RouteTracker(val route: Route) {
     private fun limitAt(seg: Int, along: Double, lat: Double, lon: Double, heading: Double?): Int {
         val raw = if (seg < route.limitKph.size) route.limitKph[seg] else 0
         limitLowConf = false
+        // Off the route the car is on some other road: the limit of the road
+        // under it first, the route segment's only when nothing is known there.
+        if (offRoute) limitFallback?.invoke(lat, lon, heading)?.takeIf { it != 0 }?.let {
+            limitLowConf = true
+            return it
+        }
         if (raw != 0) {
             heldLimit = raw
             heldLimitAlong = along

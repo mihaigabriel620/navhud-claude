@@ -9,6 +9,7 @@ import com.mihai.navhud.nav.RoadWay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -127,5 +128,22 @@ class RegressionCheckTest {
         val moved = Geo.destination(start[0], start[1], 90.0, 40.0)
         lock.update(area, moved[0], moved[1], 1.5, null, speedFromCar = false, accuracyM = 15.0)
         assertEquals("40 m along the road is movement", moved[1], lock.lon, 1e-6)
+    }
+
+    // ---- R6: off the route, the limit is the road's, not the route's -------
+
+    @Test fun `off the route the limit comes from the road under the car`() {
+        val route = DemoDrive.buildRoute()
+        val t = RouteTracker(route)
+        t.limitFallback = { _, _, _ -> 20 }
+        val p = Geo.pointAlong(route.pts, route.cum, 3000.0)
+        val on = t.update(p[0], p[1], 0f, null, hasFix = true, nowMs = 0L)
+        assertTrue("the route has its own limit here", on.limitKph > 0 && on.limitKph != 20)
+        val off = Geo.destination(p[0], p[1],
+            Geo.bearingAlong(route.pts, route.cum, 3000.0)!! + 90.0, 80.0)
+        t.update(off[0], off[1], 0f, null, hasFix = true, nowMs = 1_000L)
+        val f = t.update(off[0], off[1], 0f, null, hasFix = true, nowMs = 2_000L)
+        assertTrue(t.offRoute)
+        assertEquals(20, f.limitKph)
     }
 }
