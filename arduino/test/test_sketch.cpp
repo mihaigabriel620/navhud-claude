@@ -200,6 +200,27 @@ int main() {
   CHECK(cur.speed == 90 && cur.limit == 70, "state updated");
   printf("    %zu primitives, speed=%d limit=%d\n", g_boxes.size(), cur.speed, cur.limit);
 
+  printf("5b. a link that comes back with something other than $HUD shows nothing stale\n");
+  {
+    // Drop the link with a limit and a turn on the glass...
+    Serial.feed(wrap("HUD,90,70,1,0,300,600,4000,68,MAIN ST"));
+    g_millis += 100; pump(1);
+    CHECK(cur.limit == 70 && cur.maneuver == MAN_LEFT, "a limit and a turn are up");
+    g_millis += LINK_TIMEOUT_MS + 200; pump(1);
+    CHECK(!linkUp, "link down");
+    // ...and bring it back with a heartbeat, or the Keystone screen's $GEOM?.
+    // The drive layout comes back at once, and until a $HUD frame says
+    // otherwise there is no limit and no turn: they were the last trip's.
+    Serial.feed(wrap("PING"));
+    g_millis += 100; pump(1);
+    CHECK(linkUp, "a heartbeat brings the drive layout back");
+    CHECK(cur.limit == 0 && cur.maneuver == MAN_NONE && cur.street[0] == '\0',
+          "with nothing left over from before the drop");
+    Serial.feed(wrap("HUD,90,70,1,0,300,600,4000,68,MAIN ST"));
+    g_millis += 100; pump(1);
+    CHECK(cur.limit == 70, "and the next $HUD frame fills it in");
+  }
+
   printf("6. a corrupt frame is ignored, the last good one stands\n");
   Serial.feed("$HUD,1,2,3,4,5,6,7,8,BAD*00\r\n");
   g_millis += 250;

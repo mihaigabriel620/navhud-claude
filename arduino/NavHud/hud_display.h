@@ -130,10 +130,13 @@ static inline HudScreen displayWanted(bool phoneUp, uint32_t now) {
 static inline void displayForgetPhone() {
   hudStateInit(shown);
   shown.speed = -999;
-  cur.camKind = CAM_NONE; cur.camDistance = 0; cur.camLimit = 0;
-  cur.laneCount = 0; cur.laneActive = 0;
-  memset(cur.lanes, 0, HUD_MAX_LANES);
-  memset(cur.laneChosen, 0, HUD_MAX_LANES);
+  // All of `cur`, not only the camera and lanes. The link comes back on ANY
+  // message -- a heartbeat, the Keystone screen's $GEOM? -- and that repaints
+  // the drive layout from `cur` straight away, before a $HUD frame has said
+  // anything. Keeping the rest put the last trip's speed limit, turn and
+  // street back on the glass for up to a frame. The phone resends $HUD, $CAM
+  // and $RAB every tick, and (app 1.32) the lanes while they apply.
+  hudStateInit(cur);
 }
 
 /**
