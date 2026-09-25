@@ -233,7 +233,9 @@ class RouteTracker(val route: Route) {
          * The speed to *show*, when it differs from the one used to place the
          * car: the HUD draws the raw bus speed, positioning wants the scaled one.
          */
-        displayMps: Float = speedMps
+        displayMps: Float = speedMps,
+        /** With no fix: the car's own (raw bus) speed to show, -1 = unknown. */
+        noFixKph: Int = -1
     ): HudFrame {
 
         if (!hasFix) {
@@ -247,7 +249,7 @@ class RouteTracker(val route: Route) {
             offLineSeen = false
             offLine = false
             return HudFrame(
-                speedKph = -1,
+                speedKph = noFixKph,
                 limitKph = heldLimit,
                 // FLAG_ROUTE even with no fix: the route exists, we simply
                 // cannot say where on it we are. Dropping it here would make
@@ -326,7 +328,7 @@ class RouteTracker(val route: Route) {
         maxMs: Long = COAST_MAX_MS
     ): HudFrame {
         if (sinceFixMs > maxMs || !snapTrusted || offRoute) {
-            return update(0.0, 0.0, 0f, null, hasFix = false, night = night)
+            return update(0.0, 0.0, 0f, null, hasFix = false, night = night, noFixKph = displayKph)
         }
         // As on losing the fix: an off-line run does not survive the outage.
         offLineSeen = false

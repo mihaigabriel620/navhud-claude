@@ -153,7 +153,9 @@ class FreeTracker {
         /** ISO 3166-1 alpha-2, for the legal default when nothing is posted. */
         country: String? = null,
         /** Local hour, 0-23. Only the Dutch daytime motorway limit uses it. */
-        localHour: Int = 12
+        localHour: Int = 12,
+        /** With no fix: the car's own (raw bus) speed to show, -1 = unknown. */
+        noFixKph: Int = -1
     ): HudFrame {
 
         if (!hasFix) {
@@ -170,7 +172,7 @@ class FreeTracker {
                 roadName = null
             }
             return HudFrame(
-                speedKph = -1,
+                speedKph = noFixKph,
                 limitKph = heldLimit,
                 maneuver = Man.NONE,
                 flags = (if (night) HudFrame.FLAG_NIGHT else 0) or HudFrame.FLAG_LOW_CONF

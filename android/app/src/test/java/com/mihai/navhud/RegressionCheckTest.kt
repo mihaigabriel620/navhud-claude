@@ -60,4 +60,27 @@ class RegressionCheckTest {
         assertNull("over once the tail is behind", t.alert)
         assertEquals("the tail is never announced", 1, said)
     }
+
+    // ---- R2: no GPS fix is not no speedometer ------------------------------
+
+    @Test fun `with no fix the gauge shows the car's own speed, else dashes`() {
+        val route = DemoDrive.buildRoute()
+        val before = RouteTracker(route)
+        assertEquals("route before the first fix",
+            87, before.update(0.0, 0.0, 0f, null, hasFix = false, noFixKph = 87).speedKph)
+        assertEquals(-1, before.update(0.0, 0.0, 0f, null, hasFix = false).speedKph)
+
+        // A tunnel longer than the coast limit, the bus still talking.
+        val t = RouteTracker(route)
+        val p = Geo.pointAlong(route.pts, route.cum, 3000.0)
+        t.update(p[0], p[1], 30f, null, hasFix = true)
+        assertEquals(108, t.coast(7.5, 108, RouteTracker.COAST_MAX_MS + 1).speedKph)
+        assertEquals("GPS was all it had", -1,
+            t.coast(7.5, -1, RouteTracker.COAST_MAX_MS + 1).speedKph)
+
+        val free = FreeTracker()
+        assertEquals("free drive, no fix",
+            87, free.update(0.0, 0.0, 0f, null, false, 1000L, CameraPolicy.EXACT, noFixKph = 87).speedKph)
+        assertEquals(-1, free.update(0.0, 0.0, 0f, null, false, 2000L, CameraPolicy.EXACT).speedKph)
+    }
 }

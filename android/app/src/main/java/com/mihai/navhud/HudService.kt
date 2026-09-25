@@ -1695,6 +1695,13 @@ class HudService : Service(), LocationListener {
         carLink.rawSpeedMps(nowMs)?.toFloat() ?: gpsSpeed
 
     /**
+     * The speed to show with no live fix: the car's own, raw, when the bus is
+     * fresh, else -1 ("--"). A missing fix is not a missing speedometer.
+     */
+    private fun busKph(nowMs: Long): Int =
+        carLink.rawSpeedMps(nowMs)?.let { Math.round(it * 3.6).toInt() } ?: -1
+
+    /**
      * Once a tick: age the car data even when no `$CAR` line arrives, so a
      * silent board reads as "no car speed" rather than its last number, and
      * catch the board's stale-frame zero while GPS says the car is moving.
@@ -1873,7 +1880,8 @@ class HudService : Service(), LocationListener {
         // A coasted "now" without the bus would be said on a guess; see onFrame.
         var finalCallOk = true
         if (fix == null) {
-            frame = t.update(0.0, 0.0, 0f, null, hasFix = false, night = night)
+            frame = t.update(0.0, 0.0, 0f, null, hasFix = false, night = night,
+                             noFixKph = busKph(now))
             bearing = null
         } else if (age > 8000) {
             // A tunnel. Keep running along the route at the car's speed -- or
@@ -1884,7 +1892,7 @@ class HudService : Service(), LocationListener {
             // fix: the map coasts from that on its own, with the same limits.
             val bus = carLink.speedMps(now)
             val v = bus?.toFloat() ?: if (fix.hasSpeed()) fix.speed else 0f
-            val shown = carLink.rawSpeedMps(now)?.let { Math.round(it * 3.6).toInt() } ?: -1
+            val shown = busKph(now)
             frame = t.coast(v * tickS, shown, age, night,
                 maxMs = if (bus != null) RouteTracker.COAST_MAX_MS else RouteTracker.COAST_NO_BUS_MAX_MS)
             finalCallOk = bus != null
@@ -2032,7 +2040,8 @@ class HudService : Service(), LocationListener {
             night = night,
             country = country,
             localHour = java.util.Calendar.getInstance()
-                .get(java.util.Calendar.HOUR_OF_DAY)
+                .get(java.util.Calendar.HOUR_OF_DAY),
+            noFixKph = busKph(now)
         )
 
         lastFrame = frame
