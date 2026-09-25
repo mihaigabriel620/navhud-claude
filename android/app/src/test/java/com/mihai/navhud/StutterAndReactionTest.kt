@@ -285,8 +285,10 @@ class StutterAndReactionTest {
         val brg = Geo.bearingAlong(r.pts, r.cum, 400.0) ?: 0.0
         val off = Geo.destination(p[0], p[1], (brg + 90.0) % 360.0, 80.0)
 
+        // On the line first: a route not yet joined has its own rule (1.31).
+        t.update(p[0], p[1], 14f, brg.toFloat(), hasFix = true, nowMs = 0L)
         t.update(off[0], off[1], 14f, brg.toFloat(), hasFix = true, nowMs = 0L)
-        assertTrue("off the line on the very first fix", t.offLine)
+        assertTrue("off the line on the very first off fix", t.offLine)
         assertFalse("but not yet confirmed", t.offRoute)
 
         t.update(off[0], off[1], 14f, brg.toFloat(), hasFix = true,

@@ -7,6 +7,7 @@ import com.mihai.navhud.map.RoadLock
 import com.mihai.navhud.nav.Area
 import com.mihai.navhud.nav.RoadWay
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -154,5 +155,52 @@ class RegressionCheckTest {
             assertEquals("$m at 40 km/h", 2, VoiceGuide.thresholdsFor(40, m).size)
             assertEquals(listOf(1200, 500, 200), VoiceGuide.thresholdsFor(120, m).toList())
         }
+    }
+
+    // ---- W1: parked off the road is not a wrong turn -----------------------
+
+    /** [m] metres left of the route at [along]. */
+    private fun beside(route: com.mihai.navhud.nav.Route, along: Double, m: Double): DoubleArray {
+        val p = Geo.pointAlong(route.pts, route.cum, along)
+        return Geo.destination(p[0], p[1], Geo.bearingAlong(route.pts, route.cum, along)!! - 90.0, m)
+    }
+
+    @Test fun `a route started from a car park is not off route while parked there`() {
+        val route = DemoDrive.buildRoute()
+        val t = RouteTracker(route)
+        var now = 0L
+        for (m in listOf(80.0, 90.0, 70.0, 95.0, 85.0, 75.0, 88.0, 80.0)) {
+            val f = beside(route, 50.0, m)
+            t.update(f[0], f[1], 1.5f, null, hasFix = true, nowMs = now)
+            now += 1_000L
+            assertFalse("parked ${m.toInt()} m off, before joining", t.offRoute || t.offLine)
+        }
+        // Driving further away from the start is still caught.
+        val away = beside(route, 50.0, 130.0)
+        t.update(away[0], away[1], 8f, null, hasFix = true, nowMs = now)
+        t.update(away[0], away[1], 8f, null, hasFix = true, nowMs = now + 1_000L)
+        assertTrue(t.offRoute)
+    }
+
+    @Test fun `parked just off the road near the end is not a reroute loop`() {
+        val route = DemoDrive.buildRoute()
+        val end = route.totalDistanceM - 300.0
+        // The route made from there (a reroute): parked 35 m off, never joined.
+        val t = RouteTracker(route)
+        var now = 0L
+        for (m in listOf(35.0, 45.0, 30.5, 50.0, 40.0)) {
+            val f = beside(route, end, m)
+            t.update(f[0], f[1], 1.5f, null, hasFix = true, nowMs = now)
+            now += 1_000L
+            assertFalse(t.offRoute)
+        }
+        // A route the car has driven on still goes off route at 40 m.
+        val j = RouteTracker(route)
+        val on = beside(route, end, 0.0)
+        j.update(on[0], on[1], 10f, null, hasFix = true, nowMs = 0L)
+        val off = beside(route, end, 40.0)
+        j.update(off[0], off[1], 10f, null, hasFix = true, nowMs = 1_000L)
+        j.update(off[0], off[1], 10f, null, hasFix = true, nowMs = 2_000L)
+        assertTrue(j.offRoute)
     }
 }

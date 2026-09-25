@@ -115,6 +115,17 @@ class RouteTracker(val route: Route) {
     private var offLineSeen = false
     private var offLineSinceMs = 0L
 
+    /**
+     * The car has been within [OFF_ROUTE_M] of this route at least once. A
+     * route starts on the street, so a car parked 80 m away in a car park --
+     * or parked off the road when a reroute was made -- is not yet on it, and
+     * being where it already was is not a wrong turn: until joined, only
+     * moving [OFF_ROUTE_M] further away than [firstCrossM] counts as off.
+     */
+    var joined = false
+        private set
+    private var firstCrossM = -1.0          // at the first fix; -1 = none yet
+
     private var heldLimit = 0
     private var heldLimitAlong = -1e9
 
@@ -284,7 +295,9 @@ class RouteTracker(val route: Route) {
 
         // Off the line right now -- one fix, no debounce. What RerouteRule
         // pairs with the direction test to catch a wrong turn immediately.
-        offLine = snap.cross > OFF_ROUTE_M
+        if (firstCrossM < 0) firstCrossM = snap.cross
+        if (snap.cross <= OFF_ROUTE_M) joined = true
+        offLine = snap.cross > (if (joined) OFF_ROUTE_M else firstCrossM + OFF_ROUTE_M)
         if (!offLine) {
             offLineSeen = false
         } else if (!offLineSeen) {

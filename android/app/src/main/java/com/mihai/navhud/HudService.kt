@@ -2380,7 +2380,9 @@ class HudService : Service(), LocationListener {
             Geo.bearingDelta(routeBrg, carBrg) else null
         // Timed here rather than in the rule, which is stateless: the heading
         // test has to hold for two seconds without a break.
-        if (!RerouteRule.turnedOff(t.lastCrossM, headingOff)) turnedOffSinceMs = 0L
+        // Not before the car has joined the route: leaving a car park it
+        // points anywhere but along the street the route starts on.
+        if (!t.joined || !RerouteRule.turnedOff(t.lastCrossM, headingOff)) turnedOffSinceMs = 0L
         else if (turnedOffSinceMs == 0L) turnedOffSinceMs = now
         if (!t.offLine && turnedOffSinceMs == 0L) return
         // A failed request is already retrying on its own back-off. Starting
