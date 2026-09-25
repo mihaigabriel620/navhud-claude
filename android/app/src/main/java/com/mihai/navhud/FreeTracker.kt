@@ -251,7 +251,15 @@ class FreeTracker {
         }
 
         val speedKph = (speedMps * 3.6f).roundToInt()
+        val prev = alert
         alert = nearestCameraAhead(a, lat, lon, heading, speedKph, policy)
+            // A danger zone does not end on the camera, or its end would mark
+            // it: hold the passed one for the zone's tail (zoneTailM).
+            ?: prev?.takeIf {
+                policy == CameraPolicy.ZONE && it.zoneMode &&
+                    Geo.haversine(lat, lon, it.camera.lat, it.camera.lon) <
+                    CameraWatcher.zoneTailM(it.camera.limitKph)
+            }?.copy(passed = true)
         lastAlertAtMs = nowMs
 
         var flags = HudFrame.FLAG_GPS_OK
@@ -386,7 +394,8 @@ class FreeTracker {
             camera = c,
             distanceM = shown,
             zoneMode = zone,
-            stage = CameraWatcher.stageFor(raw, speedKph),
+            // One announcement per zone, on entry (see CameraWatcher.update).
+            stage = if (zone) 0 else CameraWatcher.stageFor(raw, speedKph),
             spokenM = CameraWatcher.spokenDistance(raw, speedKph)
         )
     }
@@ -433,6 +442,7 @@ class FreeTracker {
      * are still approaching the same one.
      */
     fun shouldAnnounce(a: CameraAlert): Boolean {
+        if (a.passed) return false                       // a zone's tail
         val key = a.camera.id * 8L + a.stage
         val was = announced[key]
         if (was != null && lastAlertAtMs - was < REANNOUNCE_AFTER_MS) return false

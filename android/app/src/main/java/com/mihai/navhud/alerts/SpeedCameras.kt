@@ -635,6 +635,14 @@ class CameraWatcher(
         }
 
         /**
+         * How far past the camera a danger zone stays up. Ending it at the
+         * camera (or [PASSED_M] after it) marks exactly where the camera
+         * stands, which is what a zone exists to hide (art. R413-15): half the
+         * zone length keeps the camera somewhere inside the zone, not at its end.
+         */
+        fun zoneTailM(limitKph: Int): Int = zoneLengthFor(limitKph) / 2
+
+        /**
          * Round a distance so the display cannot be used to locate the camera.
          *
          * Counting down "800… 700… 600…" to a point inside a zone defeats the
@@ -741,8 +749,11 @@ class CameraWatcher(
         // is only a fallback, to keep the display steady through GPS jitter,
         // and it is never announced (see shouldAnnounce).
         val ahead = cameras.firstOrNull { it.alongM >= alongM && wanted(it) }
+        // In zone mode the passed camera holds the zone for its tail, so the
+        // alert does not end on the camera itself (see zoneTailM).
+        fun tail(it: SpeedCamera) = if (zone) zoneTailM(it.limitKph).toDouble() else PASSED_M
         val next = ahead
-            ?: cameras.lastOrNull { it.alongM < alongM && it.alongM > alongM - PASSED_M && wanted(it) }
+            ?: cameras.lastOrNull { it.alongM < alongM && it.alongM > alongM - tail(it) && wanted(it) }
             ?: return null
 
         val raw = (next.alongM - alongM).roundToInt().coerceAtLeast(0)
@@ -751,7 +762,9 @@ class CameraWatcher(
             camera = next,
             distanceM = dist,
             zoneMode = zone,
-            stage = stageFor(raw, speedKph),
+            // A zone is announced once, on entry: a "zone de danger" repeated
+            // at 500 / 200 m would count down to the camera all the same.
+            stage = if (zone) 0 else stageFor(raw, speedKph),
             spokenM = spokenDistance(raw, speedKph),
             passed = ahead == null
         )
