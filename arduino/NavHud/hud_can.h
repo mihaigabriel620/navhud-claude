@@ -58,6 +58,8 @@ extern bool canOk;
 static MCP_CAN canDev(&SPI, PIN_CAN_CS);
 static CanFault canFault = CANFAULT_NONE;
 static uint8_t  canProbeByte = 0;
+/** canBegin() has succeeded at least once: there is a controller to go back to. */
+static bool     canEverUp_ = false;
 
 /**
  * Ask the chip for CANSTAT ourselves, four times, slowly.
@@ -141,7 +143,29 @@ static bool canBegin() {
     return false;
   }
   canFault = CANFAULT_NONE;
+  canEverUp_ = true;
   return true;
+}
+
+/**
+ * A controller that was working and stopped answering: look again, cheaply.
+ *
+ * Without one the panel cannot know the key, so it is lit whatever the key
+ * says (hud_backlight.h) -- and before this, a connector that let go for a
+ * moment cost the rest of the drive's car data and left the panel on. Every
+ * CAN_RETRY_MS: the pre-flight's four reads (8 ms), and only if the chip
+ * answers, the full bring-up. Never for a board whose controller did not come
+ * up at boot: that is a board without one, and it would pay the probe for
+ * ever.
+ */
+static void canRecover(uint32_t now) {
+  static uint32_t lastTry = 0;
+  if (canOk || !canEverUp_) return;
+  if ((uint32_t)(now - lastTry) < CAN_RETRY_MS) return;
+  lastTry = now;
+  uint8_t seen[4];
+  if (!canPreflight_(seen)) return;               // still stuck: MISO low or high
+  canOk = canBegin();
 }
 
 /** Human-readable, with the wire to check. */
@@ -294,9 +318,12 @@ static uint8_t canPump(CarT& car, uint32_t now) {
   canHavePumped_ = true;
 
   const uint8_t st = canRawStatus_();
-  if (st == 0xFF) {
+  // Asked twice before believing it: one bad read used to write the bus off
+  // for the rest of the drive.
+  if (st == 0xFF && canRawStatus_() == 0xFF) {
     // Nothing is driving MISO any more: the module lost power, or a wire lifted.
-    // Left alone this is an infinite supply of 15-byte frames.
+    // Left alone this is an infinite supply of 15-byte frames. canRecover()
+    // looks for it again.
     canOk = false;
     canFault = CANFAULT_MISO_HIGH;
     return 0;

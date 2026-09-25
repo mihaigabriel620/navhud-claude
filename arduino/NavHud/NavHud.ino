@@ -309,6 +309,7 @@ void loop() {
   // Before anything is drawn: the bus does not wait, and the two RX buffers
   // hold about 2.2 ms of a 100 kbit/s bus.
   if (canOk) canPump(car, now);
+  else       canRecover(now);            // lost mid-drive: look again now and then
 #endif
 
   // Leave the alignment pattern if the phone has gone quiet: a driver should

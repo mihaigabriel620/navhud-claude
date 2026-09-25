@@ -66,6 +66,12 @@
 #define CAN_REPORT_MS   500
 
 /**
+ * How often to look for a controller that stopped answering mid-drive. Each
+ * look is an 8 ms probe; the library is only called once the chip answers.
+ */
+#define CAN_RETRY_MS    5000
+
+/**
  * Longer than this between two drains and the frames waiting in the controller
  * are older than the timestamp they would be given.
  *

@@ -42,7 +42,7 @@ class SPIClass {
     memset(reg, 0, sizeof reg);
     reg[0x0F] = 0x80; reg[0x0E] = 0x80;      // CANCTRL/CANSTAT: config after POR
     clock = 0; transactions = open = maxOpen = resets = 0; filtered = 0;
-    overflowed = 0; stuck = -1; stuckAfter = -1; stuckValue = 0xFF;
+    overflowed = 0; stuck = -1; stuckAfter = -1; stuckValue = 0xFF; stuckUntil = -1;
     // txCommands and normalModeRequests are NOT reset: they cover a whole run.
     deadReads = 0; runaway = false;
     step_ = 0; cmd_ = 0;
@@ -135,6 +135,8 @@ class SPIClass {
    */
   int stuckAfter = -1;
   int stuckValue = 0xFF;
+  /** ...and comes back after this transaction number. -1 = stays dead. */
+  int stuckUntil = -1;
 
   /**
    * A drain that never ends cannot be tested by waiting for it. After this
@@ -146,6 +148,7 @@ class SPIClass {
 
   uint8_t transfer(uint8_t b) {
     if (stuckAfter >= 0 && transactions >= stuckAfter) { stuck = stuckValue; stuckAfter = -1; }
+    if (stuckUntil >= 0 && transactions > stuckUntil) { stuck = -1; stuckUntil = -1; }
     if (stuck >= 0) {
       step_++;
       if (++deadReads > 100000) { runaway = true; stuck = -1; reg[0x2C] = 0; }

@@ -244,6 +244,56 @@ static void testStaysListenOnly() {
   CHECK(c.ignitionOn, "and frames flow again");
 }
 
+/**
+ * One bad read is not a dead module, and a module that comes back is used.
+ *
+ * With no controller the panel cannot know the key, so it is lit whatever the
+ * key says -- a single glitch that wrote the bus off for the rest of the drive
+ * also meant a panel left on. And a connector that lets go for a moment used
+ * to cost the car half of the display until the next power cycle.
+ */
+static void testLostAndFound() {
+  printf("a glitch is not a dead module, and a module that comes back is used\n");
+  SPI.reset(); canOk = canBegin();
+  CarState c;
+  canPump(c, 1000);
+
+  // One READ STATUS comes back 0xFF, the next one is fine.
+  SPI.stuckAfter = SPI.transactions + 1;
+  SPI.stuckUntil = SPI.transactions + 1;
+  canPump(c, 1030);
+  CHECK(canOk, "a single 0xFF status is checked again before the bus is written off");
+
+  // The module really goes: every read 0xFF.
+  SPI.stuck = 0xFF;
+  canPump(c, 1060);
+  CHECK(!canOk, "a module that stays silent is written off");
+  const int resets = SPI.resets;
+  canRecover(1060 + CAN_RETRY_MS);
+  CHECK(!canOk, "while it is still silent it stays off");
+  CHECK(SPI.resets == resets, "...and the library is not called for a chip that is not answering");
+
+  // Power comes back.
+  SPI.stuck = -1;
+  memset(SPI.reg, 0, sizeof SPI.reg);
+  SPI.reg[0x0F] = 0x80; SPI.reg[0x0E] = 0x80;
+  canRecover(1060 + CAN_RETRY_MS + 100);
+  CHECK(!canOk, "not retried again before CAN_RETRY_MS has passed");
+  canRecover(1060 + 2 * CAN_RETRY_MS + 10);
+  CHECK(canOk, "and brought back up once it answers");
+  CHECK((SPI.reg[0x0E] & 0xE0) == MCP_LISTENONLY, "in listen-only");
+
+  // A controller that never came up at boot is not retried: that is a board
+  // without one, and the probe would cost it 8 ms every few seconds for ever.
+  SPI.reset(); SPI.stuck = 0xFF;
+  canEverUp_ = false;
+  canOk = canBegin();
+  SPI.stuck = -1;
+  canRecover(100000);
+  CHECK(!canOk, "a controller that never answered at boot is left alone");
+  SPI.reset(); canOk = canBegin();
+}
+
 static void testIgnition() {
   printf("0x130 ignition\n");
   CarState c;
@@ -425,6 +475,7 @@ int main() {
   testPump();
   testSpeedAfterRepaint();
   testStaysListenOnly();
+  testLostAndFound();
   testIgnition();
   testSpeed();
   testRpmTorqueVolts();
