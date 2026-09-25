@@ -313,14 +313,8 @@ void loop() {
   else       canRecover(now);            // lost mid-drive: look again now and then
 #endif
 
-  // Leave the alignment pattern if the phone has gone quiet: a driver should
-  // never end up doing 120 km/h behind a test grid because an app crashed.
-  if (geomTest && (now - geomLastMsgMs) > GEOM_TEST_IDLE_MS) {
-    geomTest = false;
-    geomDirty = true;
-  }
-
-  if (geomDirty && (now - geomLastPaintMs) >= GEOM_REPAINT_MS) applyGeom();
+  // ---- the alignment pattern and staged corners (hud_align.h) ------------
+  alignUpdate(now);
 
   // ---- lit, and how brightly ---------------------------------------------
   //

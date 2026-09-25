@@ -112,6 +112,22 @@ static void stageGeom(uint32_t now) {
   geomLastMsgMs = now;
 }
 
+/**
+ * Once per loop() pass: drop the alignment pattern when the phone has gone
+ * quiet, and paint staged corners at most every GEOM_REPAINT_MS, so a moving
+ * slider costs one repaint per interval rather than one per message.
+ */
+static void alignUpdate(uint32_t now) {
+  // Leave the alignment pattern if the phone has gone quiet: a driver should
+  // never end up doing 120 km/h behind a test grid because an app crashed.
+  if (geomTest && (now - geomLastMsgMs) > GEOM_TEST_IDLE_MS) {
+    geomTest = false;
+    geomDirty = true;
+  }
+
+  if (geomDirty && (now - geomLastPaintMs) >= GEOM_REPAINT_MS) applyGeom();
+}
+
 /** $GEOM? -- hand back what is on the panel right now. */
 static void sendGeom() {
   const Geom& g = tft.geom;
