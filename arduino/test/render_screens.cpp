@@ -107,6 +107,67 @@ static std::vector<std::pair<std::string, HudState>> extras() {
   return v;
 }
 
+// ---- pixel checks ------------------------------------------------------------
+//
+// The layout test proves boxes do not collide, but it cannot see a text
+// field's padding fill, which is where both 2.8 layout bugs lived: the PS
+// number's clear erased the battery's "V", and the E60 km/h label's background
+// cell cut the bottom rows off the speed digits. So: draw a field alone, then
+// the whole screen, and every pixel the field lit must still be lit.
+static std::vector<uint16_t> snap() { return rawTft.ras.fb; }
+
+static void expectSurvives(const std::string& what, const std::vector<uint16_t>& alone,
+                           const std::vector<uint16_t>& full) {
+  int lit = 0, lost = 0;
+  for (size_t i = 0; i < alone.size(); i++) {
+    if (alone[i] == 0) continue;
+    lit++;
+    if (full[i] == 0) lost++;
+  }
+  if (lit == 0 || lost) {
+    printf("  FAIL %s: %d of %d lit pixel(s) erased\n", what.c_str(), lost, lit);
+    g_failed++;
+  } else {
+    printf("  ok   %s (%d px)\n", what.c_str(), lit);
+  }
+}
+
+static void pixelChecks() {
+  printf("pixel checks\n");
+#if !defined(HUD_THEME_E60_CLASSIC)
+  // The battery reading beside every PS value the field can show, including
+  // the overrun values and one past the widest.
+  const int16_t psValues[] = { 64, 500, -35, -99, -150, -500 };
+  for (int16_t ps : psValues) {
+    carLive(87, true, 2200, 14.2f, ps, 212);
+    tft.fillScreen(DASH_BG); dashForget_();
+    dashVolts_(kNow);
+    const std::vector<uint16_t> alone = snap();
+    themeRenderCarOnly(kNow, true);
+    expectSurvives("battery reading beside PS " + std::to_string(ps), alone, snap());
+  }
+#else
+  // The speed digits under the km/h label, at two and three digits, over and
+  // under the limit (over adds the brackets).
+  const int speeds[] = { 72, 88, 188 };
+  for (int v : speeds) {
+    for (int over = 0; over < 2; over++) {
+      HudState s = mk(v, over ? 50 : 200, MAN_NONE, 0, 0, 0, 0,
+                      FLAG_GPS_OK | (over ? FLAG_OVER_LIMIT : 0), "");
+      tft.fillScreen(E60_BG);
+      tft.setTextDatum(MC_DATUM);
+      tft.setTextColor(over ? E60_RED : E60_AMBER, E60_BG);
+      tft.drawNumber(v, E60_SPD_CX, E60_SPD_CY, 8);
+      const std::vector<uint16_t> alone = snap();
+      tft.fillScreen(E60_BG);
+      e60DrawSpeed(s);
+      expectSurvives("speed " + std::to_string(v) + (over ? " (over)" : "") +
+                     " under the km/h label", alone, snap());
+    }
+  }
+#endif
+}
+
 int main(int argc, char** argv) {
   if (argc > 1) g_outDir = argv[1];
   g_millis = kNow;
@@ -157,5 +218,6 @@ int main(int argc, char** argv) {
 
   printf("%d screens, %d missing-glyph report(s), %d off-panel primitive(s)\n",
          g_index, g_badGlyphs, g_outOfBounds);
+  pixelChecks();
   return g_failed ? 1 : 0;
 }

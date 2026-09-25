@@ -371,15 +371,21 @@ static void dashPower_(uint32_t now) {
     dash_.ps = ps;
     DASH_FONT(DF_POWER);
     tft.setTextDatum(MR_DATUM);
-    // Sized for the widest string this field can *ever* show, not the widest
-    // it usually shows: hud_car.h allows -500..500 and says it must go
-    // negative on overrun. "-888" is 98 px. When a string is wider than the
-    // padding TFT_eSPI skips the fill completely, so an unpadded minus sign
-    // stays lit for the rest of the drive.
-    tft.setTextPadding(106);
+    // The padding has to cover the widest string this field shows -- when a
+    // string is wider than the padding TFT_eSPI skips the fill completely, so
+    // an unpadded minus sign stays lit for the rest of the drive -- and it
+    // must NOT reach left of the battery field's box (DASH_VOLT_X + its 74 px
+    // padding = 278). It used to be 106, sized for "-888", and its fill ran
+    // from x 257, erasing the "V" of "14.2V" on every PS change.
+    //
+    // So the field shows three characters: "500" is 80 px, "-99" 70. Four
+    // only ever happened below -99 PS, which is -140 Nm of engine braking at
+    // 5000 rpm -- about three times what this engine does on overrun -- and is
+    // shown as -99 rather than drawn over the battery reading.
+    tft.setTextPadding(DASH_PS_X - (DASH_VOLT_X + 74));
     tft.setTextColor(DASH_AMBER, DASH_BG);
     if (blank) tft.drawString(" ", DASH_PS_X, DASH_PS_Y, DASH_FN_POWER);
-    else       tft.drawNumber(ps, DASH_PS_X, DASH_PS_Y, DASH_FN_POWER);
+    else       tft.drawNumber(ps < -99 ? -99 : ps, DASH_PS_X, DASH_PS_Y, DASH_FN_POWER);
     tft.setTextPadding(0);
     // The label really is drawn once now. It used to be inside this block
     // with a comment claiming otherwise, so it was re-inked -- and cost a font
