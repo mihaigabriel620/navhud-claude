@@ -97,26 +97,13 @@ inline void analogWrite(int, int) {}
 #define DEG_TO_RAD 0.017453292519943295
 #endif
 
-// What the sensor libraries (GY521, Adafruit BusIO) expect from the core. The
-// firmware never prints through a Stream or talks SPI through BusIO, so these
-// only have to compile.
+// What GY521 expects from the core.
 #ifndef PI
 #define PI 3.14159265358979323846
 #endif
 #ifndef F
 #define F(s) (s)
 #endif
-#define HEX 16
-#ifndef LSBFIRST
-#define LSBFIRST 0
-#endif
-typedef uint8_t BitOrder;
-class Stream {
- public:
-  template <class T> size_t print(T, int = 10) { return 0; }
-  template <class T> size_t println(T, int = 10) { return 0; }
-  size_t println() { return 0; }
-};
 
 class String {
  public:
@@ -130,7 +117,7 @@ class String {
   std::string s_;
 };
 
-class SerialStub : public Stream {
+class SerialStub {
  public:
   void begin(long) {}
   int available() { return (int)(in_.size() - pos_); }

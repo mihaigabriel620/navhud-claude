@@ -1,54 +1,61 @@
 // ---------------------------------------------------------------------------
-//  hud_compass.h -- the QMC5883P magnetometer, through Adafruit's library.
+//  hud_compass.h -- the QMC5883P magnetometer, driven directly.
 //
 //  This file finds the chip, starts it, and hands over one field sample at a
 //  time in microtesla, in the box's frame. What the samples mean -- heading,
 //  tilt, calibration -- is hud_heading.h.
 //
-//  THE ORDER OF THE WRITES is the part that cost days. QST doc 13-52-19,
-//  section 7.2, Continuous Mode Setup Example:
+//  DRIVEN THE WAY 2.9 DROVE IT: plain register reads and writes through
+//  hud_i2c.h, the same bytes in the same order, which the owner's part is
+//  known to work with. 3.0 first went through Adafruit's QMC5883P library and
+//  the part was reported "not found" on the bench, twice; the owner asked for
+//  the old method back.
 //
-//      Write Register 29H by 0x06   (sign for X Y and Z axis)
-//      Write Register 0BH by 0x08   (Set/Reset On, Field Range 8 Gauss)
-//      Write Register 0AH by 0xC3   (set continuous mode)
+//  Every value here is from QST doc 13-52-19 (Table 14 register map, section 7
+//  application examples). The ORDER of the last two writes is the part that
+//  cost days:
 //
-//  0BH first, 0AH LAST, because writing the mode into 0AH is what STARTS the
-//  chip -- suspend is the default after power-on and after a soft reset
-//  (6.2.4). Starting it and then reconfiguring it while it runs left the bench
-//  part present, addressable, configured, and never measuring. 0AH is written
-//  0xCB: QST's example, but at 100 Hz rather than 10.
+//      7.2 Continuous Mode Setup Example
+//        Write Register 29H by 0x06   (sign for X Y and Z axis)
+//        Write Register 0BH by 0x08   (Set/Reset On, Field Range 8 Gauss)
+//        Write Register 0AH by 0xC3   (set continuous mode)
 //
-//  WHOLE BYTES, NOT THE LIBRARY'S SETTERS. Each setter reads its register,
-//  changes its own bits and writes it back, and the owner's part does not read
-//  its control registers back as written (0BH, below; and in 3.0, 0AH). 3.0
-//  configured it through the setters and then required 0AH to read back
-//  "continuous": the chip answered 0x80 at 0x2C and was reported "not found".
-//  2.9 wrote the three bytes and never read 0AH, and measured fine. So the
-//  bytes go down whole, through the library's bus layer, and the library does
-//  the rest: finding the chip and reading the field.
+//  0BH first, 0AH LAST, because writing 0AH is what STARTS the chip -- suspend
+//  is the default state both after power-on and after a soft reset (6.2.4).
+//  Starting it and then reconfiguring it while it runs left the bench part
+//  present, addressable, configured, and never measuring.
 //
 //  THE SCALE IS READ BACK, NEVER ASSUMED. On the bench part, 0BH reads 0x00
 //  after being written 0x08: the range write does not stick and it sits at
 //  +-30 G, 1000 LSB per gauss. Scaling for the 8 G it was ASKED for gave 13.5 uT
 //  where Belgium is 49; scaling for the 30 G it REPORTS gives 50.7. Ask, then
-//  believe the answer.
+//  believe the answer. 0AH is only reported, never checked: 3.0's first build
+//  configured the chip through the library and then checked 0AH, and wrote
+//  off a working chip.
 // ---------------------------------------------------------------------------
 #ifndef HUD_COMPASS_H
 #define HUD_COMPASS_H
 
-#include <Adafruit_QMC5883P.h>
+#include <stdint.h>
+#include "hud_i2c.h"
 #include "hud_config.h"
 
 #define QMCP_ADDR       0x2C
-#define QMCP_REG_SIGN   0x29      // undocumented; appears only in section 7
+#define QMCP_REG_ID     0x00      // reads 0x80
+#define QMCP_ID_VALUE   0x80
+#define QMCP_REG_DATA   0x01      // XL XH YL YH ZL ZH, low byte first
 #define QMCP_REG_STATUS 0x09      // bit0 DRDY, bit1 OVFL
 #define QMCP_REG_CTRL1  0x0A      // OSR2[7:6] OSR1[5:4] ODR[3:2] MODE[1:0]
 #define QMCP_REG_CTRL2  0x0B      // SOFT_RST[7] SELF_TEST[6] rfu RNG[3:2] SETRESET[1:0]
+#define QMCP_REG_SIGN   0x29      // undocumented; appears only in section 7
 
 // 0xCB = OSR2 11, OSR1 00, ODR 10 (100 Hz), MODE 11 (continuous). QST's literal
 // example is 0xC3, the same but at 10 Hz.
 #define QMCP_CTRL1_RUN  0xCB
-// Set/reset on, range 8 G. Requested; not necessarily granted -- see above.
+// Set/Reset On, range 8 G. Requested; not necessarily granted -- see above.
+// Set-and-reset on is the setting that matters: 9.2.3 says "in SET ONLY ON or
+// SET AND RESET OFF mode, the offset is not renewed during measuring", so these
+// bits at 00 are what buy the per-measurement degaussing.
 #define QMCP_CTRL2_RUN  0x08
 
 /**
@@ -74,27 +81,28 @@ class HudCompass {
 
   /**
    * Find the chip and start it, in QST's order. `reset` soft-resets it first
-   * and waits 50 ms -- setup() only. A chip found again on a retry has just
-   * come back from a brown-out, which is a reset.
+   * and gives it the waits 2.9 gave it -- setup() only, because they block. A
+   * chip found again on a retry has just come back from a brown-out, which is
+   * a reset.
    */
   bool begin(bool reset) {
     present_ = false;
-    if (!chip_.begin(QMCP_ADDR, &Wire)) return false;    // ACK, and chip id 0x80
+    if (!i2cPresent(QMCP_ADDR)) return false;
+
+    uint8_t id = 0;
+    if (!i2cRead(QMCP_ADDR, QMCP_REG_ID, &id, 1) || id != QMCP_ID_VALUE) return false;
+
     if (reset) {
-      reg_(QMCP_REG_CTRL2).write(0x80);                   // 7.6 soft reset
+      i2cWrite8(QMCP_ADDR, QMCP_REG_CTRL2, 0x80);         // 7.6 soft reset
       delay(50);                                          // no figure given; generous
     }
-    // Set/reset on (CTRL2 bits 1:0 = 00) is the setting that matters: 9.2.3
-    // says "in SET ONLY ON or SET AND RESET OFF mode, the offset is not renewed
-    // during measuring", so these bits at 00 buy the per-measurement degaussing.
-    if (!reg_(QMCP_REG_SIGN).write(0x06)) return false;              // sign for X Y Z
-    if (!reg_(QMCP_REG_CTRL2).write(QMCP_CTRL2_RUN)) return false;   // set/reset on, 8 G
-    if (!reg_(QMCP_REG_CTRL1).write(QMCP_CTRL1_RUN)) return false;   // continuous <- starts it
+    i2cWrite8(QMCP_ADDR, QMCP_REG_SIGN,  0x06);           // sign for X Y Z
+    i2cWrite8(QMCP_ADDR, QMCP_REG_CTRL2, QMCP_CTRL2_RUN); // Set/Reset On, 8 G
+    i2cWrite8(QMCP_ADDR, QMCP_REG_CTRL1, QMCP_CTRL1_RUN); // continuous <- starts it
+    if (reset) delay(20);
 
-    // For `status`, and the range: read back, never assumed. CTRL1 is only
-    // reported -- see above for why it cannot be a test.
-    reg_(QMCP_REG_CTRL1).read(&ctrl1);
-    if (!reg_(QMCP_REG_CTRL2).read(&ctrl2)) return false;
+    i2cRead(QMCP_ADDR, QMCP_REG_CTRL1, &ctrl1, 1);
+    i2cRead(QMCP_ADDR, QMCP_REG_CTRL2, &ctrl2, 1);
     static const float   lsbPerG[4] = { 1000.0f, 2500.0f, 3750.0f, 15000.0f };
     static const uint8_t rangeOf[4] = { 30, 12, 8, 2 };
     const uint8_t rng = (uint8_t)((ctrl2 >> 2) & 0x03);
@@ -114,7 +122,8 @@ class HudCompass {
     // STATUS register, not the data -- fold them into one burst and the flag is
     // consumed before it is tested.
     uint8_t st = 0;
-    if (!reg_(QMCP_REG_STATUS).read(&st) || !(st & 0x01)) {
+    const bool ok = i2cRead(QMCP_ADDR, QMCP_REG_STATUS, &st, 1);
+    if (!ok || !(st & 0x01)) {                            // nothing new
       // A second of nothing is not a quiet chip: it browned out and came back
       // in suspend, or it is gone.
       if ((uint32_t)(millis() - lastDrdyMs_) > COMPASS_SILENT_MS) present_ = false;
@@ -123,30 +132,27 @@ class HudCompass {
     lastDrdyMs_ = millis();                               // measuring, even on overflow
     if (st & 0x02) return false;                          // overflow: a magnet, not a field
 
-    int16_t x, y, z;
-    if (!chip_.getRawMagnetic(&x, &y, &z)) return false;
-    remap_(x * utPerLsb_, y * utPerLsb_, z * utPerLsb_, m);
+    uint8_t d[6];
+    if (!i2cRead(QMCP_ADDR, QMCP_REG_DATA, d, 6)) return false;
+    const int16_t rx = (int16_t)((uint16_t)d[1] << 8 | d[0]);
+    const int16_t ry = (int16_t)((uint16_t)d[3] << 8 | d[2]);
+    const int16_t rz = (int16_t)((uint16_t)d[5] << 8 | d[4]);
+    remap_(rx * utPerLsb_, ry * utPerLsb_, rz * utPerLsb_, m);
     return true;
   }
 
   /** Is anything answering at 0x2C, and what does it say its id is? For `status`. */
   bool probe(uint8_t& id) {
     id = 0;
-    if (!dev_.detected()) return false;
-    reg_(0x00).read(&id);
+    if (!i2cPresent(QMCP_ADDR)) return false;
+    i2cRead(QMCP_ADDR, QMCP_REG_ID, &id, 1);
     return true;
   }
 
  private:
-  Adafruit_QMC5883P chip_;
-  // The registers the library does not reach -- 29H, the status byte in one
-  // read, the read-backs -- through the library's own bus layer.
-  Adafruit_I2CDevice dev_{ QMCP_ADDR, &Wire };
   bool     present_ = false;
   uint32_t lastDrdyMs_ = 0;       // the last time the chip said it had a sample
   float    utPerLsb_ = 0.1f;      // microtesla per count, from the range REPORTED
-
-  Adafruit_BusIO_Register reg_(uint8_t r) { return Adafruit_BusIO_Register(&dev_, r); }
 
   /**
    * Chip axes to box axes: X forward, Y left, Z up. See MAG_AXIS_ORDER and

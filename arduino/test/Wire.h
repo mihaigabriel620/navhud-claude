@@ -78,8 +78,9 @@ class TwoWire {
   bool qmcRangeSticks = true;
   /**
    * False: CTRL1 reads back 0x00 whatever was written, while the chip runs on
-   * what was written. The owner's part answers 0x80 and then fails a CTRL1
-   * read-back check, and measured fine under 2.9, which never read it.
+   * what was written. Not how the owner's part behaves under direct writes
+   * (2.2 read back 0xCB) -- it is here so that no check on CTRL1 can creep back
+   * in: 3.0's first build had one, and it wrote off the owner's working chip.
    */
   bool qmcCtrl1ReadBack = true;
   bool mpuPresent = true;           // false: nothing ACKs at 0x68

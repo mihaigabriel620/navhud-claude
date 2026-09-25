@@ -1,8 +1,7 @@
 // ---------------------------------------------------------------------------
-//  hud_i2c.h -- the two-wire bus: bring it up, and get it back when it hangs.
-//
-//  The compass and the MPU share it, each through its own library (GY521 and
-//  Adafruit QMC5883P). This file only owns the bus itself.
+//  hud_i2c.h -- the two-wire bus: bring it up, get it back when it hangs, and
+//  the three register helpers the compass is driven with (2.9's, which the
+//  owner's QMC5883P is known to work with). The MPU goes through GY521.
 //
 //  I2C sits on GPIO0 and GPIO2 here, which are both boot-strap pins. That is
 //  safe in normal running -- the Arduino core's Wire is a software bit-bang
@@ -26,8 +25,7 @@
 //  from a NON-MASKABLE interrupt -- noInterrupts() cannot hold it off. An NMI
 //  landing mid-bit stretches the clock, which I2C tolerates by design, but the
 //  margin is four times wider at 100 kHz. That is a trade worth taking in a
-//  car. Adafruit's library calls Wire.begin() again, with no pins; on this
-//  core that reuses the pins and the clock set here (Wire.cpp, core 3.1.2).
+//  car.
 // ---------------------------------------------------------------------------
 #ifndef HUD_I2C_H
 #define HUD_I2C_H
@@ -92,12 +90,6 @@ static bool i2cRecover() {
 /** What recover() found, so setup() and `status` can report it. */
 static bool i2cWasStuck = false;
 
-/** Does anything acknowledge at this address? For `status`'s bus scan. */
-static bool i2cAcks(uint8_t addr) {
-  Wire.beginTransmission(addr);
-  return Wire.endTransmission() == 0;
-}
-
 /** Bring the bus up. Call once, before anything on it is touched. */
 static void i2cBegin() {
   i2cWasStuck = !i2cRecover();
@@ -107,6 +99,30 @@ static void i2cBegin() {
   Wire.begin();
 #endif
   Wire.setClock(HUD_I2C_HZ);
+}
+
+/** Does anything acknowledge at this address? */
+static bool i2cPresent(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+/** Write one register. */
+static bool i2cWrite8(uint8_t addr, uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+
+/** Read n registers from reg, using a repeated START rather than a STOP. */
+static bool i2cRead(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t n) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;   // false = repeated START
+  if (Wire.requestFrom((int)addr, (int)n) != n) return false;
+  for (uint8_t i = 0; i < n; i++) buf[i] = (uint8_t)Wire.read();
+  return true;
 }
 
 #endif  // HUD_I2C_H

@@ -425,7 +425,7 @@ static void cmdStatus() {
     int n = snprintf(b, sizeof b, "  i2c     :");
     uint8_t found = 0;
     for (uint8_t a = 0x08; a < 0x78; a++) {
-      if (!i2cAcks(a) || ++found > 8) continue;
+      if (!i2cPresent(a) || ++found > 8) continue;
       const char* who = a == 0x2C ? " QMC5883P" : (a == 0x68 || a == 0x69) ? " MPU-6050" :
                         a == 0x0D ? " QMC5883L" : a == 0x1E ? " HMC5883L" : "";
       n += snprintf(b + n, sizeof b - n, " 0x%02X%s", a, who);

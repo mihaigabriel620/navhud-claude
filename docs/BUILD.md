@@ -236,7 +236,7 @@ than at a thousand-line sketch. In rough order of how often you will open them:
 | `hud_arrows.h` | The maneuver glyphs | An arrow is the wrong shape |
 | `hud_heading.h` | The compass maths: tilt-compensated heading, turn rate, gyro bias, `spin` | The heading is wrong, or moves when the box tilts |
 | `hud_sensors.h` | Running the compass and the MPU: bring-up, reads, retries, `$MAG`, `$IMU` | A chip is reported missing, or a line stops |
-| `hud_compass.h` / `hud_motion.h` | The QMC5883P and the MPU-6050, through their libraries | A chip answers but its numbers are nonsense |
+| `hud_compass.h` / `hud_motion.h` | The QMC5883P (direct register access) and the MPU-6050 (GY521) | A chip answers but its numbers are nonsense |
 | `hud_i2c.h` | The I2C bus itself, and clocking it free at boot | Nothing on I2C answers, or the board will not boot |
 | `NavHud.ino` | `setup()` and `loop()`, and a file map at the top | You want to see the order things happen in |
 
@@ -255,8 +255,8 @@ Two rules hold the split together, and both are load-bearing:
 1. Install the **ESP8266 board package** 3.1.2 (Arduino IDE → Boards Manager →
    "esp8266 by ESP8266 Community").
 2. Install the libraries (Library Manager), at the versions CI compiles with:
-   **TFT_eSPI** 2.5.43, **mcp_can** 1.5.1 (coryjfowler), **GY521** 0.6.2 (Rob
-   Tillaart), **Adafruit QMC5883P Library** 1.0.2 and **Adafruit BusIO** 1.17.4.
+   **TFT_eSPI** 2.5.43, **mcp_can** 1.5.1 (coryjfowler) and **GY521** 0.6.2
+   (Rob Tillaart). The compass needs none; the firmware drives it directly.
 3. Copy `arduino/config/User_Setup.h` over `libraries/TFT_eSPI/User_Setup.h`,
    keeping the original somewhere. TFT_eSPI is configured by editing the
    library rather than the sketch — an unfortunate design, but it is the

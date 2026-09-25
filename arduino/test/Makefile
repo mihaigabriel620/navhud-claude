@@ -29,23 +29,20 @@ parse_stdin: parse_stdin.cpp ../NavHud/hud_protocol.h
 SKETCH_HEADERS := $(wildcard ../NavHud/*.h)
 THEME_DEPS := $(SKETCH_HEADERS) tft_stub.h TFT_eSPI.h EEPROM.h SPI.h Wire.h mcp_can.h Arduino.h
 
-# ---- the sensor libraries -----------------------------------------------------
-# The sketch drives the MPU-6050 and the QMC5883P through these, so the sketch
-# builds compile them too (sensor_libs.h), over the fake bus in Wire.h. Fetched
-# once, at the tags firmware.yml installs for the real compile.
+# ---- the sensor library -------------------------------------------------------
+# The sketch drives the MPU-6050 through GY521, so the sketch builds compile it
+# too (sensor_libs.h), over the fake bus in Wire.h. Fetched once, at the tag
+# firmware.yml installs for the real compile. The compass needs no library: it
+# is driven directly, as in 2.9.
 SENSOR_DIR   ?= .sensor_libs
 GY521_TAG    ?= 0.6.2
-QMC5883P_TAG ?= 1.0.2
-BUSIO_TAG    ?= 1.17.4
-SENSOR_STAMP := $(SENSOR_DIR)/.fetched
-SENSOR_INC   := -I$(SENSOR_DIR)/GY521 -I$(SENSOR_DIR)/Adafruit_QMC5883P -I$(SENSOR_DIR)/Adafruit_BusIO
+SENSOR_STAMP := $(SENSOR_DIR)/.fetched-gy521
+SENSOR_INC   := -I$(SENSOR_DIR)/GY521
 SKETCH_DEPS  := ../NavHud/NavHud.ino $(THEME_DEPS) sensor_libs.h $(SENSOR_STAMP)
 
 $(SENSOR_STAMP):
 	rm -rf $(SENSOR_DIR)
 	git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(GY521_TAG) https://github.com/RobTillaart/GY521.git $(SENSOR_DIR)/GY521
-	git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(QMC5883P_TAG) https://github.com/adafruit/Adafruit_QMC5883P.git $(SENSOR_DIR)/Adafruit_QMC5883P
-	git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(BUSIO_TAG) https://github.com/adafruit/Adafruit_BusIO.git $(SENSOR_DIR)/Adafruit_BusIO
 	touch $@
 
 # The CAN half: canBegin()/canPump() through a stand-in for mcp_can 1.5.1

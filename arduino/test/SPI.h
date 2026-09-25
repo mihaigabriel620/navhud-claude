@@ -15,13 +15,6 @@
 #ifndef SPI_MODE0
 #define SPI_MODE0 0
 #endif
-// Only so Adafruit BusIO's SPI half compiles (test/sensor_libs.h); nothing on
-// this board talks SPI through it.
-#ifndef SPI_MODE1
-#define SPI_MODE1 1
-#define SPI_MODE2 2
-#define SPI_MODE3 3
-#endif
 
 struct SPISettings {
   uint32_t clock; uint8_t order; uint8_t mode;
@@ -152,12 +145,6 @@ class SPIClass {
    */
   long deadReads = 0;
   bool runaway = false;
-
-  /** The buffer form Adafruit BusIO declares. Byte by byte, in place. */
-  void transfer(void* buf, size_t n) {
-    uint8_t* p = (uint8_t*)buf;
-    for (size_t i = 0; i < n; i++) p[i] = transfer(p[i]);
-  }
 
   uint8_t transfer(uint8_t b) {
     if (stuckAfter >= 0 && transactions >= stuckAfter) { stuck = stuckValue; stuckAfter = -1; }

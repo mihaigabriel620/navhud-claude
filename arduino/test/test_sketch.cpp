@@ -12,7 +12,7 @@ SPIClass SPI;      // the MCP2515 simulator the sketch will talk to
 #ifdef HUD_MAG
 #include "Wire.h"
 TwoWire Wire;
-#include "sensor_libs.h"   // GY521 and the Adafruit QMC5883P, over that bus
+#include "sensor_libs.h"   // GY521, over that bus
 #endif
 
 const char* g_zone = "sketch";
@@ -46,7 +46,8 @@ int main() {
   g_millis = 0;
 #ifdef HUD_MAG
   // The owner's QMC5883P: the range write does not stick (it runs at +-30 G
-  // and reads back 0), and CTRL1 does not read back as written.
+  // and reads back 0). And CTRL1 reading back 0, which the owner's does not,
+  // so that nothing can depend on it again (see Wire.h).
   Wire.qmcRangeSticks = false;
   Wire.qmcCtrl1ReadBack = false;
 #endif

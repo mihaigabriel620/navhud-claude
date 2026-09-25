@@ -40,14 +40,12 @@ says so when the MPU reads upside down. It also shows the compass's raw field:
 with the box level its z must be negative, about −40 µT; if it is positive,
 set `MAG_AXIS_SIGN`'s third value to −1.
 
-**New libraries** (Library Manager): **GY521** 0.6.2 (Rob Tillaart),
-**Adafruit QMC5883P Library** 1.0.2 and **Adafruit BusIO** 1.17.4. The compass
-is found and read through Adafruit's library, but its three setup registers
-are written whole, in QST's order, exactly as 2.9 did. The library's setters
-read each register back and change only their own bits, and this chip does not
-read its control registers back as written: the first 3.0 build configured it
-that way, then checked CTRL1, and reported a chip that answered 0x80 at 0x2C as
-"not found". The host tests now model that chip.
+**New library** (Library Manager): **GY521** 0.6.2 (Rob Tillaart), for the
+MPU. The compass needs none: it is driven exactly as 2.9 drove it, direct
+register reads and writes, the same bytes in the same order. 3.0 first used
+Adafruit's QMC5883P library for it — the library 2.1 had tried on this chip
+and 2.2 had dropped, which the CHANGELOG said and I did not read — and on the
+owner's bench it reported a chip that answered 0x80 at 0x2C as "not found".
 
 **A shorter boot report**: one line per device — panel, CAN, compass, MPU —
 and the reason only when one fails; the details are in `status`. (The two
