@@ -17,7 +17,9 @@
 #define TFT_BLUE  0x001F
 #define HEX 16
 
+#ifndef F                               // tft_stub.h may already have it
 #define F(x) (x)
+#endif
 
 #ifndef HUD_STUB_HAS_DIGITALWRITE      // tft_stub.h may already have it
 inline void digitalWrite(int, int) {}
