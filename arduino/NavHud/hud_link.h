@@ -489,7 +489,7 @@ static bool linkPump(uint32_t now) {
       // Live preview while a slider moves. Nothing is written to flash here;
       // $GEOMSAVE does that, once, when the driver is happy. And nothing is
       // repainted here either -- the display block coalesces.
-      stageGeom();
+      stageGeom(now);
       lastFrameMs = now;
     }
     else if (r == HUD_GEOM_TEST_ON) {

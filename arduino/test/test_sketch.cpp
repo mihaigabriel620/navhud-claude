@@ -373,6 +373,21 @@ int main() {
     g_millis += 300; pump(1);
     CHECK(geomTest, "a nav frame does not dismiss it");
 
+    // A $GEOM read a millisecond after the pass began is stamped with the
+    // pass's clock. Stamped with a later millis(), `now - geomLastMsgMs`
+    // underflowed in the same pass and dismissed the pattern at once -- the
+    // likelier the more a slider was being dragged.
+    {
+      const uint32_t passStart = g_millis + 300;
+      g_millis = passStart + 1;                 // the clock ticked mid-pass
+      Serial.feed(wrap("GEOM,1,0,0,0,0,0,0,0,0,0"));
+      linkPump(passStart);
+      CHECK(geomLastMsgMs == passStart, "a $GEOM is stamped with the pass's clock");
+      g_millis = passStart;
+      pump(1);
+      CHECK(geomTest, "and the pattern is still up after it");
+    }
+
     // Two minutes of silence from the keystone screen does.
     g_millis += GEOM_TEST_IDLE_MS + 1000;
     pump(1);

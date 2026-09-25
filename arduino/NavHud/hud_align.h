@@ -101,13 +101,20 @@ static void applyGeom() {
   geomRepaint = true;
 }
 
-/** Take the corners from a $GEOM without repainting yet. */
-static void stageGeom() {
+/**
+ * Take the corners from a $GEOM without repainting yet.
+ *
+ * Stamped with the loop pass's `now`, like every other message. A fresh
+ * millis() can be a tick later than the `now` loop() then compares it with,
+ * and `now - geomLastMsgMs` underflowed to four billion: the idle check
+ * dismissed the pattern in the same pass, mid-drag.
+ */
+static void stageGeom(uint32_t now) {
   tft.geom.mirrorX = parser.geom.mirrorX != 0;
   tft.geom.mirrorY = parser.geom.mirrorY != 0;
   tft.geom.corners = parser.geom.corners;
   geomDirty = true;
-  geomLastMsgMs = millis();
+  geomLastMsgMs = now;
 }
 
 /** $GEOM? -- hand back what is on the panel right now. */
