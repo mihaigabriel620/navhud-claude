@@ -349,6 +349,19 @@ static void cmdStatus() {
 
 #ifdef HUD_MAG
 /**
+ * Queue a calibration write for the next standstill.
+ *
+ * It cancels a `forget` still waiting there: the write is newer. Both wait
+ * for a standstill, and the forget used to win -- so `forget` while moving,
+ * then a calibration or a `north`, and the next stop erased the NEW one, in
+ * RAM and in flash, after it had been reported as accepted.
+ */
+static void magQueueSave() {
+  magSavePending = true;
+  magForgetPending = false;
+}
+
+/**
  * spin -- start or finish a compass calibration.
  *
  * Drive a slow full circle, or pick the board up and turn it round. The result
@@ -364,7 +377,7 @@ static void cmdSpin(const char* rest) {
     // Gates first, flag second. The other way round, an early `spin stop`
     // silently ends the session while printing "keep going".
     if (compass.calFinish()) {
-      magSavePending = true;
+      magQueueSave();
       diag("calibration accepted. Saving at the next standstill.");
       snprintf(b, sizeof b, "  offset %+.1f %+.1f %+.1f uT",
                compass.offset[0], compass.offset[1], compass.offset[2]);
@@ -410,7 +423,7 @@ static void cmdNorth(const char* rest) {
   snprintf(b, sizeof b, "north set: offset is now %+.1f deg. Saving at the next standstill.",
            compass.northOffsetDeg);
   diag(b);
-  magSavePending = true;
+  magQueueSave();
 }
 
 static void cmdForget() {
@@ -526,7 +539,7 @@ static bool linkPump(uint32_t now) {
       // it must actually stop, or calOn_ stays set for the rest of the drive
       // and every later `$MAG` keeps claiming to be calibrating.
       const bool ok = compass.calFinish();
-      if (ok) magSavePending = true;
+      if (ok) magQueueSave();
       else    compass.calAbort();
       char b[24];
       snprintf(b, sizeof b, "MAGCAL,0,%u", (unsigned)(ok ? 1 : 0));

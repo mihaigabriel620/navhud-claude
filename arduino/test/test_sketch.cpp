@@ -699,6 +699,28 @@ int main() {
   }
 #endif
 
+#if defined(HUD_MAG) && defined(HUD_CAN)
+  printf("18d. a newer calibration outranks an older `forget`\n");
+  {
+    // Moving, so both writes wait for a standstill.
+    car.kmh = 50.0f; car.tSpeed = g_millis;
+    Serial.feed("forget\r\n");
+    g_millis += 50; pump(1);
+    car.tSpeed = g_millis;
+    Serial.feed("north 90\r\n");
+    g_millis += 50; pump(1);
+    const float wanted = compass.northOffsetDeg;
+    CHECK(wanted != 0.0f, "`north 90` set an offset");
+    // Stopped: the deferred writes happen.
+    car.kmh = 0.0f; car.tSpeed = g_millis;
+    g_millis += 50; pump(1);
+    CHECK(compass.northOffsetDeg == wanted,
+          "the offset set after `forget` survives the standstill write");
+    CHECK(!magForgetPending && !magSavePending, "and nothing is left pending");
+    printf("    north offset %.1f deg\n", compass.northOffsetDeg);
+  }
+#endif
+
   printf("19. the six display states\n");
   {
     uint8_t ign[1];
