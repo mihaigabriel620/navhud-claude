@@ -1758,6 +1758,10 @@ class HudService : Service(), LocationListener {
         offRouteSinceMs = 0L
         turnedOffSinceMs = 0L
         departure = null
+        // Clear the old route's lane arrows on the board first: with the memory
+        // gone, pushLanes sees "none wanted, none sent" and would send nothing,
+        // leaving the missed exit's lanes painted on the HUD.
+        if (lastLanesSent != null) runCatching { link?.write(HudFrame.wrap("LANE,0,0")) }
         lastLanesSent = null
         // The cached "is this camera on our road" answers were computed against
         // the previous route's geometry. Keep them and a camera correctly
