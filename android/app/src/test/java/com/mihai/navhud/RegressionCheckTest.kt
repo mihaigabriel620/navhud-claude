@@ -83,4 +83,24 @@ class RegressionCheckTest {
             87, free.update(0.0, 0.0, 0f, null, false, 1000L, CameraPolicy.EXACT, noFixKph = 87).speedKph)
         assertEquals(-1, free.update(0.0, 0.0, 0f, null, false, 2000L, CameraPolicy.EXACT).speedKph)
     }
+
+    // ---- R4: a limit flicker is not a new limit ----------------------------
+
+    /** 4 Hz from [fromMs] for [ms]; how many times it warned. */
+    private fun SpeedingRule.warns(fromMs: Long, ms: Long, kph: Int, limit: Int): Int {
+        var n = 0
+        var t = fromMs
+        while (t < fromMs + ms) { if (update(t, kph, limit)) n++; t += 250 }
+        return n
+    }
+
+    @Test fun `a 50-70-50 limit flicker does not warn twice`() {
+        val r = SpeedingRule()
+        assertEquals(1, r.warns(0, 5_000, 75, 50))
+        assertEquals(0, r.warns(5_000, 2_000, 75, 70))      // an unheld fallback 70
+        assertEquals("back to the same 50: still the cooldown",
+            0, r.warns(7_000, 20_000, 75, 50))
+        assertEquals("a limit below the one warned about is news",
+            1, r.warns(27_000, 5_000, 75, 30))
+    }
 }

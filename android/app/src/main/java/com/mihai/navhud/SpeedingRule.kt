@@ -15,7 +15,8 @@ package com.mihai.navhud
  *  - **Sustained**: over the margin continuously for [SUSTAIN_MS].
  *  - **Cooldown**: then silent for [COOLDOWN_MS]...
  *  - **...unless** the driver clearly slowed down (at or below limit - 10 for
- *    [UNDER_HOLD_MS]) or the known limit changed: both make a new warning news.
+ *    [UNDER_HOLD_MS]) or the limit dropped below the one warned about: both
+ *    make a new warning news.
  *  - **Unknown limit** (0 unknown, -1 derestricted) neither triggers nor
  *    re-arms, and wipes the sustain timer: a gap in the data must not let two
  *    separate seconds of speeding add up to a warning.
@@ -42,6 +43,7 @@ class SpeedingRule {
     private var overSinceMs = -1L          // -1: not over the margin
     private var underSinceMs = -1L         // -1: not clearly under
     private var knownLimit = 0             // last known limit, across gaps
+    private var warnedLimit = 0            // the limit the last warning was about
 
     /** True exactly when a warning should be spoken now. */
     fun update(nowMs: Long, speedKph: Int, limitKph: Int): Boolean {
@@ -51,8 +53,10 @@ class SpeedingRule {
             return false
         }
         if (knownLimit > 0 && limitKph != knownLimit) {
-            // A new limit is news, and the excess has to be earned against it.
-            armed = true
+            // A stricter limit than the one warned about is news, and the
+            // excess has to be earned against it. Not any change: a 50-70-50
+            // flicker (fallback limits are not held) re-armed it seconds later.
+            if (limitKph < warnedLimit) armed = true
             overSinceMs = -1L
             underSinceMs = -1L
         }
@@ -76,6 +80,7 @@ class SpeedingRule {
         if (armed && overSinceMs >= 0 && nowMs - overSinceMs >= SUSTAIN_MS) {
             armed = false
             warnedAtMs = nowMs
+            warnedLimit = limitKph
             return true
         }
         return false
