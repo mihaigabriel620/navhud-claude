@@ -721,6 +721,21 @@ int main() {
   }
 #endif
 
+#if defined(HUD_MAG)
+  printf("18e. a compass that browns out is found again\n");
+  {
+    CHECK(compass.present(), "the compass is up");
+    Wire.brownOut();                               // back in suspend mode
+    const uint32_t outAt = g_millis;
+    Serial.out_.clear();
+    for (int i = 0; i < 100; i++) { g_millis += 50; pump(1); }  // 5 s
+    CHECK(Serial.out_.find("(found on a retry)") != std::string::npos,
+          "a compass that stopped measuring is found again by the retry");
+    CHECK(compass.present() && lastMagSendMs > outAt + 1000,
+          "and $MAG flows again");
+  }
+#endif
+
   printf("19. the six display states\n");
   {
     uint8_t ign[1];

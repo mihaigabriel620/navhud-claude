@@ -69,6 +69,13 @@ static const uint8_t QMCP_RANGE_G[4]   = { 30, 12, 8, 2 };
 #define COMPASS_MIN_FIELD_UT  15.0f
 /** Above this something magnetic is sitting on the sensor. */
 #define COMPASS_MAX_FIELD_UT  120.0f
+/**
+ * No new sample for this long and the chip is not measuring: it browned out
+ * (it comes back in suspend mode) or it left the bus. It runs at 100 Hz, so
+ * this is a hundred missed samples. update() then stops calling it present,
+ * and the sketch's MAG_RETRY_MS retry brings it up again.
+ */
+#define COMPASS_SILENT_MS     1000
 
 class HudCompass {
  public:
@@ -131,6 +138,7 @@ class HudCompass {
     }
 
     present_ = true;
+    lastDrdyMs_ = millis();
     return true;
   }
 
@@ -142,8 +150,15 @@ class HudCompass {
     // STATUS register, not the data -- fold them into one burst and the flag is
     // consumed before it is tested, and update() never returns true again.
     uint8_t st = 0;
-    if (!i2cRead(QMCP_ADDR, QMCP_REG_STATUS, &st, 1)) return false;
-    if (!(st & 0x01)) return false;                       // nothing new
+    const bool read = i2cRead(QMCP_ADDR, QMCP_REG_STATUS, &st, 1);
+    if (!read || !(st & 0x01)) {                          // nothing new
+      // A second of nothing is not a quiet chip: it browned out and came back
+      // in suspend, or it is gone. Before, it stayed "present" for ever, the
+      // retry never ran, and $MAG stopped for the rest of the drive.
+      if ((uint32_t)(millis() - lastDrdyMs_) > COMPASS_SILENT_MS) present_ = false;
+      return false;
+    }
+    lastDrdyMs_ = millis();                               // measuring, even on overflow
     if (st & 0x02)   return false;                        // overflow
 
     uint8_t d[6];
@@ -297,6 +312,7 @@ class HudCompass {
 
  private:
   bool     present_ = false;
+  uint32_t lastDrdyMs_ = 0;      // the last time the chip said it had a sample
   bool     calOn_   = false;
   bool     haveCal_ = false;
   uint16_t calN_    = 0;

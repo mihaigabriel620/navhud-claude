@@ -43,11 +43,17 @@ class TwoWire {
       case 0x04: return (uint8_t)((uint16_t)y >> 8);
       case 0x05: return (uint8_t)(z & 0xFF);
       case 0x06: return (uint8_t)((uint16_t)z >> 8);
-      case 0x09: return 0x01;                               // DRDY
+      // DRDY only while CTRL1 says continuous mode: after power-on (or a
+      // brown-out) the chip is in suspend until it is told to measure.
+      case 0x09: return (regs_[0x0A] & 0x03) ? 0x01 : 0x00;
       default:   return regs_[r];
     }
   }
   uint8_t addr_ = 0, reg_ = 0; int txn_ = 0;
+ public:
+  /** The chip loses power and comes back: every register at its reset value. */
+  void brownOut() { for (int i = 0; i < 256; i++) regs_[i] = 0; }
+ private:
   uint8_t regs_[256] = {0};
   std::deque<uint8_t> rx_;
 };
