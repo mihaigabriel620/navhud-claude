@@ -29,7 +29,9 @@ Waze / Google Maps everywhere.
   instead of guessing; verify API signatures (MapLibre AAR, android.jar).
 - **Usage is limited**: at most 2 subagents at once; watch usage and pause
   before the limit.
-- Coding rules (the owner's skills): read before editing; never delete
+- **The owner's skills** are copied in `docs/owner-skills/` (a cloud session
+  has no other copy) — read and follow all of them. Summary of the
+  coding rules (the owner's skills): read before editing; never delete
   features or touch unrelated code; minimum code that works (reuse > stdlib >
   new code); one change at a time, test, revert failed attempts; state a
   hypothesis before fixing a bug; no blocking/delay() in firmware loops.
