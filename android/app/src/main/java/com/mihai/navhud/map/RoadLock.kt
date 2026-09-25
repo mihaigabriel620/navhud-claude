@@ -17,7 +17,8 @@ import com.mihai.navhud.nav.RoadWay
  * along it, until driving makes it plain you are on another.
  *
  *  - The first road is the best match within [PICK_M]: wide, because a parked
- *    car's fix can be well off its street, and any road beats a garden.
+ *    car's fix can be well off its street, and any road beats a garden. With
+ *    a known accuracy, within twice it ([PICK_MIN_M]..[PICK_M]).
  *  - Every later fix is projected onto *that* road, so the arrow moves only
  *    forwards or backwards along it.
  *  - Standing still ([STILL_MPS]) the position is frozen: GPS wander is not
@@ -37,6 +38,9 @@ class RoadLock {
     companion object {
         /** How far from the fix to look for a road to lock on to. */
         const val PICK_M = 150.0
+
+        /** ...but never under this, however accurate the fix claims to be. */
+        const val PICK_MIN_M = 35.0
 
         /** A fix this far from the locked road means the lock was wrong. */
         const val LOST_M = 100.0
@@ -147,8 +151,11 @@ class RoadLock {
                 return true
             }
         }
-        // No road yet, or the fix has left ours: pick afresh.
-        val m = area?.let { AreaRoads.match(it, fixLat, fixLon, heading, PICK_M) }
+        // No road yet, or the fix has left ours: pick afresh. Within twice the
+        // fix's accuracy (35..150 m) when it has one: an accurate fix in a car
+        // park 80 m from the street is in the car park, not on the street.
+        val pickM = if (accuracyM > 0.0) minOf(PICK_M, maxOf(PICK_MIN_M, 2.0 * accuracyM)) else PICK_M
+        val m = area?.let { AreaRoads.match(it, fixLat, fixLon, heading, pickM) }
         if (m == null) {
             reset()
             return false

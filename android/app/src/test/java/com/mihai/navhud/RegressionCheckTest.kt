@@ -248,4 +248,22 @@ class RegressionCheckTest {
             roundabout(""","degrees":90""", side = "left"))
         assertEquals("no degrees: the bearings, as before", 60, roundabout(""))
     }
+
+    // ---- W5: an accurate fix in a car park is not on the street ------------
+
+    @Test fun `the first road pick is bounded by the fix's accuracy`() {
+        val lat0 = 50.8000
+        val road = RoadWay(1, arrayOf(doubleArrayOf(lat0, 4.3000), doubleArrayOf(lat0, 4.3142)),
+            "Rue A", "", 50, "residential", 0)
+        val area = Area(lat0, 4.307, 2000.0, listOf(road), emptyList(), 0L)
+        val carPark = Geo.destination(lat0, 4.3071, 0.0, 80.0)      // 80 m off the street
+        val accurate = RoadLock()
+        assertFalse("a 5 m fix in a car park stays raw",
+            accurate.update(area, carPark[0], carPark[1], 0.0, null, accuracyM = 5.0))
+        assertNull(accurate.road)
+        val indoor = RoadLock()
+        assertTrue("a +-60 m indoor fix still locks",
+            indoor.update(area, carPark[0], carPark[1], 0.0, null, accuracyM = 60.0))
+        assertEquals(1L, indoor.road!!.id)
+    }
 }
