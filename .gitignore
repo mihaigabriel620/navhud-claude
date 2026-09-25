@@ -6,6 +6,7 @@ local.properties
 .claude/
 arduino/test/out/
 arduino/test/.tft_espi/
+arduino/test/.sensor_libs/
 arduino/test/*.exe
 # host test binaries (arduino/test/Makefile)
 arduino/test/t

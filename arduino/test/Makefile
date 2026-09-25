@@ -24,6 +24,25 @@ parse_stdin: parse_stdin.cpp ../NavHud/hud_protocol.h
 SKETCH_HEADERS := $(wildcard ../NavHud/*.h)
 THEME_DEPS := $(SKETCH_HEADERS) tft_stub.h TFT_eSPI.h EEPROM.h SPI.h Wire.h mcp_can.h Arduino.h
 
+# ---- the sensor libraries -----------------------------------------------------
+# The sketch drives the MPU-6050 and the QMC5883P through these, so the sketch
+# builds compile them too (sensor_libs.h), over the fake bus in Wire.h. Fetched
+# once, at the tags firmware.yml installs for the real compile.
+SENSOR_DIR   ?= .sensor_libs
+GY521_TAG    ?= 0.6.2
+QMC5883P_TAG ?= 1.0.2
+BUSIO_TAG    ?= 1.17.4
+SENSOR_STAMP := $(SENSOR_DIR)/.fetched
+SENSOR_INC   := -I$(SENSOR_DIR)/GY521 -I$(SENSOR_DIR)/Adafruit_QMC5883P -I$(SENSOR_DIR)/Adafruit_BusIO
+SKETCH_DEPS  := ../NavHud/NavHud.ino $(THEME_DEPS) sensor_libs.h $(SENSOR_STAMP)
+
+$(SENSOR_STAMP):
+	rm -rf $(SENSOR_DIR)
+	git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(GY521_TAG) https://github.com/RobTillaart/GY521.git $(SENSOR_DIR)/GY521
+	git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(QMC5883P_TAG) https://github.com/adafruit/Adafruit_QMC5883P.git $(SENSOR_DIR)/Adafruit_QMC5883P
+	git -c advice.detachedHead=false clone --quiet --depth 1 --branch $(BUSIO_TAG) https://github.com/adafruit/Adafruit_BusIO.git $(SENSOR_DIR)/Adafruit_BusIO
+	touch $@
+
 # The CAN half: canBegin()/canPump() through a stand-in for mcp_can 1.5.1
 # (mcp_can.h) over a register-level MCP2515 simulator built from the datasheet
 # (SPI.h), and the E60 decoders. The bit timing is the library's own business
@@ -32,8 +51,8 @@ THEME_DEPS := $(SKETCH_HEADERS) tft_stub.h TFT_eSPI.h EEPROM.h SPI.h Wire.h mcp_
 can: test_can.cpp $(SKETCH_HEADERS) SPI.h mcp_can.h Arduino.h tft_stub.h
 	$(CXX) $(CXXFLAGS) $(INC) -DHUD_HOST_TEST -o $@ test_can.cpp
 
-sketch_dash: test_sketch.cpp ../NavHud/NavHud.ino $(THEME_DEPS)
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_sketch.cpp
+sketch_dash: test_sketch.cpp $(SKETCH_DEPS)
+	$(CXX) $(CXXFLAGS) $(INC) $(SENSOR_INC) -o $@ test_sketch.cpp
 
 layout_e60: test_layout.cpp corpus.h $(THEME_DEPS)
 	$(CXX) $(CXXFLAGS) $(INC) -DHUD_THEME_E60_CLASSIC -o $@ test_layout.cpp
@@ -44,14 +63,14 @@ layout_e60: test_layout.cpp corpus.h $(THEME_DEPS)
 # a parked car's usefulness by glowing all night -- is never checked. Forcing a
 # pin in gives the host something to watch. analogWrite() is a no-op stub, so
 # the only observable effect is backlightNow.
-sketch_e60: test_sketch.cpp ../NavHud/NavHud.ino $(THEME_DEPS)
-	$(CXX) $(CXXFLAGS) $(INC) -DHUD_THEME_E60_CLASSIC -DBACKLIGHT_PIN=4 -o $@ test_sketch.cpp
+sketch_e60: test_sketch.cpp $(SKETCH_DEPS)
+	$(CXX) $(CXXFLAGS) $(INC) $(SENSOR_INC) -DHUD_THEME_E60_CLASSIC -DBACKLIGHT_PIN=4 -o $@ test_sketch.cpp
 
 
 # HUD_BENCH is a shipping configuration too -- somebody will leave it on. A
 # build whose own test suite fails is a trap, so it gets checked as well.
-sketch_bench: test_sketch.cpp ../NavHud/NavHud.ino $(THEME_DEPS)
-	$(CXX) $(CXXFLAGS) $(INC) -DHUD_BENCH -DHUD_THEME_E60_CLASSIC -DBACKLIGHT_PIN=4 -o $@ test_sketch.cpp
+sketch_bench: test_sketch.cpp $(SKETCH_DEPS)
+	$(CXX) $(CXXFLAGS) $(INC) $(SENSOR_INC) -DHUD_BENCH -DHUD_THEME_E60_CLASSIC -DBACKLIGHT_PIN=4 -o $@ test_sketch.cpp
 
 # The bring-up sketch. It is a throwaway diagnostic, which is exactly why it
 # shipped asking font 6 to draw an "x" -- a sketch whose whole job is to tell

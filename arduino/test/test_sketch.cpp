@@ -12,6 +12,7 @@ SPIClass SPI;      // the MCP2515 simulator the sketch will talk to
 #ifdef HUD_MAG
 #include "Wire.h"
 TwoWire Wire;
+#include "sensor_libs.h"   // GY521 and the Adafruit QMC5883P, over that bus
 #endif
 
 const char* g_zone = "sketch";
