@@ -388,6 +388,12 @@ int main() {
       CHECK(geomTest, "and the pattern is still up after it");
     }
 
+    // A minute spent looking at the windscreen is not the app going away:
+    // the Keystone screen sends nothing while no slider moves.
+    g_millis += 60000;
+    pump(1);
+    CHECK(geomTest, "a minute without touching a slider keeps the pattern up");
+
     // Two minutes of silence from the keystone screen does.
     g_millis += GEOM_TEST_IDLE_MS + 1000;
     pump(1);

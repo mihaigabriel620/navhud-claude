@@ -207,7 +207,14 @@
 
 // DISPLAY_BOOT_GRACE_MS lives in hud_display.h, next to the rule it serves.
 
-/** Leave the alignment pattern if the app that asked for it goes quiet. */
-#define GEOM_TEST_IDLE_MS     15000
+/**
+ * Leave the alignment pattern if the app that asked for it goes quiet.
+ *
+ * Two minutes, as PROTOCOL.md, the Keystone screen and the 1.22 notes say. It
+ * had drifted to 15 s, and the Keystone screen sends nothing while no slider
+ * moves -- so fifteen seconds of looking at the windscreen took the grid away
+ * until the screen was left and opened again.
+ */
+#define GEOM_TEST_IDLE_MS     120000UL
 
 #endif  // HUD_CONFIG_H
