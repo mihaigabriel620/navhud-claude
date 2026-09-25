@@ -20,7 +20,10 @@
 //    hud_can.h        the MCP2515 driver, listen-only
 //    hud_car.h        the E60's CAN frames turned into speed, rpm, PS, volts
 //    hud_i2c.h        the I2C bus, and freeing it when a chip holds it low
-//    hud_compass.h    the QMC5883P: heading and its calibration
+//    hud_compass.h    the QMC5883P magnetometer
+//    hud_motion.h     the MPU-6050: gravity and turn rate (optional)
+//    hud_heading.h    the maths: tilt-compensated heading, turn rate, `spin`
+//    hud_sensors.h    runs both chips: bring-up, reads, retries, $MAG, $IMU
 //    hud_backlight.h  lit by the key, dimmed by the phone
 //    hud_display.h    which screen is up, and switching to it
 //    hud_theme.h      picks the theme; primitives both themes use
@@ -39,8 +42,9 @@
 //    no car data, or the bus misbehaves ...... hud_can.h, then hud_bus.h
 //    a car number is wrong ................... hud_car.h
 //    a message missing or wrong on the cable . hud_link.h, hud_protocol.h
-//    compass not found ....................... hud_i2c.h, hud_compass.h
-//    heading wrong ........................... hud_compass.h
+//    compass or MPU not found ................ hud_sensors.h, hud_i2c.h
+//    heading wrong, or moves when tilted ..... hud_heading.h, then the AXIS
+//                                              settings in hud_config.h
 //    the wrong screen is up .................. hud_display.h
 //    something drawn wrong ................... theme_dash.h / theme_e60.h
 //    a wrong or jagged arrow ................. hud_arrows.h, hud_aa.h
@@ -71,11 +75,13 @@
 //
 //    QMC5883P SDA -> D3  GPIO0
 //    QMC5883P SCL -> D4  GPIO2     (NOT D1/D2 -- the display has those)
+//    MPU-6050 (GY-521) SDA -> D3, SCL -> D4, in parallel with the compass;
+//                      VCC -> 3V3, AD0 left as it comes (low: 0x68). Optional.
 //
 //    The panel draws about 120 mA with the backlight on, which is more than
 //    some USB-serial adapters will give. Power the board from the car before
 //    blaming the wiring for a panel that resets under load -- and note that
-//    the compass shares that same 3V3 rail.
+//    the compass and the MPU share that same 3V3 rail.
 //
 //  WHY THESE PINS AND NOT OTHERS: hud_pins.h, with the datasheet citations.
 //  The short version is that a D1 mini has exactly six pins spare and this
@@ -130,6 +136,8 @@
 #ifdef HUD_MAG
   #include "hud_i2c.h"
   #include "hud_compass.h"
+  #include "hud_motion.h"
+  #include "hud_heading.h"
 #endif
 
 // The shared variables, defined here and declared to everything else. This is
@@ -146,6 +154,9 @@
 #include "hud_align.h"
 #include "hud_settings.h"
 #include "hud_link.h"
+#ifdef HUD_MAG
+  #include "hud_sensors.h"
+#endif
 
 void setup() {
   // Before anything else touches SPI. An undriven chip select floats, and a
@@ -258,41 +269,8 @@ void setup() {
   themeSplash("NavHUD", "waiting for the phone...", false);
 
 #ifdef HUD_MAG
-  // The two-wire bus, once, here, before anything on it is touched.
-  //
-  i2cBegin();
-  if (i2cWasStuck) diag("  i2c     : bus was held low at boot; clocked free");
-
-  {
-    // Three attempts, not one. The first transaction of a board's life happens
-    // while the 3V3 rail is still settling and the backlight may have just come
-    // on, and a compass that NAKs once at that moment used to be written off
-    // for the rest of the run.
-    // Say what the BUS says before the driver gets a vote. "no compass found"
-    // covers a dead bus, a chip at the wrong address and a chip that answers
-    // with the wrong ID, and those are three different faults.
-    char b[120];
-    const bool acked = i2cPresent(QMCP_ADDR);
-    uint8_t id = 0;
-    if (acked) i2cRead(QMCP_ADDR, 0x00, &id, 1);
-
-    for (uint8_t i = 0; i < 3 && !compass.begin(); i++) delay(30);
-    snprintf(b, sizeof b, "  compass : %s", compass.describe());
-    diag(b);
-    if (!compass.present()) {
-      snprintf(b, sizeof b,
-               "            0x2C %s, chip id 0x%02X (want 80). Check SDA/SCL and 3V3.",
-               acked ? "ACKed" : "did NOT ack", (unsigned)id);
-      diag(b);
-    } else {
-      snprintf(b, sizeof b, "            CTRL1 0x%02X  CTRL2 0x%02X  range +-%u G  %s",
-               (unsigned)compass.ctrl1, (unsigned)compass.ctrl2,
-               (unsigned)compass.rangeG,
-               compass.dataSeen ? "producing data" : "NO DATA -- configured but silent");
-      diag(b);
-    }
-    if (compass.present()) loadCompassCal();
-  }
+  // The two-wire bus and both chips on it (hud_sensors.h).
+  sensorsBegin();
 #endif
 
   {
@@ -379,66 +357,23 @@ void loop() {
 
 
 #ifdef HUD_MAG
-  // The compass, read every pass, reported every fifth.
+  // ---- the compass and the MPU (hud_sensors.h) ----------------------------
   //
+  // An I2C read is 1-2 ms and the MCP2515's two receive buffers hold about
+  // 2.2 ms of a busy bus, so the controller is drained just before it. The
+  // car's speed tells the heading maths when the car is parked, which is when
+  // gravity and the gyro's bias can be measured cleanly.
   {
-    // Not found at boot is not a verdict. Two address probes every three
-    // seconds costs nothing and means a compass that browned out during
-    // bring-up -- or was plugged in afterwards -- starts working without a
-    // reboot.
-    if (!compass.present()) {
-      static uint32_t retryAt = 0;
-      if (now - retryAt >= MAG_RETRY_MS) {
-        retryAt = now;
-        if (compass.begin()) {
-          char b[96];
-          snprintf(b, sizeof b, "  compass : %s (found on a retry)", compass.describe());
-          diag(b);
-          loadCompassCal();
-        }
-      }
-    }
-
-    // Reading costs about 700 us at 100 kHz, and the MCP2515's two receive
-    // buffers hold roughly 2.2 ms of a busy 100 kbit/s bus. Draining either
-    // side of the I2C burst costs ten microseconds when nothing is waiting and
-    // saves a frame when something is.
 #ifdef HUD_CAN
     if (canOk) canPump(car, millis());
-#endif
-
-    if (compass.present() && compass.update()) {
-      if (now - lastMagSendMs >= MAG_SEND_INTERVAL_MS) {
-        lastMagSendMs = now;
-        sendMag();
-      }
-    }
-
-    // Deferred flash writes, done here rather than where they were asked for.
-    // EEPROM.commit() erases a 4 KB sector with interrupts off -- tens of
-    // milliseconds, up to 400 by the datasheet -- and nothing fills the UART
-    // buffer in that window, so a $CAM or $LANE clearing frame arriving during
-    // it is lost for good. At a standstill nobody minds.
-    {
-      bool stopped = false;
-#ifdef HUD_CAN
-      stopped = canOk && carStopped(car, now);
-      if (!canOk) stopped = true;        // no bus to ask; this is a desk
+    const float speedMps = (canOk && !carStale(car.tSpeed, now)) ? car.kmh / 3.6f : -1.0f;
+    const bool  stopped  = !canOk || carStopped(car, now);   // no bus: a desk
 #else
-      stopped = true;
+    const float speedMps = -1.0f;
+    const bool  stopped  = true;
 #endif
-      if (stopped) {
-        if (magForgetPending) {
-          forgetCompassCal();
-          magForgetPending = false; magSavePending = false;
-          diag("compass calibration erased.");
-        } else if (magSavePending) {
-          saveCompassCal();
-          magSavePending = false;
-          diag("written to flash.");
-        }
-      }
-    }
+    sensorsUpdate(now, speedMps);
+    settingsSaveDeferred(stopped);      // calibration writes wait for a standstill
   }
 #endif  // HUD_MAG
 

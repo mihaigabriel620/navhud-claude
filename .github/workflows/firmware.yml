@@ -6,9 +6,10 @@
 #                      downloadable as the artifact "hud-screens"
 #   3. real compile    arduino-cli, esp8266:esp8266 3.1.2 for the D1 mini, with
 #                      TFT_eSPI 2.5.43 (arduino/config/User_Setup.h copied into
-#                      it, or it builds for the wrong pins) and mcp_can 1.5.1.
-#                      The size report (flash / RAM / IRAM) is in the log;
-#                      IRAM is the tight one.
+#                      it, or it builds for the wrong pins), mcp_can 1.5.1,
+#                      GY521 0.6.2, Adafruit QMC5883P 1.0.2 and Adafruit BusIO
+#                      1.17.4. The size report (flash / RAM / IRAM) is in the
+#                      log; IRAM is the tight one.
 #
 # Nothing here is flashed. Only the owner flashes the board.
 name: Firmware
@@ -58,6 +59,9 @@ jobs:
           mkdir -p "$lib"
           git clone --quiet --depth 1 --branch V2.5.43 https://github.com/Bodmer/TFT_eSPI.git "$lib/TFT_eSPI"
           git clone --quiet --depth 1 --branch 1.5.1 https://github.com/coryjfowler/MCP_CAN_lib.git "$lib/mcp_can"
+          git clone --quiet --depth 1 --branch 0.6.2 https://github.com/RobTillaart/GY521.git "$lib/GY521"
+          git clone --quiet --depth 1 --branch 1.0.2 https://github.com/adafruit/Adafruit_QMC5883P.git "$lib/Adafruit_QMC5883P"
+          git clone --quiet --depth 1 --branch 1.17.4 https://github.com/adafruit/Adafruit_BusIO.git "$lib/Adafruit_BusIO"
           cp arduino/config/User_Setup.h "$lib/TFT_eSPI/User_Setup.h"
 
       - name: Compile for the Wemos D1 mini

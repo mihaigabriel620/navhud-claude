@@ -33,14 +33,14 @@
 // The compass block sits straight after the geometry, in the same 4 KB sector,
 // so saving both is one erase rather than two.
 //
-// It replaces two separate blocks -- an 8-byte hard-iron record and a 16-byte
-// mounting record -- which is why the magic byte inside it changed. A build
-// that reads the old bytes with the new layout gets a checksum failure and
-// falls back to "not calibrated", which is the right outcome: recalibrating
+// Its layout is HudHeading's (hud_heading.h), with its own magic byte. Firmware
+// 3.0 changed it -- the flat compass's 31-byte block held an offset that is
+// wrong for a tilt-compensated one -- so an old block fails its magic and the
+// board starts "not calibrated", which is the right outcome: recalibrating
 // takes one slow circle, and believing a misread offset would point the arrow
 // confidently in the wrong direction for ever.
 #define HUD_MAG_STORE_OFF   HUD_STORE_BYTES
-#define HUD_MAG_STORE_BYTES 31      // HudCompass::STORE_BYTES
+#define HUD_MAG_STORE_BYTES 19      // HudHeading::STORE_BYTES
 
 #define HUD_STORE_EEPROM  64      // rounded up; EEPROM.begin() wants a size
 

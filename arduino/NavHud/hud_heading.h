@@ -315,7 +315,7 @@ class HudHeading {
   static constexpr float kStillGyroDps  = 1.0f;   // max - min, each axis
   static constexpr float kStillAccG     = 0.05f;
   static constexpr float kStillMagUt    = 1.5f;
-  static constexpr float kStillMps      = 0.3f;   // ~1 km/h, carStopped()'s line
+  static constexpr float kStillMps      = 0.05f;  // wheels not turning: the bus sees 3 cm
   static constexpr float kNoBusTurnDps  = 0.3f;   // no bus: a turn this slow looks parked
   static constexpr float kBiasStepDps   = 0.1f;   // most a parked second may move the bias
 
@@ -393,9 +393,10 @@ class HudHeading {
    * A second has passed. If the car was parked for all of it, the averages are
    * the best gravity and gyro bias there will be: take them.
    *
-   * "Parked" is the bus saying so -- speed under 1 km/h for the whole second --
-   * and the gyro and accelerometer agreeing, which a door or somebody climbing
-   * in does not. With no bus the readings alone decide, and a long gentle
+   * "Parked" is the bus saying so -- the wheels not turning for the whole
+   * second; 0x1A6 counts every 3 cm, so even creeping round a parking space at
+   * walking pace reads as moving -- and the gyro and accelerometer agreeing,
+   * which a door or somebody climbing in does not. With no bus the readings alone decide, and a long gentle
    * curve is as steady as a car park, so then the compass must be steady too,
    * and a mean turn of more than kNoBusTurnDps from the known bias is taken as
    * the car turning, not as the bias moving.
@@ -426,9 +427,9 @@ class HudHeading {
       for (uint8_t i = 0; i < 3; i++) bias[i] = stillRun_ ? (bias[i] + g[i]) * 0.5f : g[i];
       if (++stillRun_ >= 2) biasKnown = true;
     } else {
-      // A bias drifts with temperature, slowly. Creeping round a parking space
-      // at walking pace reads as "stopped" on the bus and is a real turn, so a
-      // parked second may nudge the bias, not replace it.
+      // A bias drifts with temperature, slowly, and a parked second that was
+      // somehow not parked -- no bus, a car on a ferry -- must not be able to
+      // throw it: each may nudge the bias, not replace it.
       for (uint8_t i = 0; i < 3; i++) {
         float d = g[i] - bias[i];
         if (d >  kBiasStepDps) d =  kBiasStepDps;

@@ -710,15 +710,15 @@ int main() {
     car.tSpeed = g_millis;
     Serial.feed("north 90\r\n");
     g_millis += 50; pump(1);
-    const float wanted = compass.northOffsetDeg;
+    const float wanted = heading.northOffsetDeg;
     CHECK(wanted != 0.0f, "`north 90` set an offset");
     // Stopped: the deferred writes happen.
     car.kmh = 0.0f; car.tSpeed = g_millis;
     g_millis += 50; pump(1);
-    CHECK(compass.northOffsetDeg == wanted,
+    CHECK(heading.northOffsetDeg == wanted,
           "the offset set after `forget` survives the standstill write");
     CHECK(!magForgetPending && !magSavePending, "and nothing is left pending");
-    printf("    north offset %.1f deg\n", compass.northOffsetDeg);
+    printf("    north offset %.1f deg\n", heading.northOffsetDeg);
   }
 #endif
 
@@ -727,13 +727,102 @@ int main() {
   {
     CHECK(compass.present(), "the compass is up");
     Wire.brownOut();                               // back in suspend mode
-    const uint32_t outAt = g_millis;
     Serial.out_.clear();
     for (int i = 0; i < 100; i++) { g_millis += 50; pump(1); }  // 5 s
-    CHECK(Serial.out_.find("(found on a retry)") != std::string::npos,
+    const size_t found = Serial.out_.find("compass : QMC5883P at 0x2C (found on a retry)");
+    CHECK(found != std::string::npos,
           "a compass that stopped measuring is found again by the retry");
-    CHECK(compass.present() && lastMagSendMs > outAt + 1000,
+    CHECK(compass.present() && Serial.out_.find("$MAG,", found) != std::string::npos,
           "and $MAG flows again");
+  }
+#endif
+
+#if defined(HUD_MAG) && defined(HUD_CAN)
+  // The last line of a kind that went up the cable, as numbers.
+  auto lastImu = [](float* f) {
+    const size_t at = Serial.out_.rfind("$IMU,");
+    return at != std::string::npos &&
+           sscanf(Serial.out_.c_str() + at, "$IMU,%f,%f,%f,%f", &f[0], &f[1], &f[2], &f[3]) == 4;
+  };
+  auto lastMag = [](float& deg) {
+    const size_t at = Serial.out_.rfind("$MAG,");
+    return at != std::string::npos && sscanf(Serial.out_.c_str() + at, "$MAG,%f", &deg) == 1;
+  };
+  auto count = [](const char* what) {
+    size_t n = 0;
+    for (size_t at = 0; (at = Serial.out_.find(what, at)) != std::string::npos; at++) n++;
+    return n;
+  };
+  // Loop passes 10 ms apart, with the bus saying the car does `kmh`.
+  auto drive = [](float kmh, int ms, double turnDps = 0) {
+    for (int t = 0; t < ms; t += 10) {
+      car.kmh = kmh; car.tSpeed = g_millis;
+      if (turnDps != 0) Wire.box.turn(turnDps, 0.01);
+      g_millis += 10; pump(1);
+    }
+    Wire.box.rateZDps = 0;
+  };
+
+  printf("18f. the MPU: parked it learns the gyro, turning $IMU says how fast\n");
+  {
+    CHECK(motion.present(), "the MPU was found at boot");
+    CHECK(heading.biasKnown, "the gyro's bias was learned in the first parked seconds");
+    // The bias moves -- the cabin warmed up. Each parked second may nudge it by
+    // a tenth of a degree per second, so 1.2 takes twelve, plus the second the
+    // change landed in, which was not steady.
+    Wire.mpuGyroBias[2] = 1.2;
+    drive(0, 15000);
+    CHECK(fabsf(heading.bias[2] - 1.2f) < 0.02f, "and it follows a bias that moves");
+    float f[4] = { 0, 0, 0, 0 };
+    CHECK(lastImu(f) && fabsf(f[3]) < 0.05f, "and $IMU says a parked car is not turning");
+    Serial.out_.clear();
+    drive(30, 2000, 12.0);                         // a right-hand bend, 12 deg/s
+    CHECK(lastImu(f) && fabsf(f[3] - 12.0f) < 0.1f, "turning right at 12 deg/s reads +12");
+    const size_t n = count("$IMU,");
+    CHECK(n >= 38 && n <= 42, "twenty lines a second");
+    printf("    bias %.2f deg/s, turning %.2f deg/s, %zu $IMU lines in 2 s\n",
+           heading.bias[2], f[3], n);
+  }
+
+  printf("18g. tilting the box does not move the heading\n");
+  {
+    Wire.box.pitchDeg = 0; Wire.box.rollDeg = 0;
+    drive(0, 3000);
+    float level = NAN, tilted = NAN;
+    CHECK(lastMag(level), "$MAG level");
+    Wire.box.pitchDeg = 20; Wire.box.rollDeg = -8;   // the screen angled up, and askew
+    drive(0, 3000);
+    CHECK(lastMag(tilted), "$MAG tilted");
+    const float d = fabsf(fmodf(tilted - level + 540.0f, 360.0f) - 180.0f);
+    CHECK(d < 0.5f, "the same heading, within half a degree");
+    printf("    level %.1f deg, tilted %.1f deg\n", level, tilted);
+    Wire.box.pitchDeg = 0; Wire.box.rollDeg = 0;
+    drive(0, 3000);
+  }
+
+  printf("18h. an MPU that browns out is found again\n");
+  {
+    Wire.mpuBrownOut();                            // asleep: it reads all zeros
+    Serial.out_.clear();
+    drive(0, 5000);
+    const size_t found = Serial.out_.find("mpu     : MPU-6050 at 0x68 (found on a retry)");
+    CHECK(found != std::string::npos, "found again by the retry");
+    CHECK(motion.present() && Serial.out_.find("$IMU,", found) != std::string::npos,
+          "and $IMU flows again");
+  }
+
+  printf("18i. no MPU at all: no $IMU, and the compass carries on\n");
+  {
+    Wire.mpuPresent = false;
+    drive(0, 1000);
+    CHECK(!motion.present(), "a missing MPU is noticed");
+    Serial.out_.clear();
+    drive(0, 2000);
+    CHECK(count("$IMU,") == 0, "no $IMU without one");
+    CHECK(count("$MAG,") >= 8, "and $MAG still goes out");
+    Wire.mpuPresent = true;
+    drive(0, 4000);                                // back, for what follows
+    CHECK(motion.present(), "and one plugged back in is found");
   }
 #endif
 

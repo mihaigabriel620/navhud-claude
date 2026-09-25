@@ -1,6 +1,9 @@
 // ---------------------------------------------------------------------------
 //  hud_i2c.h -- the two-wire bus: bring it up, and get it back when it hangs.
 //
+//  The compass and the MPU share it, each through its own library (GY521 and
+//  Adafruit QMC5883P). This file only owns the bus itself.
+//
 //  I2C sits on GPIO0 and GPIO2 here, which are both boot-strap pins. That is
 //  safe in normal running -- the Arduino core's Wire is a software bit-bang
 //  that emulates open drain honestly, releasing the line and letting the
@@ -15,15 +18,16 @@
 //
 //  A slave that lost sync mid-byte and is holding SDA down therefore does not
 //  just break the compass; it stops the board from booting, every time, until
-//  the slave is power-cycled. That is why recover() below exists and why it
+//  the slave is power-cycled. That is why i2cRecover() below exists and why it
 //  runs BEFORE Wire.begin() rather than after something has already failed.
 //
 //  Speed is 100 kHz, not 400. The bus is bit-banged, its timing comes from
 //  software delay loops, and analogWrite() on this chip drives its waveform
 //  from a NON-MASKABLE interrupt -- noInterrupts() cannot hold it off. An NMI
 //  landing mid-bit stretches the clock, which I2C tolerates by design, but the
-//  margin is four times wider at 100 kHz and the compass costs 500 us more per
-//  read. That is a trade worth taking in a car.
+//  margin is four times wider at 100 kHz. That is a trade worth taking in a
+//  car. Adafruit's library calls Wire.begin() again, with no pins; on this
+//  core that reuses the pins and the clock set here (Wire.cpp, core 3.1.2).
 // ---------------------------------------------------------------------------
 #ifndef HUD_I2C_H
 #define HUD_I2C_H
@@ -85,7 +89,7 @@ static bool i2cRecover() {
   return digitalRead(PIN_I2C_SDA) == HIGH && digitalRead(PIN_I2C_SCL) == HIGH;
 }
 
-/** What recover() found, so setup() can report it without repeating the work. */
+/** What recover() found, so setup() and `status` can report it. */
 static bool i2cWasStuck = false;
 
 /** Bring the bus up. Call once, before anything on it is touched. */
@@ -97,30 +101,6 @@ static void i2cBegin() {
   Wire.begin();
 #endif
   Wire.setClock(HUD_I2C_HZ);
-}
-
-/** Does anything acknowledge at this address? */
-static bool i2cPresent(uint8_t addr) {
-  Wire.beginTransmission(addr);
-  return Wire.endTransmission() == 0;
-}
-
-/** Write one register. */
-static bool i2cWrite8(uint8_t addr, uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.write(val);
-  return Wire.endTransmission() == 0;
-}
-
-/** Read n registers from reg, using a repeated START rather than a STOP. */
-static bool i2cRead(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t n) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return false;   // false = repeated START
-  if (Wire.requestFrom((int)addr, (int)n) != n) return false;
-  for (uint8_t i = 0; i < n; i++) buf[i] = (uint8_t)Wire.read();
-  return true;
 }
 
 #endif  // HUD_I2C_H

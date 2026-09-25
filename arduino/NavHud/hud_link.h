@@ -2,8 +2,8 @@
 //  hud_link.h -- the cable to the phone.
 //
 //  Everything that crosses the USB serial line, in both directions: the frames
-//  the board sends up (hello, compass, car) and the commands it takes back down
-//  (geometry, alignment pattern, compass calibration).
+//  the board sends up (hello, compass, turn rate, car) and the commands it
+//  takes back down (geometry, alignment pattern, compass calibration).
 //
 //  If a message is missing, malformed, or the app and the board disagree about
 //  what a field means, it is this file and PROTOCOL.md.
@@ -32,9 +32,9 @@ static void sendLine(const char* body) {
 }
 
 static void sendHello() {
-  // Protocol 3. The board no longer advertises an IMU capability because there
-  // is no longer any code that could use one; the app already treats $IMU as
-  // optional and simply never sees one.
+  // Protocol 3. $IMU needs no capability flag: the MPU is found at boot or on a
+  // later retry, so a flag here could not be true, and the app takes $IMU
+  // whenever it arrives and does without it otherwise.
   sendLine("HELLO,NAVHUD,3");
 }
 
@@ -86,12 +86,31 @@ static void sendHello() {
 static void sendMag() {
   char body[72];
   snprintf(body, sizeof body, "MAG,%.1f,%u,%u,%.1f,%u,%u",
-           compass.headingDeg,
-           (unsigned)(compass.calibrating() ? 1 : 0),
-           (unsigned)compass.calCount(),
-           compass.fieldUt,
+           heading.deg,
+           (unsigned)(heading.calibrating() ? 1 : 0),
+           (unsigned)heading.calCount(),
+           heading.fieldUt,
            0u,
            (unsigned)(compass.present() ? 1u : 0u));
+  sendLine(body);
+}
+
+/**
+ * $IMU,<yawDeg>,<pitchDeg>,<rollDeg>,<rateDps>
+ *
+ * The app uses field 5 only: how fast the car is turning, degrees per second,
+ * clockwise positive like a bearing, and it adds rate x time-since-the-last-one
+ * onto its heading. So the rate is the AVERAGE over that time, not the latest
+ * sample -- that makes the sum exactly the heading change -- and it is about
+ * the true vertical, so a box mounted at an angle reports the car's turn and
+ * not the chip's. Yaw is the compass heading (0 without one), pitch and roll
+ * are the box's own, for anyone reading the line.
+ */
+static void sendImu(float rateDps) {
+  char body[64];
+  snprintf(body, sizeof body, "IMU,%.1f,%.1f,%.1f,%.2f",
+           isnan(heading.deg) ? 0.0f : heading.deg,
+           heading.pitchDeg(), heading.rollDeg(), rateDps);
   sendLine(body);
 }
 #endif
@@ -330,36 +349,45 @@ static void cmdStatus() {
   diag(b);
   if (compass.present()) {
     snprintf(b, sizeof b, "            heading %.1f deg, field %.1f uT, range +-%u G%s",
-             compass.headingDeg, compass.fieldUt, (unsigned)compass.rangeG,
-             compass.healthy() ? "" : "  <- NOT the Earth's field");
+             heading.deg, heading.fieldUt, (unsigned)compass.rangeG,
+             heading.healthy() ? "" : "  <- NOT the Earth's field");
     diag(b);
-    if (!compass.healthy()) {
+    if (!heading.healthy()) {
       diag("            Earth's field is 25-65 uT. A long way off usually means");
-      diag("            something magnetic is next to the sensor -- but note the");
-      diag("            HEADING is unaffected either way: it is atan2 of two");
-      diag("            components scaled the same, so magnitude cannot move it.");
+      diag("            something magnetic is next to the sensor -- but a wrong");
+      diag("            SCALE cannot move the heading: it is worked out from the");
+      diag("            field's direction, and every axis is scaled the same.");
       snprintf(b, sizeof b, "            The chip reports +-%u G; if that is not what you",
                (unsigned)compass.rangeG);
       diag(b);
       diag("            expect, the range write is not sticking.");
     }
-    snprintf(b, sizeof b, "            offset %+.1f %+.1f %+.1f uT   gain %.2f %.2f %.2f%s",
-             compass.offset[0], compass.offset[1], compass.offset[2],
-             compass.gain[0], compass.gain[1], compass.gain[2],
-             compass.calibrated() ? "" : "  <- never calibrated");
+    snprintf(b, sizeof b, "            offset %+.1f %+.1f %+.1f uT%s",
+             heading.offset[0], heading.offset[1], heading.offset[2],
+             heading.calibrated() ? "" : "  <- never calibrated: type `spin`");
     diag(b);
-    snprintf(b, sizeof b, "            north offset %+.1f deg", compass.northOffsetDeg);
+    snprintf(b, sizeof b, "            north offset %+.1f deg", heading.northOffsetDeg);
     diag(b);
-    if (compass.calibrating()) {
+    if (heading.calibrating()) {
       snprintf(b, sizeof b, "            CALIBRATING: %u samples of %d needed",
-               (unsigned)compass.calCount(), (int)COMPASS_CAL_MIN_SAMPLES);
+               (unsigned)heading.calCount(), (int)COMPASS_CAL_MIN_SAMPLES);
       diag(b);
     }
-    // The honest caveat, stated where somebody will read it.
-    diag("            NOTE there is no accelerometer, so the heading is NOT");
-    diag("            tilt-compensated. Dip here is about 65 deg, which means");
-    diag("            1 deg of tilt becomes 2.1 deg of heading error. Mount the");
-    diag("            sensor flat.");
+  }
+  snprintf(b, sizeof b, "  mpu     : %s", motion.describe());
+  diag(b);
+  if (motion.present()) {
+    snprintf(b, sizeof b, "            WHO_AM_I 0x%02X, pitch %+.1f deg, roll %+.1f deg%s",
+             (unsigned)motion.whoAmI, heading.pitchDeg(), heading.rollDeg(),
+             heading.haveUp ? "" : "  <- no gravity reading yet");
+    diag(b);
+    snprintf(b, sizeof b, "            gyro bias %+.2f %+.2f %+.2f deg/s%s",
+             heading.bias[0], heading.bias[1], heading.bias[2],
+             heading.biasKnown ? "" : "  <- not learned yet: it needs the car parked");
+    diag(b);
+  } else {
+    diag("            Optional. Without it the heading is only right with the");
+    diag("            box level: 1 deg of tilt is about 2 deg of heading here.");
   }
   if (i2cWasStuck) {
     diag("            The I2C bus was being held low at boot and had to be");
@@ -409,38 +437,37 @@ static void cmdSpin(const char* rest) {
     char b[112];
     // Gates first, flag second. The other way round, an early `spin stop`
     // silently ends the session while printing "keep going".
-    if (compass.calFinish()) {
+    if (heading.calFinish()) {
       magQueueSave();
       diag("calibration accepted. Saving at the next standstill.");
       snprintf(b, sizeof b, "  offset %+.1f %+.1f %+.1f uT",
-               compass.offset[0], compass.offset[1], compass.offset[2]);
+               heading.offset[0], heading.offset[1], heading.offset[2]);
       diag(b);
     } else {
       // Two lines rather than one: the single string overran b[128] and the
       // compiler was right to say so -- it was being cut off mid-sentence.
       snprintf(b, sizeof b, "not enough yet: %u samples of %d, and both",
-               (unsigned)compass.calCount(), (int)COMPASS_CAL_MIN_SAMPLES);
+               (unsigned)heading.calCount(), (int)COMPASS_CAL_MIN_SAMPLES);
       diag(b);
       snprintf(b, sizeof b,
-               "horizontal axes must sweep %.0f uT. Keep turning, then `spin stop`.",
+               "horizontal directions must sweep %.0f uT. Keep turning, then `spin stop`.",
                (double)COMPASS_CAL_MIN_SPAN_UT);
       diag(b);
     }
     return;
   }
-  compass.calStart();
-  diag("calibrating. Drive a slow full circle, or turn the board right round,");
-  diag("then type `spin stop`.");
+  heading.calStart();
+  diag("calibrating. Drive a slow full circle, or turn the box right round on");
+  diag("the dash, then type `spin stop`.");
 }
 
 /**
  * north <deg> -- "the car is pointing this way right now".
  *
- * The whole of mounting alignment, by hand, in one command. Without an
- * accelerometer the board cannot discover how it is bolted in, but a single
- * stored offset handles any rotation about the vertical -- which is the only
- * one that matters for a sensor mounted flat. Point the car at something whose
- * bearing you know and type it.
+ * The box's yaw on the dash, by hand, in one command: gravity tells the board
+ * how the box is tilted, but nothing on it can tell which way the car's nose
+ * is. One stored offset handles any rotation about the vertical. Point the car
+ * at something whose bearing you know and type it.
  */
 static void cmdNorth(const char* rest) {
   if (!compass.present()) { diag("no compass on this board."); return; }
@@ -451,10 +478,10 @@ static void cmdNorth(const char* rest) {
   }
   const float want = (float)atof(rest);
   if (want < 0.0f || want >= 360.0f) { diag("0 to 359, please."); return; }
-  if (!compass.setNorth(want)) { diag("no reading from the compass yet."); return; }
+  if (!heading.setNorth(want)) { diag("no reading from the compass yet."); return; }
   char b[80];
   snprintf(b, sizeof b, "north set: offset is now %+.1f deg. Saving at the next standstill.",
-           compass.northOffsetDeg);
+           heading.northOffsetDeg);
   diag(b);
   magQueueSave();
 }
@@ -557,23 +584,23 @@ static bool linkPump(uint32_t now) {
 #ifdef HUD_MAG
     else if (r == HUD_MAG_CAL_ON) {
       lastFrameMs = now;
-      if (compass.present()) { compass.calStart(); sendLine("MAGCAL,1,0"); }
+      if (compass.present()) { heading.calStart(); sendLine("MAGCAL,1,0"); }
       else                     sendLine("MAGCAL,0,0");
     }
     else if (r == HUD_MAG_CAL_OFF) {
       lastFrameMs = now;
       // The result is only kept if the drive actually swept a circle -- see
-      // HudMag::calFinish. A calibration taken while parked would centre the
-      // offset on wherever the car happened to be pointing, which is worse
+      // HudHeading::calFinish. A calibration taken while parked would centre
+      // the offset on wherever the car happened to be pointing, which is worse
       // than none at all because it looks like it worked.
       // calFinish() deliberately leaves the session running when it refuses,
       // so that a typed `spin stop` can say "keep going". This path has no way
       // to say that -- the app has already been told calibration stopped -- so
       // it must actually stop, or calOn_ stays set for the rest of the drive
       // and every later `$MAG` keeps claiming to be calibrating.
-      const bool ok = compass.calFinish();
+      const bool ok = heading.calFinish();
       if (ok) magQueueSave();
-      else    compass.calAbort();
+      else    heading.calAbort();
       char b[24];
       snprintf(b, sizeof b, "MAGCAL,0,%u", (unsigned)(ok ? 1 : 0));
       sendLine(b);

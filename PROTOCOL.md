@@ -79,10 +79,16 @@ will not go away means the calibration is stale or something magnetic has moved
 in beside the sensor.
 
 **`mount` is the field the app acts on**: anything but `1` and it ignores the
-heading and uses the phone's own sensors. Firmware 2.x sends `1` whenever the
-chip answers -- the heading is then the car's, aligned by the `north` offset
-(typed command below), which defaults to "the chip points forwards". Field 5
-(`spreadPct`) is always 0 on 2.x.
+heading and uses the phone's own sensors. Firmware 2.x and 3.x send `1` whenever
+the chip answers -- the heading is then the car's, aligned by the `north` offset
+(typed command below), which defaults to "the box points forwards". Field 5
+(`spreadPct`) is always 0.
+
+Since firmware 3.0 the heading is **tilt-compensated** when an MPU-6050 is
+fitted: it stays right with the box tilted on the dash or the car on a hill.
+Without one it is the flat compass of 2.x, right only with the box level. And
+`fieldUt` is the whole field (about 49 uT in Belgium); after a `spin` the 2.x
+flat compass reported only its horizontal part, about 20.
 
 Absent on firmware that predates the field, which the phone reads as `1` so an
 older board keeps behaving as it did.
@@ -99,7 +105,7 @@ every line that does not start with `$`.
 | `help` | lists these |
 | `status` | everything the board currently knows: link, bus, sensors, calibration |
 | `wipe` | rebuild the screen in four stages, to find where a mark comes from |
-| `spin` | start the compass calibration: drive a slow circle, or turn the board round |
+| `spin` | start the compass calibration: drive a slow circle, or turn the box round on the dash |
 | `spin stop` | finish it: kept if both axes swept far enough, otherwise it says why and keeps going |
 | `north <deg>` | "the car is pointing this way now" (0-359): sets the compass's north offset |
 | `forget` | erase the compass calibration |
@@ -153,10 +159,26 @@ and a phone running older software sends no tail at all. Both combinations work.
 
 A frame claiming more lanes than it carries is rejected rather than read past.
 
-### `$IMU` — no longer sent
+### `$IMU` — turn rate, Arduino → phone (optional, 20 Hz)
 
-Firmware 2.x has no gyroscope and never sends `$IMU`; the app still reads it
-if a board ever does, and otherwise uses the phone's own gyroscope and GPS.
+```
+$IMU,<yawDeg>,<pitchDeg>,<rollDeg>,<rateDps>*<CS>
+```
+
+Sent by firmware 3.0 and later when an MPU-6050 is fitted, once the gyro's
+bias has been learned — two seconds parked, which is normally just after boot.
+Firmware 2.x had no gyroscope and never sent it; the app then uses the phone's
+own gyroscope and GPS.
+
+`rateDps` is the car's turn rate about the true vertical, degrees per second,
+**clockwise positive** like a bearing — about the vertical rather than the
+chip's own Z, so a box mounted at an angle still reports the car's turn. It is
+the average over the interval since the previous `$IMU`, so rate × interval is
+exactly the heading change over it, which is how the app uses it; the lines
+come on a fixed 50 ms schedule from reads every 20-25 ms, so single intervals
+vary a little and average 50 ms. `yawDeg` is the compass heading (0 without a
+compass); `pitchDeg` (nose up positive) and `rollDeg` (right side down
+positive) are the box's own. The app reads only field 5.
 
 ### `$PING` — heartbeat (phone → Arduino, 1 Hz)
 

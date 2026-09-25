@@ -7,8 +7,9 @@
 //  file rather than a thousand-line scroll.
 //
 //  Include order matters and is not negotiable: this has to come after the
-//  data types it instantiates (HudCanvas, CarState, HudCompass) and before
-//  every module that reads them -- the themes read `car` and `tft` directly.
+//  data types it instantiates (HudCanvas, CarState, HudCompass, HudMotion,
+//  HudHeading) and before every module that reads them -- the themes read
+//  `car` and `tft` directly.
 // ---------------------------------------------------------------------------
 #ifndef HUD_STATE_H
 #define HUD_STATE_H
@@ -52,10 +53,11 @@ extern bool      geomRepaint;
 extern uint32_t  geomLastPaintMs;
 extern uint32_t  geomLastMsgMs;
 
-// ---- the compass -----------------------------------------------------------
+// ---- the compass and the MPU ---------------------------------------------
 #ifdef HUD_MAG
-extern HudCompass compass;
-extern uint32_t   lastMagSendMs;
+extern HudCompass compass;       // the QMC5883P
+extern HudMotion  motion;        // the MPU-6050, when one is fitted
+extern HudHeading heading;       // what the two of them say, worked out
 /**
  * A calibration waiting to be written.
  *
@@ -110,7 +112,8 @@ uint32_t  geomLastPaintMs = 0, geomLastMsgMs = 0;
 
 #ifdef HUD_MAG
 HudCompass compass;
-uint32_t   lastMagSendMs = 0;
+HudMotion  motion;
+HudHeading heading;
 bool       magSavePending = false;
 bool       magForgetPending = false;
 #endif

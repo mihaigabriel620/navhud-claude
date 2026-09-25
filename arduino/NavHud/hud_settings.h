@@ -71,22 +71,45 @@ static void loadCompassCal() {
   eepromOpen();
   uint8_t b[HUD_MAG_STORE_BYTES];
   for (int i = 0; i < HUD_MAG_STORE_BYTES; i++) b[i] = EEPROM.read(HUD_MAG_STORE_OFF + i);
-  if (compass.unpack(b)) diag("  compass : calibration restored from flash");
+  if (heading.unpack(b)) diag("  compass : calibration restored from flash");
 }
 
 /** Write it. Shares the sector with the geometry, so this is one erase. */
 static void saveCompassCal() {
   eepromOpen();
   uint8_t b[HUD_MAG_STORE_BYTES];
-  compass.pack(b);
+  heading.pack(b);
   for (int i = 0; i < HUD_MAG_STORE_BYTES; i++) EEPROM.write(HUD_MAG_STORE_OFF + i, b[i]);
   EEPROM.commit();
 }
 
 /** Throw it away, in RAM and in flash. */
 static void forgetCompassCal() {
-  compass.forget();
+  heading.forget();
   saveCompassCal();
+}
+
+/**
+ * The calibration writes that were asked for while moving, done now that the
+ * car is stopped (or there is no bus to ask, which is a desk).
+ *
+ * Done here rather than where they were asked for. EEPROM.commit() erases a
+ * 4 KB sector with interrupts off -- tens of milliseconds, up to 400 by the
+ * datasheet -- and nothing fills the UART buffer in that window, so a $CAM or
+ * $LANE clearing frame arriving during it is lost for good. At a standstill
+ * nobody minds.
+ */
+static void settingsSaveDeferred(bool stopped) {
+  if (!stopped) return;
+  if (magForgetPending) {
+    forgetCompassCal();
+    magForgetPending = false; magSavePending = false;
+    diag("compass calibration erased.");
+  } else if (magSavePending) {
+    saveCompassCal();
+    magSavePending = false;
+    diag("written to flash.");
+  }
 }
 #endif
 

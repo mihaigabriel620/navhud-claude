@@ -17,7 +17,12 @@
   #define HUD_CAN
 #endif
 
-/** The QMC5883 compass. */
+/**
+ * The I2C sensors: the QMC5883P compass, and the MPU-6050 if one is fitted.
+ * Each is found at boot and looked for again while missing, so either may be
+ * absent; without the MPU the compass is a flat one, right only with the box
+ * level. Comment out for a board with nothing on I2C at all.
+ */
 #ifndef HUD_MAG
   #define HUD_MAG
 #endif
@@ -115,7 +120,9 @@
 /**
  * Which chip axis feeds which car axis, and which way round.
  *
- * The car's frame is X FORWARD, Y LEFT, Z UP.
+ * The car's frame is X FORWARD, Y LEFT, Z UP, and BOTH chips must be mapped
+ * into it: the compass here, the MPU below. They are separate boards, so each
+ * needs its own mapping unless they are mounted the same way round.
  *
  * ORDER picks the source: { 0, 1, 2 } means car-X takes chip-X, car-Y takes
  * chip-Y, car-Z takes chip-Z. SIGN flips it.
@@ -127,33 +134,53 @@
  *   #define MAG_AXIS_ORDER 1, 0, 2
  *   #define MAG_AXIS_SIGN  1, -1, 1
  *
- * If you do not want to work it out, leave it at the identity and use the
- * `north` command instead -- point the car at a known bearing, type it once,
- * and the offset is stored. That handles any rotation about the vertical,
- * which is the only one that matters for a board mounted flat.
+ * A box turned on the dash needs no change here: point the car at a known
+ * bearing and type `north <deg>` once, and the offset is stored. That handles
+ * any rotation of the whole box about the vertical. What it cannot fix is the
+ * two chips disagreeing with each other, so with an MPU fitted both mappings
+ * must be right.
  */
 #define MAG_AXIS_ORDER  0, 1, 2
 #define MAG_AXIS_SIGN   1, 1, 1
 
-/** Force a variant if detection ever picks wrong. Normally leave both off. */
+/**
+ * The same for the MPU-6050. Its board has the axes printed on it; the
+ * identity means the X arrow points out of the windscreen and the Y arrow at
+ * the driver's door on a left-hand-drive car. To check: type `status`, lift
+ * the front of the box, and the pitch must go positive; lower the right side
+ * and the roll must.
+ */
+#define MPU_AXIS_ORDER  0, 1, 2
+#define MPU_AXIS_SIGN   1, 1, 1
 
-/** Samples that must move the extremes before a calibration can be saved. */
+/** Samples that must be collected before a calibration can be saved. */
 #define COMPASS_CAL_MIN_SAMPLES   120
 
 /**
- * How far each horizontal axis must sweep, in microtesla.
+ * How far each horizontal direction must sweep, in microtesla.
  *
  * The horizontal field in central Europe is about 20 uT, so a full turn sweeps
- * an axis across roughly 40 uT peak to peak. Requiring 25 means most of a
- * circle and refuses a calibration built from a quarter turn in a car park,
- * which would put the centre of the circle in the wrong place.
+ * it across roughly 40 uT peak to peak. Requiring 25 means most of a circle
+ * and refuses a calibration built from a quarter turn in a car park, which
+ * would put the centre of the circle in the wrong place.
  */
 #define COMPASS_CAL_MIN_SPAN_UT   25.0f
+
+/**
+ * How often each chip is read: 50 Hz. The MPU filters to 10 Hz and the heading
+ * goes up the cable five times a second, so reading faster buys nothing and
+ * costs bus time. One chip per loop pass, so the CAN controller is drained
+ * between the two.
+ */
+#define SENSOR_READ_MS            20
 
 /** How often to send $MAG up the cable. */
 #define MAG_SEND_INTERVAL_MS      200
 
-/** How often to go looking again when no compass answered at boot. */
+/** How often to send $IMU: the turn rate, averaged over the interval. */
+#define IMU_SEND_INTERVAL_MS      50
+
+/** How often to go looking again for a chip that is not answering. */
 #define MAG_RETRY_MS              3000
 
 // ===========================================================================
