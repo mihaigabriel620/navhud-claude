@@ -562,11 +562,17 @@ static void dashStreet_(const HudState& s, bool phoneUp) {
   }
 
   if (cam == dash_.camera && strncmp(line, dash_.street, HUD_STREET_MAX - 1) == 0) return;
+  // A camera countdown changes four times a second ($CAM carries the live
+  // distance). Clearing the band and redrawing blanked the red line each time
+  // -- a 4 Hz flicker on the one warning meant to be read at a glance. While
+  // it stays a camera line it is redrawn in place, padded to the band's width:
+  // a padded smooth font paints its own background, so no digit is left over.
+  const bool inPlace = cam && dash_.camera;
   dash_.camera = cam;
   strncpy(dash_.street, line, HUD_STREET_MAX - 1);
   dash_.street[HUD_STREET_MAX - 1] = '\0';
 
-  tft.fillRect(0, DASH_B3_TOP, SCR_W, DASH_B3_BOT - DASH_B3_TOP, DASH_BG);
+  if (!inPlace) tft.fillRect(0, DASH_B3_TOP, SCR_W, DASH_B3_BOT - DASH_B3_TOP, DASH_BG);
   if (line[0] == '\0') return;
   DASH_FONT(DF_STREET);
   // Top datum acts on the font's box, which reserves room above capitals for
@@ -575,10 +581,11 @@ static void dashStreet_(const HudState& s, bool phoneUp) {
   // panel, is the difference between fitting and being clipped.
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(cam ? DASH_RED : DASH_AMBER, DASH_BG);
-  // The band was cleared just above, so no padding is needed -- and padding
-  // would be wrong here anyway, because the string is a different width every
-  // time and a fixed pad would clip the long ones.
+  // A street name: the band was cleared just above, so no padding is needed.
+  // A camera line in place: padded to the band's right edge.
+  tft.setTextPadding(inPlace ? SCR_W - DASH_ST_X : 0);
   tft.drawString(line, DASH_ST_X, DASH_ST_Y - DASH_ST_CAPTOP, DASH_FN_STREET);
+  tft.setTextPadding(0);
 }
 
 // ---------------------------------------------------------------------------

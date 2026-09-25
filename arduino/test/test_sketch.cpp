@@ -221,6 +221,24 @@ int main() {
     CHECK(cur.limit == 70, "and the next $HUD frame fills it in");
   }
 
+#if !defined(HUD_THEME_E60_CLASSIC)
+  printf("5c. a camera countdown is redrawn in place, not blanked four times a second\n");
+  {
+    Serial.feed(wrap("CAM,1,350,70"));
+    g_millis += 100; pump(1);
+    Serial.feed(wrap("CAM,1,325,70"));
+    g_boxes.clear();
+    g_millis += 250; pump(1);
+    int bandClears = 0;
+    for (const Box& b : g_boxes)
+      if (b.zone == nullptr && b.y0 <= DASH_B3_TOP && b.y1 >= SCR_H - 1 && b.x1 - b.x0 > SCR_W / 2)
+        bandClears++;
+    CHECK(bandClears == 0, "no full-band clear when only the distance changed");
+    Serial.feed(wrap("CAM,0,0,0"));
+    g_millis += 100; pump(1);
+  }
+#endif
+
   printf("6. a corrupt frame is ignored, the last good one stands\n");
   Serial.feed("$HUD,1,2,3,4,5,6,7,8,BAD*00\r\n");
   g_millis += 250;

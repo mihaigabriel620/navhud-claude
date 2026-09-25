@@ -183,6 +183,29 @@ static void pixelChecks() {
     themeRenderCarOnly(kNow, true);
     expectSurvives("battery reading beside PS " + std::to_string(ps), alone, snap());
   }
+  // The camera line counts down four times a second. Redrawn in place it must
+  // come out exactly as drawn from a cleared band -- no digits left over.
+  {
+    HudState a = mk(88, 90, MAN_RIGHT, 0, 900, 600, 5200, FLAG_GPS_OK, "RUE DE LA LOI");
+    a.camKind = CAM_FIXED; a.camDistance = 1350; a.camLimit = 70;
+    HudState b = a; b.camDistance = 25;
+    HudState z = a; z.camKind = CAM_ZONE; z.camDistance = 0;
+    const HudState seq[3] = { a, b, z };
+    std::vector<uint16_t> inPlace[3];
+    tft.fillScreen(DASH_BG); dashForget_();
+    for (int i = 0; i < 3; i++) { dashStreet_(seq[i], true); inPlace[i] = snap(); }
+    for (int i = 0; i < 3; i++) {
+      tft.fillScreen(DASH_BG); dashForget_();
+      dashStreet_(seq[i], true);
+      const std::vector<uint16_t> fresh = snap();
+      int diff = 0;
+      for (size_t k = 0; k < fresh.size(); k++) if (fresh[k] != inPlace[i][k]) diff++;
+      if (diff) { printf("  FAIL camera line %ld m redrawn in place: %d px differ\n",
+                         (long)seq[i].camDistance, diff); g_failed++; }
+      else printf("  ok   camera line %ld m redrawn in place matches a fresh draw\n",
+                  (long)seq[i].camDistance);
+    }
+  }
   // A battery reading that goes stale must leave the glass: the blank is a
   // padded space, and TFT_eSPI fills padding only when the text colour differs
   // from the background.
