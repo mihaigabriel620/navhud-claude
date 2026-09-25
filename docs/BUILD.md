@@ -84,9 +84,9 @@ copy to read with a soldering iron in your hand. In short, on a D1 mini:
    -------                   -------
    D5  GPIO14 ------------>  SCK   of the display AND the MCP2515 (shared SPI)
    D7  GPIO13 ------------>  MOSI  of both
-   D6  GPIO12 <-----------   the MCP2515's data out -- and NOTHING else: the
-                             display's SDO stays unconnected (hud_pins.h says
-                             which header pin, these modules label it oddly)
+   D6  GPIO12 <-----------   the MCP2515 header pin marked SO (the chip's data
+                             out) -- and NOTHING else: the display's SDO stays
+                             unconnected. D7 goes to the pin marked SI.
    D2  GPIO4  ------------>  display CS
    D1  GPIO5  ------------>  display DC (RS)
    RST        ------------>  display RESET (the board's own reset pin)

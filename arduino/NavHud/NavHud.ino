@@ -69,7 +69,6 @@
 //    MCP2515 SCK    -> D5, shared with the display
 //    MCP2515 header pin marked SI -> D7   (MOSI)
 //    MCP2515 header pin marked SO -> D6   (MISO) and NOTHING ELSE on this pin
-//                      -- these modules label the header from the HOST's side
 //    MCP2515 CS     -> D8  GPIO15
 //    MCP2515 VDD    -> 3V3     TJA1050 VCC -> 5V (they are separate rails)
 //

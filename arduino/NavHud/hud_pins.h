@@ -87,13 +87,13 @@
 // cross-checked against the core's values below instead.
 #define HUD_SPI_SCK        14    // D5
 #define HUD_SPI_MOSI       13    // D7
-#define HUD_SPI_MISO       12    // D6   -- goes to the MCP2515 MODULE header pin
-                                 //         printed "SI". That looks backwards and
-                                 //         is not: these modules label the header
-                                 //         from the HOST's side, so the pin marked
-                                 //         SI carries the chip's SO. Proved by the
-                                 //         loopback running. Nothing else may sit
-                                 //         on this line -- see the warning below.
+#define HUD_SPI_MISO       12    // D6   -- goes to the MCP2515 module's header
+                                 //         pin printed "SO", the chip's serial
+                                 //         out (and D7, MOSI, to "SI"): the
+                                 //         plain reading of the labels, and how
+                                 //         the owner's board is wired. Nothing
+                                 //         else may sit on this line -- see the
+                                 //         warning below.
 
 #define PIN_TFT_CS          4    // D2
 #define PIN_TFT_DC          5    // D1
