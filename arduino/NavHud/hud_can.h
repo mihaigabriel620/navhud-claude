@@ -236,6 +236,7 @@ static uint32_t canFrameCount() { return canFrameCount_; }
  * only hand the library a frame it can survive.
  */
 #define CAN_CMD_READ_STATUS 0xA0
+#define CAN_REG_CANSTAT     0x0E
 #define CAN_REG_RXB0DLC     0x65
 #define CAN_REG_RXB1DLC     0x75
 #define CAN_REG_CANINTF     0x2C
@@ -265,6 +266,7 @@ static void canDiscard_(uint8_t buf) {
 }
 
 static uint32_t canBadDlc_ = 0;
+static uint32_t canModeFixes_ = 0;
 static uint32_t canLastPumpMs_ = 0;
 static bool     canHavePumped_ = false;
 
@@ -297,6 +299,21 @@ static uint8_t canPump(CarT& car, uint32_t now) {
     // Left alone this is an infinite supply of 15-byte frames.
     canOk = false;
     canFault = CANFAULT_MISO_HIGH;
+    return 0;
+  }
+
+  // LISTEN-ONLY, checked on every call -- one register read -- and put back
+  // the moment it is not. It is the mode in which the chip cannot put a single
+  // bit on the car's bus, not even an acknowledge, and two things could leave
+  // it: the chip shares its SPI bus with the display, so a glitch on its chip
+  // select could clock display bytes in as a write to CANCTRL; and a module
+  // that browns out comes back in configuration mode with its bit timing and
+  // filters gone. canBegin() is a full bring-up that ends in listen-only (or
+  // fails, leaving the chip in loopback or configuration mode, which cannot
+  // transmit either); it blocks about 15 ms, and only ever on a fault.
+  if ((canRawRead_(CAN_REG_CANSTAT) & 0xE0) != MCP_LISTENONLY) {
+    canModeFixes_++;
+    canOk = canBegin();
     return 0;
   }
 
@@ -334,6 +351,9 @@ static uint8_t canPump(CarT& car, uint32_t now) {
 
 /** Frames refused for an impossible length. Should be 0 for ever. */
 static uint32_t canBadDlc() { return canBadDlc_; }
+
+/** Times the chip was found out of listen-only and put back. Should be 0 for ever. */
+static uint32_t canModeFixes() { return canModeFixes_; }
 
 #endif  // HUD_CAN
 #endif  // HUD_CAN_H

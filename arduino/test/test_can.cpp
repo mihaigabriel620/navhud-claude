@@ -206,6 +206,44 @@ static void testSpeedAfterRepaint() {
   printf("  worst error after the repaint: %.1f km/h\n", worst);
 }
 
+/**
+ * Listen-only, and kept there.
+ *
+ * The chip shares its SPI bus with the display, so a glitch on its chip select
+ * could clock display bytes in as commands -- a write to CANCTRL can leave it
+ * in normal mode, acknowledging frames on the car's K-CAN. And a module that
+ * browns out comes back in configuration mode with its bit timing gone.
+ * canPump() checks the mode on every call and puts it back.
+ */
+static void testStaysListenOnly() {
+  printf("listen-only, and kept there\n");
+  SPI.reset(); canOk = canBegin();
+  CarState c;
+  canPump(c, 1000);
+  const uint32_t fixes = canModeFixes();
+
+  // Something writes NORMAL into CANCTRL behind our back.
+  SPI.reg[0x0F] = 0x00; SPI.reg[0x0E] = 0x00;
+  canPump(c, 1030);
+  CHECK((SPI.reg[0x0E] & 0xE0) == MCP_LISTENONLY,
+        "a chip found in normal mode is back in listen-only on the next drain (CANSTAT 0x%02X)",
+        SPI.reg[0x0E]);
+  CHECK(canModeFixes() == fixes + 1, "and it is counted for `status`");
+  CHECK(canOk, "and the bus is still in use");
+
+  // The module browns out: configuration mode, bit timing and filters gone.
+  memset(SPI.reg, 0, sizeof SPI.reg);
+  SPI.reg[0x0F] = 0x80; SPI.reg[0x0E] = 0x80;
+  canPump(c, 1060);
+  CHECK((SPI.reg[0x0E] & 0xE0) == MCP_LISTENONLY, "a reset chip is brought back up in listen-only");
+  CHECK((SPI.reg[0x60] & 0x60) == 0x60 && (SPI.reg[0x70] & 0x60) == 0x60, "with its filters open again");
+  uint8_t d[8] = {0};
+  d[0] = 0x45;
+  SPI.deliver(false, CAR_ID_IGNITION, d, 1);
+  canPump(c, 1090);
+  CHECK(c.ignitionOn, "and frames flow again");
+}
+
 static void testIgnition() {
   printf("0x130 ignition\n");
   CarState c;
@@ -386,11 +424,17 @@ int main() {
   testBringUp();
   testPump();
   testSpeedAfterRepaint();
+  testStaysListenOnly();
   testIgnition();
   testSpeed();
   testRpmTorqueVolts();
   testStaleness();
   testUnknownIds();
+  // Over every test above: not one command that could transmit, and no
+  // request for the one mode that acknowledges frames.
+  printf("nothing sent on the car's bus\n");
+  CHECK(SPI.txCommands == 0, "%d transmit command(s) were clocked into the MCP2515", SPI.txCommands);
+  CHECK(SPI.normalModeRequests == 0, "normal mode was requested %d time(s)", SPI.normalModeRequests);
   if (fails) { printf("\n%d CHECK(s) failed\n", fails); return 1; }
   printf("\nall CAN and E60 decode checks passed\n");
   return 0;

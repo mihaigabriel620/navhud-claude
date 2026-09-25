@@ -263,6 +263,12 @@ static void cmdStatus() {
       }
       snprintf(b, sizeof b, "            speed scale CAR_SPEED_K = %.4f", (double)CAR_SPEED_K);
       diag(b);
+      if (canModeFixes()) {
+        snprintf(b, sizeof b, "            found out of listen-only %lu time(s) and put back --",
+                 (unsigned long)canModeFixes());
+        diag(b);
+        diag("            a glitch on the shared SPI bus, or the module browning out.");
+      }
       if (canBadDlc()) {
         snprintf(b, sizeof b, "            %lu frames REFUSED for an impossible length --",
                  (unsigned long)canBadDlc());

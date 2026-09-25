@@ -43,6 +43,7 @@ class SPIClass {
     reg[0x0F] = 0x80; reg[0x0E] = 0x80;      // CANCTRL/CANSTAT: config after POR
     clock = 0; transactions = open = maxOpen = resets = 0; filtered = 0;
     overflowed = 0; stuck = -1; stuckAfter = -1; stuckValue = 0xFF;
+    // txCommands and normalModeRequests are NOT reset: they cover a whole run.
     deadReads = 0; runaway = false;
     step_ = 0; cmd_ = 0;
   }
@@ -112,6 +113,15 @@ class SPIClass {
   /** Frames lost because their buffer was still full. */
   int overflowed = 0;
 
+  // ---- the listen-only guarantee --------------------------------------------
+  // Anything that could put a bit on the car's bus, counted as it is clocked
+  // in: REQUEST-TO-SEND (0x81..0x87), LOAD TX BUFFER (0x40..0x45), a TXREQ bit
+  // set in TXBnCTRL (0x30/0x40/0x50), and a mode request for NORMAL (000) --
+  // the one mode in which the chip acknowledges frames and sends error flags.
+  // Loopback (010) is internal and listen-only (011) cannot transmit at all.
+  int txCommands = 0;
+  int normalModeRequests = 0;
+
   /**
    * A dead module: every byte clocked in reads as this, whatever was asked.
    * 0xFF is MISO floating high (no power, CS not arriving); 0x00 is MISO held
@@ -144,6 +154,7 @@ class SPIClass {
     uint8_t r = 0x00;
     if (step_ == 0) {
       cmd_ = b;
+      if ((cmd_ >= 0x81 && cmd_ <= 0x87) || (cmd_ >= 0x40 && cmd_ <= 0x45)) txCommands++;
       if (cmd_ == 0xC0) {                     // RESET
         resets++;
         memset(reg, 0, sizeof reg);
@@ -179,6 +190,8 @@ class SPIClass {
 
  private:
   void writeReg_(uint8_t a, uint8_t v) {
+    if ((a == 0x30 || a == 0x40 || a == 0x50) && (v & 0x08)) txCommands++;     // TXREQ
+    if (a == 0x0F && (v & 0xE0) == 0x00) normalModeRequests++;
     reg[a] = v;
     // The real chip mirrors the requested mode into CANSTAT once it takes.
     if (a == 0x0F) reg[0x0E] = (uint8_t)((reg[0x0E] & 0x1F) | (v & 0xE0));

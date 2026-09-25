@@ -706,6 +706,12 @@ int main() {
     printf("    screen now %u\n", (unsigned)screenNow);
   }
 
+#ifdef HUD_CAN
+  printf("20. nothing was ever sent on the car's bus\n");
+  CHECK(SPI.txCommands == 0, "no transmit command reached the MCP2515");
+  CHECK(SPI.normalModeRequests == 0, "and it was never asked for normal mode");
+#endif
+
   printf(failures ? "\n%d CHECK(s) FAILED\n" : "\nall checks passed\n", failures);
   return failures ? 1 : 0;
 }
