@@ -246,7 +246,9 @@ class RegressionCheckTest {
             roundabout(""","degrees":90,"driving_side":"left"""", side = "left"))
         assertEquals("side from the step when the banner has none", -90,
             roundabout(""","degrees":90""", side = "left"))
-        assertEquals("no degrees: the bearings, as before", 60, roundabout(""))
+        // Not bearing_after - bearing_before (60 here): that is the veer into
+        // the circle. No degrees and no intersections: no angle, the table.
+        assertNull("no degrees, no intersections: no angle", roundabout(""))
     }
 
     // ---- W5: an accurate fix in a car park is not on the street ------------
