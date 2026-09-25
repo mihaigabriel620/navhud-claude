@@ -42,7 +42,8 @@ class SPIClass {
     memset(reg, 0, sizeof reg);
     reg[0x0F] = 0x80; reg[0x0E] = 0x80;      // CANCTRL/CANSTAT: config after POR
     clock = 0; transactions = open = maxOpen = resets = 0; filtered = 0;
-    overflowed = 0; stuck = -1;
+    overflowed = 0; stuck = -1; stuckAfter = -1; stuckValue = 0xFF;
+    deadReads = 0; runaway = false;
     step_ = 0; cmd_ = 0;
   }
 
@@ -118,8 +119,28 @@ class SPIClass {
    */
   int stuck = -1;
 
+  /**
+   * The module dies part-way: MISO sticks at `stuckValue` from this
+   * transaction number on. -1 = never.
+   */
+  int stuckAfter = -1;
+  int stuckValue = 0xFF;
+
+  /**
+   * A drain that never ends cannot be tested by waiting for it. After this
+   * many bytes read from a dead module the simulator gives up being dead, so
+   * the loop can finish and the test can report the runaway instead of hanging.
+   */
+  long deadReads = 0;
+  bool runaway = false;
+
   uint8_t transfer(uint8_t b) {
-    if (stuck >= 0) { step_++; return (uint8_t)stuck; }
+    if (stuckAfter >= 0 && transactions >= stuckAfter) { stuck = stuckValue; stuckAfter = -1; }
+    if (stuck >= 0) {
+      step_++;
+      if (++deadReads > 100000) { runaway = true; stuck = -1; reg[0x2C] = 0; }
+      return (uint8_t)(stuck >= 0 ? stuck : 0);
+    }
     uint8_t r = 0x00;
     if (step_ == 0) {
       cmd_ = b;

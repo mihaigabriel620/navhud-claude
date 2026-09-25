@@ -126,6 +126,24 @@ static void testPump() {
   canPump(c, t + 150 + CAN_STALE_GAP_MS + 100);
   CHECK(!c.haveLast && c.histN == 0, "a long gap between drains drops the speed baseline");
 
+  // The module dies DURING a drain: the status read at the top of canPump()
+  // was fine, then MISO floats high. Every READ STATUS now says a frame is
+  // waiting and every length reads 15, so a drain that does not count the
+  // frames it throws away never ends -- and the ESP8266's watchdog resets the
+  // board three seconds later.
+  {
+    CarState c2;
+    canPump(c2, t + 200);
+    SPI.deliver(false, CAR_ID_RPM, d, 8);
+    SPI.stuckAfter = SPI.transactions + 2;   // canPump's own status read is still good
+    const uint8_t n = canPump(c2, t + 230);
+    CHECK(!SPI.runaway, "a module dying mid-drain must not spin the drain loop for ever");
+    CHECK(n <= CAN_DRAIN_MAX, "at most CAN_DRAIN_MAX frames per call, got %u", (unsigned)n);
+    CHECK(canPump(c2, t + 260) == 0 && !canOk, "and the next call sees the dead module and stops");
+    SPI.stuck = -1; SPI.deadReads = 0;
+    canOk = true;
+  }
+
   // The module dies mid-drive: MISO floats high and every status reads 0xFF.
   SPI.stuck = 0xFF;
   CHECK(canPump(c, t + 400) == 0, "nothing is read from a dead controller");

@@ -294,8 +294,13 @@ static uint8_t canPump(CarT& car, uint32_t now) {
     return 0;
   }
 
+  // Bounded by buffers HANDLED, not frames delivered. A refused length used to
+  // `continue` without counting, so a module that lost power part-way through
+  // this loop -- every status then reads 0xFF: "a frame is waiting", length 15
+  // -- kept it discarding for ever, and the watchdog reset the board. The dead
+  // module is caught by the status check above on the next call.
   uint8_t got = 0;
-  while (got < CAN_DRAIN_MAX && canDev.checkReceive() == CAN_MSGAVAIL) {
+  for (uint8_t n = 0; n < CAN_DRAIN_MAX && canDev.checkReceive() == CAN_MSGAVAIL; n++) {
     const uint8_t intf = canRawRead_(CAN_REG_CANINTF);
     const uint8_t which = (intf & 0x01) ? 0 : ((intf & 0x02) ? 1 : 0xFF);
     if (which == 0xFF) break;                    // the flag cleared under us
