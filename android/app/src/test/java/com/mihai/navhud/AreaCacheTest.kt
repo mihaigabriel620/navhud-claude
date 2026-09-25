@@ -49,8 +49,11 @@ class AreaCacheTest {
 
     @Before fun setUp() {
         AreaCache.dir = tmp.newFolder("area")
-        AreaRoads.fairUse = AreaRoads.FairUse(minGapMs = 0L)
+        AreaRoads.fairUse = gates()
     }
+
+    /** A gate per server that lets every request straight through. */
+    private fun gates() = AreaRoads.SERVERS.map { AreaRoads.FairUse(minGapMs = 0L) }
 
     /** The cache is global state; leaving it set would poison every later test. */
     @After fun tearDown() {
@@ -269,7 +272,7 @@ class AreaCacheTest {
         var calls = 0
         AreaRoads.transport = { _, _ -> calls++; throw java.net.UnknownHostException("offline") }
         val a = AreaRoads.fetch(LAT, 4.306, RADIUS_M, 0L)
-        assertEquals(1, calls)
+        assertEquals("both servers asked", AreaRoads.SERVERS.size, calls)
         assertTrue(a.fromCache)
         assertEquals("the window's own centre, not the one asked for", LON, a.centreLon, 1e-5)
     }
@@ -326,14 +329,130 @@ class AreaCacheTest {
         AreaCache.put(LAT, LON, RADIUS_M, BODY)
         age(onlyFile(), 30L * 24 * 3600 * 1000)
         var calls = 0
-        AreaRoads.fairUse = AreaRoads.FairUse(minGapMs = 0L)
         AreaRoads.transport = { _, _ -> calls++; throw AreaRoads.HttpStatus(429, "slow down") }
         AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        assertEquals("each server asked once", AreaRoads.SERVERS.size, calls)
         AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
-        assertEquals("the second never went out", 1, calls)
+        assertEquals("the second never went out", AreaRoads.SERVERS.size, calls)
         try { AreaRoads.prefetch(50.0, 4.0, RADIUS_M); fail() }
         catch (e: AreaRoads.OverpassBusy) { }
-        assertEquals(1, calls)
+        assertEquals(AreaRoads.SERVERS.size, calls)
+    }
+
+    // ---- straight away, while the network is asked ---------------------------
+
+    /**
+     * Opening the app on a road driven every day showed no speed limit until
+     * Overpass answered -- half a minute or more with a busy server -- because
+     * an old window was only used after the network had failed. This is what
+     * the service shows in the meantime.
+     */
+    @Test fun `the disk answers for where the car is, at any age, with no network`() {
+        AreaCache.put(LAT, LON, RADIUS_M, BODY)
+        age(onlyFile(), 30L * 24 * 3600 * 1000)          // a month: not "fresh"
+        AreaRoads.transport = { _, _ -> fail("must not go to the network"); "" }
+        val a = AreaRoads.cachedAt(LAT, 4.306, 0L)!!
+        assertTrue(a.fromCache)
+        assertEquals("labelled with its own circle", LON, a.centreLon, 1e-5)
+        assertTrue(AreaRoads.contains(a, LAT, 4.306))
+        // 2.1 km away is outside it: nothing, rather than the wrong roads.
+        assertNull(AreaRoads.cachedAt(LAT, 4.33, 0L))
+    }
+
+    @Test fun `a window cut short is dropped, not shown`() {
+        AreaCache.put(LAT, LON, RADIUS_M, """{"elements":[{"type":"way",""")
+        assertNull(AreaRoads.cachedAt(LAT, LON, 0L))
+        assertEquals("forgotten", 0, AreaCache.fileCount())
+    }
+
+    @Test fun `an area holds the car only with room to spare`() {
+        AreaCache.put(LAT, LON, RADIUS_M, BODY)
+        val a = AreaRoads.cachedAt(LAT, LON, 0L)!!
+        assertFalse(AreaRoads.contains(null, LAT, LON))
+        assertTrue(AreaRoads.contains(a, LAT, LON))
+        // 1.9 km east of the centre of a 2 km window: inside, but not by 200 m.
+        val edge = Geo.destination(LAT, LON, 90.0, 1_900.0)
+        assertFalse(AreaRoads.contains(a, edge[0], edge[1]))
+        val inside = Geo.destination(LAT, LON, 90.0, 1_700.0)
+        assertTrue(AreaRoads.contains(a, inside[0], inside[1]))
+    }
+
+    // ---- a second server -------------------------------------------------------
+
+    /** Counts requests per server; [answer] decides what each one gets. */
+    private class Servers(val answer: (server: Int) -> String) {
+        val calls = IntArray(AreaRoads.SERVERS.size)
+        val transport: (String, String) -> String = { url, _ ->
+            val i = AreaRoads.SERVERS.indexOf(url)
+            assertTrue("an unknown server: $url", i >= 0)
+            calls[i]++
+            answer(i)
+        }
+    }
+
+    /**
+     * The reason there is a second server. A 429 from the main one used to
+     * mean no road data at all -- no speed limit in free drive -- for the
+     * whole back-off, 30 s doubling up to 10 minutes.
+     */
+    @Test fun `a busy main server hands the request to the second`() {
+        val s = Servers { if (it == 0) throw AreaRoads.HttpStatus(429, "slow down") else BODY }
+        AreaRoads.transport = s.transport
+        val a = AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        assertFalse("fresh data, not the disk", a.fromCache)
+        assertEquals(listOf(1, 1), s.calls.toList())
+        assertEquals("and it is cached like any answer", BODY, body(LAT, LON, RADIUS_M))
+        // While the main one backs off, the next request goes straight on.
+        AreaRoads.fetch(51.20, 4.40, RADIUS_M, 0L)
+        assertEquals(listOf(1, 2), s.calls.toList())
+    }
+
+    @Test fun `a remark instead of data from one server is not the end`() {
+        val s = Servers { if (it == 0) """{"remark":"runtime error: timeout"}""" else BODY }
+        AreaRoads.transport = s.transport
+        val a = AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        assertFalse(a.fromCache)
+        assertEquals(listOf(1, 1), s.calls.toList())
+        assertEquals(BODY, body(LAT, LON, RADIUS_M))
+    }
+
+    /**
+     * A server that times out costs up to 40 s a request, so once the other
+     * one has shown the signal is fine it is left alone for a while.
+     */
+    @Test fun `a server that does not answer is skipped while the other one does`() {
+        val s = Servers { if (it == 0) throw java.net.SocketTimeoutException("no answer") else BODY }
+        AreaRoads.transport = s.transport
+        AreaRoads.fetch(LAT, LON, RADIUS_M, 0L)
+        AreaRoads.fetch(51.20, 4.40, RADIUS_M, 0L)
+        assertEquals("the silent one was not asked again", listOf(1, 2), s.calls.toList())
+    }
+
+    /** With no signal every server fails the same way: none of them is to blame. */
+    @Test fun `with no signal no server is benched`() {
+        val s = Servers { throw java.net.UnknownHostException("offline") }
+        AreaRoads.transport = s.transport
+        repeat(2) {
+            try { AreaRoads.fetch(LAT, LON, RADIUS_M, 0L); fail("nothing on disk") }
+            catch (e: java.io.IOException) { }
+        }
+        assertEquals("both asked both times", listOf(2, 2), s.calls.toList())
+    }
+
+    @Test fun `a server benched for not answering is asked again after the pause`() {
+        val g = AreaRoads.FairUse(minGapMs = 0L, unreachableMs = 300_000L)
+        g.unreachable(1_000L)
+        assertEquals(-1L, g.waitMs(300_999L))
+        assertEquals(0L, g.waitMs(301_000L))
+        // A flat pause: a second one does not double it.
+        g.unreachable(301_000L)
+        assertEquals(0L, g.waitMs(601_000L))
+        // And it never shortens a longer back-off already running: five 429s
+        // make 30 + 60 + 120 + 240 + 480 s, the last one 8 minutes.
+        repeat(5) { g.answered(429, 700_000L) }
+        g.unreachable(700_000L)
+        assertEquals(-1L, g.waitMs(700_000L + 400_000L))
+        assertEquals(0L, g.waitMs(700_000L + 480_000L))
     }
 
     // ---- rolling along a route ------------------------------------------------

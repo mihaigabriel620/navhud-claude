@@ -294,7 +294,23 @@ class Area(
  */
 object AreaRoads {
 
-    private const val OVERPASS = "https://overpass-api.de/api/interpreter"
+    /**
+     * The public Overpass instances, asked in this order.
+     *
+     * overpass-api.de is the main one. When it refuses (429 / 504), answers
+     * with a remark instead of data, or does not answer at all, the same
+     * request goes on to overpass.private.coffee: an Austrian non-profit's
+     * instance, the whole planet, no hard rate limit, the same etiquette
+     * asked. With only the main one, free drive had no speed limit at all
+     * while it was busy -- the back-off after a 429 runs from 30 s to 10
+     * minutes -- and a route did not notice, because a route's limits come
+     * from Mapbox. Not overpass.kumi.systems (timing out through 2026), nor
+     * maps.mail.ru (it would be sent the car's position, in Russia).
+     */
+    internal val SERVERS = listOf(
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter"
+    )
 
     /** Bounds on the fetch radius, metres. */
     const val MIN_RADIUS_M = 1200.0
@@ -454,6 +470,27 @@ object AreaRoads {
     }
 
     /**
+     * What the disk has for where the car is, at any age, without the
+     * network: the window the car is inside with the most room around it.
+     *
+     * Shown while a fetch is in the air. [fetch] only falls back to an old
+     * window once the network has failed, which with a slow server is half a
+     * minute or more -- all of it with no speed limit on the glass, even on
+     * a road driven every day.
+     */
+    fun cachedAt(lat: Double, lon: Double, nowMs: Long,
+                 wallMs: Long = System.currentTimeMillis()): Area? {
+        val h = AreaCache.nearest(lat, lon, Long.MAX_VALUE, wallMs) ?: return null
+        return runCatching { build(h.lat, h.lon, h.radiusM, h.body, nowMs, fromCache = true) }
+            .getOrElse { AreaCache.forget(h); null }
+    }
+
+    /** True when [area] has the car in it with at least [marginM] to spare. */
+    fun contains(area: Area?, lat: Double, lon: Double, marginM: Double = 200.0): Boolean =
+        area != null &&
+            Geo.haversine(area.centreLat, area.centreLon, lat, lon) <= area.radiusM - marginM
+
+    /**
      * Download a window into the cache without parsing it: the route prefetch.
      * Throws on any failure, [OverpassBusy] included.
      */
@@ -461,28 +498,49 @@ object AreaRoads {
         download(lat, lon, radiusM)
     }
 
+    /**
+     * Each [SERVERS] in turn until one answers with data. A server that is
+     * backing off is not asked at all. Throws the last failure, or
+     * [OverpassBusy] when every server was backing off.
+     */
     private fun download(lat: Double, lon: Double, radiusM: Double): String {
-        val gate = fairUse
-        val wait = gate.waitMs(monoMs())
-        if (wait < 0) throw OverpassBusy("Overpass asked us to back off")
-        // Only the aux thread gets here, so this sleep delays nothing urgent.
-        if (wait > 0) Thread.sleep(wait)
-        gate.sent(monoMs())
-        val body = try {
-            transport(OVERPASS,
-                "data=" + java.net.URLEncoder.encode(buildQuery(lat, lon, radiusM.toInt()), "UTF-8"))
-        } catch (e: HttpStatus) {
-            gate.answered(e.code, monoMs())
-            throw e
+        val query = "data=" + java.net.URLEncoder.encode(buildQuery(lat, lon, radiusM.toInt()), "UTF-8")
+        val gates = fairUse
+        var failure: java.io.IOException? = null
+        // Servers that did not answer at all. Only held against them if another
+        // one answered: with no signal, every server fails the same way.
+        val silent = ArrayList<FairUse>()
+        for ((i, url) in SERVERS.withIndex()) {
+            val gate = gates[i]
+            val wait = gate.waitMs(monoMs())
+            if (wait < 0) continue
+            // Only the aux thread gets here, so this sleep delays nothing urgent.
+            if (wait > 0) Thread.sleep(wait)
+            gate.sent(monoMs())
+            val body = try {
+                transport(url, query)
+            } catch (e: HttpStatus) {
+                gate.answered(e.code, monoMs())
+                failure = e
+                continue
+            } catch (e: java.io.IOException) {
+                silent += gate
+                failure = e
+                continue
+            }
+            gate.answered(200, monoMs())
+            // Overpass answers some failures with 200 and a remark instead of
+            // elements; caching that would serve an empty map for a week. The
+            // next server may well have the data.
+            if (!body.trimStart().startsWith("{") || !body.contains("\"elements\"")) {
+                failure = java.io.IOException("Overpass returned no data: ${body.take(120)}")
+                continue
+            }
+            silent.forEach { it.unreachable(monoMs()) }
+            AreaCache.put(lat, lon, radiusM, body)
+            return body
         }
-        gate.answered(200, monoMs())
-        // Overpass answers some failures with 200 and a remark instead of
-        // elements; caching that would serve an empty map for a week.
-        if (!body.trimStart().startsWith("{") || !body.contains("\"elements\"")) {
-            throw java.io.IOException("Overpass returned no data: ${body.take(120)}")
-        }
-        AreaCache.put(lat, lon, radiusM, body)
-        return body
+        throw failure ?: OverpassBusy("every Overpass server asked us to back off")
     }
 
     // ---- fair use -------------------------------------------------------------
@@ -495,14 +553,16 @@ object AreaRoads {
      * ~1 GB a day, and 429 / 504 mean "too many" / "too busy" -- back off.
      * https://dev.overpass-api.de/overpass-doc/en/preface/commons.html
      *
-     * Every request here goes through one of these: a gap of [minGapMs]
-     * between requests, and after a 429 or 504 nothing at all for a back-off
-     * that doubles up to [maxBackoffMs] and resets on the next success.
+     * Every server has one of these, since each instance keeps its own
+     * limits: a gap of [minGapMs] between requests, and after a 429 or 504
+     * nothing at all for a back-off that doubles up to [maxBackoffMs] and
+     * resets on the next success.
      */
     class FairUse(
         val minGapMs: Long = 3_000L,
         val baseBackoffMs: Long = 30_000L,
-        val maxBackoffMs: Long = 600_000L
+        val maxBackoffMs: Long = 600_000L,
+        val unreachableMs: Long = 300_000L
     ) {
         private var lastSentMs = Long.MIN_VALUE / 2
         private var backoffMs = 0L
@@ -525,10 +585,23 @@ object AreaRoads {
                 in 200..299 -> backoffMs = 0L
             }
         }
+
+        /**
+         * No answer at all, while another server did answer: this one is down
+         * or swamped, not our signal. Skipped for [unreachableMs] rather than
+         * waited out -- its timeouts cost up to 40 s on every request. A flat
+         * pause, not the doubling one: it has not asked us to go away.
+         */
+        @Synchronized fun unreachable(nowMs: Long) {
+            busyUntilMs = maxOf(busyUntilMs, nowMs + unreachableMs)
+        }
     }
 
-    /** Swappable for tests, which cannot wait three seconds a request. */
-    @Volatile internal var fairUse = FairUse()
+    /**
+     * One gate per [SERVERS] entry, in the same order. Swappable for tests,
+     * which cannot wait three seconds a request.
+     */
+    @Volatile internal var fairUse: List<FairUse> = SERVERS.map { FairUse() }
 
     /** A non-2xx answer, with its status, so 429 and 504 can be told apart. */
     class HttpStatus(val code: Int, msg: String) : java.io.IOException(msg)

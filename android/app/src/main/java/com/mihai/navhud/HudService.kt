@@ -567,10 +567,14 @@ class HudService : Service(), LocationListener {
          * So quitting is not the same as backgrounding. Press home and the
          * route, the voice and the guidance all carry on, because the screen
          * going dark on a motorway is not a reason to stop navigating. Swipe
-         * the app away and it is: the route goes, the voice goes, and what is
-         * left is the thing that is useful with no phone in your hand — the
-         * limit for the road you are on, your speed against it, and a camera
-         * warning when one comes up.
+         * the app away and it is: the route goes, and what is left is the
+         * thing that is useful with no phone in your hand — the limit for the
+         * road you are on, your speed against it, and a camera warning when
+         * one comes up.
+         *
+         * App 1.33: "if possible receive warning when I go over". The voice no
+         * longer goes silent with the app: it keeps the over-limit warning and
+         * the camera warnings, and says nothing else (VoiceGuide.warningsOnly).
          */
         @Volatile var quietMode: Boolean = false
             private set
@@ -588,6 +592,7 @@ class HudService : Service(), LocationListener {
             quietMode = false
             self?.let { s ->
                 s.voice?.enabled = voiceEnabled
+                s.voice?.warningsOnly = false
                 runCatching { s.notifier.notify(NOTIF_ID, s.buildNotification()) }
             }
         }
@@ -1123,13 +1128,15 @@ class HudService : Service(), LocationListener {
         if (!running) return
         if (tracker == null && quietMode) return       // already quiet
         quietMode = true
-        // No destination to speak of any more, and nothing to speak it with.
+        // No destination any more, and nothing left to say but warnings: over
+        // the limit, and cameras (VoiceGuide.warningsOnly). Whatever was being
+        // said -- a turn -- is cut off.
         handler.post {
             clearRoute()
-            voice?.enabled = false
+            voice?.warningsOnly = true
             voice?.stopNow()
         }
-        setStatus("app closed: HUD keeps the limit and camera warnings")
+        setStatus("app closed: HUD keeps the limit and cameras; voice warns only")
         runCatching { notifier.notify(NOTIF_ID, buildNotification()) }
     }
 
@@ -1658,7 +1665,6 @@ class HudService : Service(), LocationListener {
         watcher = null
         watcherCameras = emptyList()
         cameraOnRoute.clear()
-        areaRoadCount = 0
         snapTrusted = false
         roadBearing = null
         roadPts = null
@@ -1670,9 +1676,14 @@ class HudService : Service(), LocationListener {
         departure = null
         alongFixAtMs = 0L
         free.resetAnnouncements()
-        // Force a fresh area fetch: the route's camera list is not the same as
-        // the one free drive wants, which is everything around us.
-        freeArea = null
+        // Keep the road data the route was using. It is a whole window round
+        // the car -- every road and camera in it, the same query free drive
+        // makes -- so the speed limit carries straight on. Dropping it here
+        // left free drive with nothing until Overpass answered, which with a
+        // busy server was minutes: swiping the app away took the limit off the
+        // HUD. Free drive's own window (ahead of the car, sized by speed)
+        // replaces it as soon as it is needed, and zero lets that fetch go on
+        // the next tick.
         lastAreaFetchAtMs = 0L
         voice?.reset()
         setStatus("free drive")
@@ -1980,7 +1991,8 @@ class HudService : Service(), LocationListener {
         // Straight after the frame it belongs to, so the board has the
         // angle before it next repaints the arrow.
         frame.rabLine()?.let { l?.write(it) }
-        voice?.enabled = voiceEnabled && !quietMode
+        voice?.enabled = voiceEnabled
+        voice?.warningsOnly = quietMode
         // The maneuver after the next one lets the voice say "… puis à gauche"
         // instead of two calls back to back on a close pair of turns.
         val next = t.nextManeuver
@@ -2079,8 +2091,10 @@ class HudService : Service(), LocationListener {
         frame.rabLine()?.let { l?.write(it) }
 
         // No maneuvers to announce, but the limit chime and camera warnings are
-        // exactly as useful with no destination as with one.
-        voice?.enabled = voiceEnabled && !quietMode
+        // exactly as useful with no destination as with one -- and with the app
+        // swiped away they are all the voice still says (warningsOnly).
+        voice?.enabled = voiceEnabled
+        voice?.warningsOnly = quietMode
         voice?.onFrame(frame, null)
 
         pushRoadFeatures(fix?.latitude ?: 0.0, fix?.longitude ?: 0.0,
@@ -2132,28 +2146,44 @@ class HudService : Service(), LocationListener {
         if (lastAreaFetchAtMs != 0L && nowMs - lastAreaFetchAtMs < AREA_MIN_INTERVAL_MS) return
         lastAreaFetchAtMs = nowMs
         areaFetching.set(true)
+        val carLat = fix.latitude
+        val carLon = fix.longitude
         aux.execute {
             try {
-                val a = AreaRoads.fetch(centre[0], centre[1], want, nowMs)
-                freeArea = a
-                roadArea = a
-                areaRoadCount = a.roads.size
-                // A new road network means every cached "is this camera on our
-                // road" answer was computed against a different set of roads.
-                cameraOnRoute.clear()
-                cameraCount = a.cameras.size
-                camerasFetchedAtMs = System.currentTimeMillis()
-                // On a route the status line belongs to the route.
-                if (tracker == null) {
-                    setStatus("free drive · ${a.roads.size} roads, ${a.cameras.size} cameras " +
-                              "within ${(want / 1000).toInt()} km")
+                // What the disk already knows about where the car is, straight
+                // away -- unless a fresh window is about to be read from it
+                // anyway. The network can take half a minute, or not answer at
+                // all, and until it did there was no speed limit on the glass,
+                // even on a road driven every day.
+                if (!AreaRoads.contains(freeArea, carLat, carLon) &&
+                    !AreaCache.covers(centre[0], centre[1], want, AreaCache.FRESH_MS,
+                                      System.currentTimeMillis())) {
+                    AreaRoads.cachedAt(carLat, carLon, nowMs)?.let { useArea(it, want) }
                 }
+                useArea(AreaRoads.fetch(centre[0], centre[1], want, nowMs), want)
             } catch (e: Exception) {
                 Log.w(TAG, "area fetch failed", e)
                 if (tracker == null) setStatus("free drive · road data unavailable (${e.message})")
             } finally {
                 areaFetching.set(false)
             }
+        }
+    }
+
+    /** Road data for the tick to use, off the network or the disk. */
+    private fun useArea(a: Area, want: Double) {
+        freeArea = a
+        roadArea = a
+        areaRoadCount = a.roads.size
+        // A new road network means every cached "is this camera on our
+        // road" answer was computed against a different set of roads.
+        cameraOnRoute.clear()
+        cameraCount = a.cameras.size
+        camerasFetchedAtMs = System.currentTimeMillis()
+        // On a route the status line belongs to the route.
+        if (tracker == null) {
+            setStatus("free drive · ${a.roads.size} roads, ${a.cameras.size} cameras " +
+                      "within ${(want / 1000).toInt()} km")
         }
     }
 

@@ -121,4 +121,46 @@ class SpeedingRuleTest {
         assertEquals(VoiceGuide.EARCON_WARN, speaker.started[0].first.earcon)
         assertFalse(speaker.started.any { it.first.text.isEmpty() })
     }
+
+    /**
+     * The app swiped away: the voice keeps the warnings and nothing else. It
+     * used to fall silent with the app, the over-limit warning included --
+     * "if possible receive warning when I go over" (app 1.33).
+     */
+    @Test fun `with the app closed only the warnings are spoken`() {
+        var now = 1_000_000L
+        val speaker = FakeSpeaker()
+        val g = VoiceGuide(null, English, speaker) { now }
+        g.warningsOnly = true
+
+        // Not with the app closed: a turn, roadworks, a level crossing.
+        g.onFrame(HudFrame(speedKph = 40, limitKph = 50, maneuver = Man.RIGHT,
+                           distToManeuverM = 140), 5_000L)
+        g.onClosure(1_000, 7L)
+        g.onRoadFeature(com.mihai.navhud.nav.RoadFeature.LEVEL_CROSSING, 1L)
+        assertTrue(speaker.texts.toString(), speaker.texts.isEmpty())
+
+        // Over the limit for long enough: said, once.
+        repeat(4 * 5) {
+            g.onFrame(HudFrame(speedKph = 75, limitKph = 50), null)
+            if (speaker.started.isNotEmpty()) g.onUtteranceDone(speaker.lastId)
+            now += 250
+        }
+        assertEquals(listOf("Speed limit 50."), speaker.texts)
+
+        // And a camera.
+        val cam = com.mihai.navhud.alerts.SpeedCamera(1, 0.0, 0.0, 0.0, 70, null,
+            com.mihai.navhud.alerts.SpeedCamera.Kind.FIXED)
+        g.announceCamera(com.mihai.navhud.alerts.CameraAlert(cam, 700, zoneMode = false))
+        assertEquals(listOf("Speed limit 50.", "Speed camera in 700 metres, limit 70."),
+            speaker.texts)
+    }
+
+    /** The same calls with the app open: the rest is spoken as before. */
+    @Test fun `with the app open the level crossing is still spoken`() {
+        val speaker = FakeSpeaker()
+        val g = VoiceGuide(null, English, speaker) { 1_000_000L }
+        g.onRoadFeature(com.mihai.navhud.nav.RoadFeature.LEVEL_CROSSING, 1L)
+        assertEquals(1, speaker.texts.size)
+    }
 }

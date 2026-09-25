@@ -254,6 +254,15 @@ class VoiceGuide internal constructor(
 
     var enabled: Boolean = true
 
+    /**
+     * The app has been swiped away and only the HUD is left: the voice says
+     * the two things worth hearing with the phone put away -- over the limit,
+     * and cameras -- and nothing else. No arrival, turns, reroutes, roadworks,
+     * crossings or bumps. It used to be silent altogether, and the over-limit
+     * warning was the one thing the owner missed (app 1.33).
+     */
+    var warningsOnly: Boolean = false
+
     /** Changing this re-inits the engine's language. */
     var phrases: Phrases = phrases
         set(value) {
@@ -414,6 +423,7 @@ class VoiceGuide internal constructor(
         allowFinal: Boolean = true
     ) {
         if (!enabled || !ready) return
+        if (warningsOnly) { chimeIfSpeeding(f); return }
 
         if (f.flags and HudFrame.FLAG_ARRIVED != 0) {
             if (!arrivalSpoken) {
@@ -528,7 +538,7 @@ class VoiceGuide internal constructor(
 
     /** Only into silence: the new route's first instruction matters more. */
     fun announceReroute() {
-        if (!enabled || !ready) return
+        if (!enabled || !ready || warningsOnly) return
         say(phrases.reroute(), Priority.LOW, TTL_MINOR_MS)
     }
 
@@ -614,7 +624,7 @@ class VoiceGuide internal constructor(
      * not repeat it, but a different one later in the drive still gets said.
      */
     fun onClosure(metresAhead: Int, closureKey: Long) {
-        if (!enabled || !ready) return
+        if (!enabled || !ready || warningsOnly) return
         if (metresAhead !in 1..CLOSURE_ANNOUNCE_M) return
         if (spokenClosures.contains(closureKey)) return
         // Only marked said once the queue took it: a closure that arrived
@@ -632,7 +642,7 @@ class VoiceGuide internal constructor(
      * and they must not talk over a turn instruction.
      */
     fun onRoadFeature(kind: Int, id: Long) {
-        if (!enabled || !ready) return
+        if (!enabled || !ready || warningsOnly) return
         if (spokenFeatures.contains(id)) return
         val text = when (kind) {
             com.mihai.navhud.nav.RoadFeature.LEVEL_CROSSING -> phrases.levelCrossing()
