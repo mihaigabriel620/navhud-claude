@@ -30,6 +30,7 @@ object Prefs {
     private const val KEY_GOOGLE = "google_key"
     private const val KEY_HEAD_OFFSET = "heading_offset"
     private const val KEY_HEAD_AXIS = "heading_axis"
+    private const val KEY_HUD_CORRECTION = "hud_compass_correction"
     private const val KEY_HEAD_DONE = "heading_calibrated"
     private const val KEY_DECLINATION = "declination"
     private const val KEY_BOOT = "start_on_boot"
@@ -103,6 +104,13 @@ object Prefs {
 
     fun setHeadingOffset(ctx: Context, deg: Double) =
         sp(ctx).edit().putFloat(KEY_HEAD_OFFSET, deg.toFloat()).apply()
+
+    /** The board compass's learned correction (HeadingFusion.hudCorrection), or null. */
+    fun hudCompassCorrection(ctx: Context): Double? =
+        sp(ctx).getFloat(KEY_HUD_CORRECTION, Float.NaN).toDouble().takeIf { !it.isNaN() }
+
+    fun setHudCompassCorrection(ctx: Context, deg: Double) =
+        sp(ctx).edit().putFloat(KEY_HUD_CORRECTION, deg.toFloat()).apply()
 
     /** Which device axis the offset was measured against. See Compass. */
     fun headingAxis(ctx: Context): Int = sp(ctx).getInt(KEY_HEAD_AXIS, 0)

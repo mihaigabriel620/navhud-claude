@@ -179,6 +179,25 @@ class HeadingFusion {
         /** Below this a GPS bearing is noise, not a direction. */
         const val GPS_TRUST_MPS = 2.5
 
+        /**
+         * Learn how far the board's compass is out, against the GPS course, at
+         * or above this speed -- where a GPS bearing is a measurement.
+         */
+        const val HUD_LEARN_MPS = GPS_TRUST_MPS
+
+        /** How quickly the learned correction follows the evidence, seconds. */
+        const val HUD_LEARN_TAU_S = 3.0
+
+        /**
+         * A GPS course that turned more than this since the previous fix is a
+         * bend being driven. GPS lags the car through it, so the two disagree
+         * there for reasons that are not the compass's.
+         */
+        const val HUD_LEARN_MAX_TURN_DEG = 8.0
+
+        /** The previous bearing is only "the previous fix" within this, ms. */
+        const val HUD_LEARN_GAP_MS = 2_500L
+
         /** Below this the car is parked, so the gyro should be reading zero. */
         const val STATIONARY_MPS = 0.7
 
@@ -569,6 +588,8 @@ class HeadingFusion {
             }
         }
 
+        learnHudCorrection(g, speedMps, dtS)
+
         // Below the changeover the compass owns the arrow, and this fix is
         // only here to be compared against it (the distrust test above) and to
         // let the caller re-learn the mounting offset from it. Writing the GPS
@@ -634,6 +655,71 @@ class HeadingFusion {
         lastHudCompassMs = nowMs
         lastCompass = Geo.normalizeDeg(headingDeg)
         onCompass(lastCompass!!, fromHud = true)
+    }
+
+    /**
+     * What to add to the board's compass to get the car's heading. Learned
+     * against the GPS course while driving; null until something has been.
+     *
+     * The board is flat on the dashboard, so on a hill it is tilted with the
+     * car, and with the Earth's field dipping ~65 degrees here every degree
+     * of tilt is about two of heading: a 10 % slope is 10-15 degrees. It
+     * cannot see that on its own -- there is no accelerometer, and facing
+     * east or west a tilt barely moves any axis it has except the heading.
+     * The same goes for which way round the box sits on the dash, and for a
+     * calibration or a declination that is a little out.
+     *
+     * None of that needs to be known. Driving, GPS measures the direction of
+     * travel, and the difference from the compass is learned here, on the
+     * road the car is on. Pull up and the compass takes the arrow with that
+     * difference added: the same slope, facing the same way, so the arrow
+     * stays exactly where GPS left it, and turning at a crawl turns it by what
+     * the compass saw change. Carried across restarts by the map screen, so a
+     * car that has not moved starts pointing the way it was left.
+     */
+    @Volatile
+    var hudCorrection: Double? = null
+        private set
+
+    /** The previous usable GPS bearing, and when, to tell a straight from a bend. */
+    private var lastGpsBearing: Double? = null
+    private var lastGpsBearingMs = 0L
+
+    /** A correction carried over from the last drive, if none has been learned yet. */
+    @Synchronized
+    fun restoreHudCorrection(deg: Double?) {
+        if (hudCorrection == null && deg != null && !deg.isNaN()) {
+            hudCorrection = Geo.signedDelta(deg, 0.0)
+        }
+    }
+
+    /**
+     * One GPS bearing's worth of evidence about the board's compass: only on a
+     * straight, at a speed where the bearing means something, against a fresh
+     * board reading. The first piece is taken whole; after that it is eased in
+     * over [HUD_LEARN_TAU_S], so one bad bearing moves it by a fraction.
+     */
+    private fun learnHudCorrection(g: Double, speedMps: Double, dtS: Double) {
+        val prev = lastGpsBearing?.takeIf { nowMs - lastGpsBearingMs <= HUD_LEARN_GAP_MS }
+        lastGpsBearing = g
+        lastGpsBearingMs = nowMs
+        if (speedMps < HUD_LEARN_MPS || !hudCompassLive) return
+        if (prev == null || abs(Geo.signedDelta(g, prev)) > HUD_LEARN_MAX_TURN_DEG) return
+        val c = lastCompass ?: return
+        val fresh = Geo.signedDelta(g, c)
+        val cur = hudCorrection
+        hudCorrection = if (cur == null) fresh else {
+            val k = if (dtS <= 0.0) 1.0
+                    else (1.0 - exp(-dtS / HUD_LEARN_TAU_S)).coerceIn(0.0, 1.0)
+            Geo.signedDelta(cur + k * Geo.signedDelta(fresh, cur), 0.0)
+        }
+    }
+
+    /** The compass reading for the arrow: the board's, with what driving taught us. */
+    private fun arrowCompass(): Double? {
+        val c = lastCompass ?: return null
+        val k = hudCorrection?.takeIf { hudCompassLive } ?: return c
+        return Geo.normalizeDeg(c + k)
     }
 
     @Synchronized
@@ -715,7 +801,9 @@ class HeadingFusion {
         // of it left the one absolute source unable to set anything, so with
         // the HUD plugged in and no GPS the arrow simply never appeared.
         if (!usingCompass) return
-        val c = lastCompass ?: return
+        // Corrected by what driving taught us (hudCorrection): the raw reading
+        // stays in lastCompass, which is what the learning compares.
+        val c = arrowCompass() ?: return
         val h = heading
 
         // With no estimate yet, or no board reporting, take the reading whole.
@@ -773,7 +861,9 @@ class HeadingFusion {
         lastR = null
         lastFrameId = Int.MIN_VALUE
         lastHudCompassMs = 0L
-        // The bias is a property of the hardware; it survives a route change.
+        lastGpsBearing = null
+        // The bias is a property of the hardware, and hudCorrection of the
+        // board and where the car is standing: both survive a route change.
     }
 
     /** One line for the diagnostics row. */

@@ -826,6 +826,9 @@ class MapActivity : AppCompatActivity() {
         // Location off the looper before the looper is quit.
         stopOwnLocation()
         stopSensors()
+        // Where the car stands when the screen goes: the board compass's
+        // correction for this spot, for the next start (HeadingFusion).
+        fusion.hudCorrection?.let { Prefs.setHudCompassCorrection(this, it) }
         mapView.onPause()
         super.onPause()
     }
@@ -1845,6 +1848,9 @@ class MapActivity : AppCompatActivity() {
         learnedThisDrive = false
         headingOffset = Prefs.headingOffset(this)
         savedOffset = headingOffset
+        // The board compass's correction from the last drive: a car that has
+        // not moved starts pointing the way it was left, hill or no hill.
+        fusion.restoreHudCorrection(Prefs.hudCompassCorrection(this))
         headingAxis = Prefs.headingAxis(this)
         declinationDeg = Prefs.declination(this)
         // A stale stamp from before the pause would let the very first bad

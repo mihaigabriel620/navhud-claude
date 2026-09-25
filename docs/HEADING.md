@@ -127,6 +127,34 @@ so `trueHeading = magneticHeading + declination`. In Brussels that is
 but free to fix. Organic Maps and CoMaps do not do it at all; OsmAnd does it
 once on the first fix and never refreshes.
 
+## On a hill, or with the box turned: learned against GPS
+
+The board's magnetometer lies flat on the dashboard, so on a slope it is tilted
+with the car. The Earth's field dips about 65° here, so every degree of tilt
+is about two degrees of heading: a 10 % hill reads 10–15° out. The board has no
+accelerometer and the head unit has no sensors, so nothing knows which way is
+down — and it cannot be worked out from the magnetometer alone: facing east or
+west, where the error is largest, a tilt hardly moves any axis except the
+heading itself.
+
+It does not need to be known. `HeadingFusion.hudCorrection` is the difference
+between the GPS course and the board's reading, learned while driving on a
+straight at 9 km/h or more (`HUD_LEARN_MPS`, `HUD_LEARN_MAX_TURN_DEG`), eased in
+over three seconds (`HUD_LEARN_TAU_S`). Below the crossover the compass drives
+the arrow **with the correction added**. Pulling up, the car is on the same
+slope, facing the same way, as when it was learned, so the arrow stays where
+GPS left it; turning at a crawl turns it by what the compass saw change. The
+same difference absorbs which way the box sits on the dash, a calibration or a
+declination that is a little out — the `north` command is no longer needed.
+
+The distrust test still compares the *raw* reading with GPS, so a box turned
+far round is held on the GPS heading until the distrust is forgiven, then
+driven by the corrected compass. The map screen saves the correction when it
+goes and restores it when it comes back (`Prefs.hudCompassCorrection`), so a
+car that has not moved starts pointing the way it was left; one that has been
+moved to another slope is at most as far out as the tilt changed, until the
+first straight relearns it.
+
 ## How much error to expect
 
 - **5–10°** for a phone compass in the open, measured across 17 devices —

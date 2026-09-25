@@ -338,4 +338,127 @@ class HeadingFusionTest {
         assertFalse(f.usingCompass)
         assertEquals(200.0, f.heading!!, 1e-6)
     }
+
+    // ---- on a hill, or with the box turned: learned against GPS -------------
+
+    /**
+     * Drive [s] seconds at [mps] on GPS bearing [gps] while the board reads
+     * [board], one fix and five $MAG rows a second. Returns the clock.
+     */
+    private fun drive(f: HeadingFusion, t0: Long, s: Int, gps: Double, board: Double,
+                      mps: Double = 14.0): Long {
+        var t = t0
+        repeat(s) {
+            repeat(5) { f.onExternalCompass(board, t); t += 200L }
+            f.onFix(gps, mps, 1.0)
+        }
+        return t
+    }
+
+    /** Stand still for [s] seconds, the board reading [board]. */
+    private fun stand(f: HeadingFusion, t0: Long, s: Int, board: Double): Long {
+        var t = t0
+        repeat(s) {
+            f.onFix(null, 0.0, 1.0)
+            repeat(5) { f.onExternalCompass(board, t); t += 200L }
+        }
+        return t
+    }
+
+    /**
+     * The owner's question: the board lies flat on the dashboard, so on a hill
+     * it is tilted with the car, and at a 65-degree dip that reads 10-15
+     * degrees out. The arrow used to jump by that the moment the car stopped
+     * and the compass took over from GPS.
+     */
+    @Test fun `on a hill the arrow stays where GPS left it when the car stops`() {
+        val f = HeadingFusion()
+        // Up a slope facing east; tilted, the board reads 12 degrees out.
+        var t = drive(f, 100_000L, 20, gps = 90.0, board = 102.0)
+        assertEquals(-12.0, f.hudCorrection!!, 0.5)
+        t = stand(f, t, 10, board = 102.0)
+        assertTrue(f.usingCompass)
+        assertEquals("not the tilted 102", 90.0, f.heading!!, 0.5)
+    }
+
+    /** Which way round the box sits on the dash does not matter either. */
+    @Test fun `the box turned any way on the dash is learned away`() {
+        val f = HeadingFusion()
+        var t = drive(f, 100_000L, 20, gps = 90.0, board = 227.0)   // turned 137 degrees
+        t = stand(f, t, 5, board = 227.0)
+        assertEquals("held on GPS's heading while the raw compass is distrusted",
+            90.0, f.heading!!, 0.5)
+        // And once the distrust has been forgiven, the corrected compass agrees.
+        t = stand(f, t, (HeadingFusion.FORGIVE_AFTER_MS / 1000).toInt() + 5, board = 227.0)
+        assertTrue(f.usingCompass)
+        assertEquals(90.0, f.heading!!, 0.5)
+    }
+
+    @Test fun `turning at a crawl turns the arrow by what the compass saw change`() {
+        val f = HeadingFusion()
+        var t = drive(f, 100_000L, 20, gps = 90.0, board = 102.0)
+        t = stand(f, t, 3, board = 102.0)
+        // A quarter turn right at walking pace: the board goes 102 -> 192.
+        for (i in 1..18) {
+            f.onFix(null, 0.5, 0.2)
+            f.onExternalCompass(102.0 + i * 5.0, t); t += 200L
+        }
+        assertEquals(180.0, f.heading!!, 0.5)
+    }
+
+    /** Through a bend GPS lags the car; that disagreement is not the compass's. */
+    @Test fun `a bend teaches it nothing`() {
+        val f = HeadingFusion()
+        var t = 100_000L
+        for (i in 0 until 12) {
+            val gps = i * 15.0
+            repeat(5) { f.onExternalCompass(gps + 20.0, t); t += 200L }
+            f.onFix(gps, 14.0, 1.0)
+        }
+        assertNull(f.hudCorrection)
+    }
+
+    @Test fun `too slow for GPS to know, too slow to learn from`() {
+        val f = HeadingFusion()
+        drive(f, 100_000L, 20, gps = 90.0, board = 102.0, mps = 2.0)   // 7 km/h
+        assertNull(f.hudCorrection)
+    }
+
+    @Test fun `one bad bearing moves it by a fraction`() {
+        val f = HeadingFusion()
+        var t = drive(f, 100_000L, 20, gps = 90.0, board = 102.0)
+        // One bearing 6 degrees off, within the straight-road gate.
+        repeat(5) { f.onExternalCompass(102.0, t); t += 200L }
+        f.onFix(96.0, 14.0, 1.0)
+        assertEquals(-12.0, f.hudCorrection!!, 2.0)
+    }
+
+    /** The phone's compass has its own mounting offset; this is only the board's. */
+    @Test fun `the phone's compass is not corrected with the board's numbers`() {
+        val f = HeadingFusion()
+        val t = drive(f, 100_000L, 20, gps = 90.0, board = 102.0)
+        f.setClock(t + HeadingFusion.HUD_COMPASS_STALE_MS)     // cable out
+        f.onFix(null, 0.0, 1.0)
+        repeat(50) { f.onCompass(180.0) }
+        assertEquals(180.0, f.heading!!, 1.0)
+    }
+
+    @Test fun `a car that has not moved starts pointing the way it was left`() {
+        val f = HeadingFusion()
+        f.restoreHudCorrection(-12.0)
+        f.onExternalCompass(102.0, 30_000L)
+        assertEquals(90.0, f.heading!!, 1e-6)
+        // What is learned this drive replaces it; a restore never overwrites that.
+        val g = HeadingFusion()
+        drive(g, 100_000L, 20, gps = 90.0, board = 95.0)
+        g.restoreHudCorrection(-12.0)
+        assertEquals(-5.0, g.hudCorrection!!, 0.5)
+    }
+
+    @Test fun `nothing learned and nothing restored, the board as it reads`() {
+        val f = HeadingFusion()
+        f.onExternalCompass(141.0, 30_000L)
+        assertNull(f.hudCorrection)
+        assertEquals(141.0, f.heading!!, 1e-9)
+    }
 }
