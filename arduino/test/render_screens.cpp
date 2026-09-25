@@ -233,8 +233,26 @@ static void pixelChecks() {
       const std::vector<uint16_t> alone = snap();
       tft.fillScreen(E60_BG);
       e60DrawSpeed(s);
+      const std::vector<uint16_t> full = snap();
       expectSurvives("speed " + std::to_string(v) + (over ? " (over)" : "") +
-                     " under the km/h label", alone, snap());
+                     " under the km/h label", alone, full);
+      // ...and the label does not touch them: at least two clear rows between
+      // the lowest digit pixel and the highest label pixel.
+      const int lw = tft.textWidth("km/h", 4);
+      int digitsBottom = -1, labelTop = HUD_SCR_H;
+      for (int y = 0; y < HUD_SCR_H; y++)
+        for (int x = E60_SPD_CX - lw / 2; x <= E60_SPD_CX + lw / 2; x++) {
+          const size_t i = (size_t)y * HUD_SCR_W + x;
+          if (alone[i]) digitsBottom = y;
+          else if (full[i] && y > E60_SPD_CY && y < labelTop) labelTop = y;
+        }
+      const int gap = labelTop - digitsBottom - 1;
+      if (gap < 2) {
+        printf("  FAIL km/h label %d row(s) under speed %d\n", gap, v);
+        g_failed++;
+      } else {
+        printf("  ok   km/h label %d rows under speed %d\n", gap, v);
+      }
     }
   }
 #endif

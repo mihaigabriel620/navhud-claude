@@ -41,7 +41,7 @@
 // Vertical budget, so no two zones can ever touch:
 //   speed 10..146   rule 154   nav 166..262   footer 268..312
 static const int E60_SPD_CX = 300, E60_SPD_CY = 70;
-static const int E60_UNIT_Y = 130;                      // baseline
+static const int E60_UNIT_Y = 134;                      // baseline
 static const int E60_LIM_CX = 76,  E60_LIM_CY = 74, E60_LIM_R = 48;
 static const int E60_RULE_Y = 154;
 static const int E60_ARR_CX = 64,  E60_ARR_CY = 212, E60_ARR_R = 44;
@@ -147,9 +147,11 @@ static void e60DrawSpeed(const HudState& s) {
     }
   }
 
-  // No background colour: font 4's 26 px cell starts at y 104, four rows
-  // above the bottom of the font 8 digits, and a background fill cut those
-  // rows off every speed. The whole block was cleared at the top of this
+  // Below the digits with a clear gap, and with no background colour. At
+  // y 130 font 4's 26 px cell started at y 104, above the bottom of the font 8
+  // digits (row 105): its background fill cut the bottom rows off every speed,
+  // and without the fill the letters touched them. At 134 the ascenders start
+  // four rows below the digits. The whole block was cleared at the top of this
   // function, so there is nothing under the label to paint over.
   tft.setTextColor(E60_AMBER_DIM);
   tft.setTextDatum(BC_DATUM);
