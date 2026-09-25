@@ -581,6 +581,27 @@ int main() {
            (unsigned)MAN_NONE, 0L, "");
   }
 
+  printf("18b. $RAB reaches the state the theme draws from\n");
+  {
+    // A roundabout, exit 2, then the phone's measured bearing for exit 2.
+    // Parsed but never copied into `cur`, the angle only ever lived in the
+    // parser's scratch copy and the fallback table drew every roundabout.
+    g_millis += 250;
+    Serial.feed(wrap("HUD,50,50,13,2,300,600,4000,68,RING"));
+    Serial.feed(wrap("RAB,2,-95"));
+    pump(1);
+    CHECK(cur.maneuver == MAN_ROUNDABOUT && cur.rbExit == 2, "the roundabout frame landed");
+    CHECK(cur.rbAngleExit == 2 && cur.rbAngle == -95, "the $RAB bearing is kept in cur");
+    CHECK(shown.rbAngle == -95, "and a repaint was triggered for it");
+    // The next $HUD frame must not wipe it: the phone sends $RAB once per
+    // change, not with every frame.
+    g_millis += 250;
+    Serial.feed(wrap("HUD,50,50,13,2,280,590,3990,68,RING"));
+    pump(1);
+    CHECK(cur.rbAngleExit == 2 && cur.rbAngle == -95, "a later $HUD frame keeps it");
+    printf("    exit %u at %d deg\n", (unsigned)cur.rbAngleExit, (int)cur.rbAngle);
+  }
+
   printf("19. the six display states\n");
   {
     uint8_t ign[1];

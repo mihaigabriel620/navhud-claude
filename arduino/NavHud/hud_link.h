@@ -526,6 +526,13 @@ static bool linkPump(uint32_t now) {
       memcpy(cur.laneChosen, tmp.laneChosen, HUD_MAX_LANES);
       got = true; lastFrameMs = now;
     }
+    else if (r == HUD_RAB) {
+      // Copied like $CAM and $LANE. Without this branch the bearing only ever
+      // reached `tmp`, the resync below threw it away, and every roundabout
+      // was drawn from the fallback table as if no phone had sent one.
+      cur.rbAngle = tmp.rbAngle; cur.rbAngleExit = tmp.rbAngleExit;
+      got = true; lastFrameMs = now;
+    }
     if (r != HUD_NOTHING) tmp = cur;    // resync the scratch copy after each frame
   }
   return got;
