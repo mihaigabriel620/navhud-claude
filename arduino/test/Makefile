@@ -2,7 +2,7 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wno-unused-function -O2 -DHUD_TEST
 INC      := -I. -I../NavHud
 
-BINS := t geom parse_stdin can layout_e60 \
+BINS := t geom heading parse_stdin can layout_e60 \
         sketch_dash sketch_e60 sketch_bench bringup_diag
 
 all: $(BINS)
@@ -12,6 +12,11 @@ t: test_protocol.cpp ../NavHud/hud_protocol.h ../NavHud/hud_geom.h
 
 geom: test_geom.cpp ../NavHud/hud_geom.h ../NavHud/hud_store.h
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_geom.cpp
+
+# The compass maths on its own: a simulated box in a simulated car, tilted,
+# turned, braked and thrown over hills, against what hud_heading.h makes of it.
+heading: test_heading.cpp ../NavHud/hud_heading.h Wire.h
+	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_heading.cpp
 
 parse_stdin: parse_stdin.cpp ../NavHud/hud_protocol.h
 	$(CXX) $(CXXFLAGS) -o $@ parse_stdin.cpp
@@ -81,37 +86,39 @@ BRINGUP_DEPS := ../PanelDiag/PanelDiag.ino bringup_stub.h tft_stub.h \
 bringup_diag: test_bringup.cpp $(BRINGUP_DEPS)
 	$(CXX) $(CXXFLAGS) $(INC) -DBRINGUP_DIAG -o $@ test_bringup.cpp
 
-# The whole suite: protocol, screen and map geometry, navigation logic, both
-# themes' layout, the CAN half, the real sketch running against a scripted
-# serial stream, and two end-to-end passes of generated frames through the
-# exact parser the sketch compiles.
+# The whole suite: protocol, screen and map geometry, the compass maths,
+# navigation logic, both themes' layout, the CAN half, the real sketch running
+# against a scripted serial stream, and two end-to-end passes of generated
+# frames through the exact parser the sketch compiles.
 #
 # tools/check_layout.py (the dash layout against the hud-editor.html bench) is
 # not run: the bench page did not survive the 1.26 restore, so there is nothing
 # to compare against. theme_dash.h is the layout's only source now, and the
 # layout tests below still catch a field off the panel or on top of another.
 check: all
-	@echo "=== 1/11 protocol unit tests ==="
+	@echo "=== 1/12 protocol unit tests ==="
 	./t
-	@echo "\n=== 2/11 screen geometry (mirror, keystone, persistence) ==="
+	@echo "\n=== 2/12 screen geometry (mirror, keystone, persistence) ==="
 	./geom
-	@echo "\n=== 3/11 map geometry (polyline, projection, heading) ==="
+	@echo "\n=== 3/12 compass heading (tilt, gravity, turn rate, calibration) ==="
+	./heading
+	@echo "\n=== 4/12 map geometry (polyline, projection, heading) ==="
 	python3 ../../tools/geo_reference.py
-	@echo "\n=== 4/11 navigation logic (RouteTracker) ==="
+	@echo "\n=== 5/12 navigation logic (RouteTracker) ==="
 	python3 ../../tools/tracker_reference.py --check
-	@echo "\n=== 5/11 voice guidance (VoiceGuide) ==="
+	@echo "\n=== 6/12 voice guidance (VoiceGuide) ==="
 	python3 ../../tools/voice_reference.py --check
-	@echo "\n=== 6/11 E60 theme layout ==="
+	@echo "\n=== 7/12 E60 theme layout ==="
 	./layout_e60
-	@echo "\n=== 7/11 sketch on the host, E60 theme ==="
+	@echo "\n=== 8/12 sketch on the host, E60 theme ==="
 	./sketch_e60
-	@echo "\n=== 8/11 sketch on the host, bench mode ==="
+	@echo "\n=== 9/12 sketch on the host, bench mode ==="
 	./sketch_bench
-	@echo "\n=== 9/11 CAN: bring-up, drain guards, E60 decoders ==="
+	@echo "\n=== 10/12 CAN: bring-up, drain guards, E60 decoders ==="
 	./can
-	@echo "\n=== 10/11 sketch on the host, dash theme ==="
+	@echo "\n=== 11/12 sketch on the host, dash theme ==="
 	./sketch_dash
-	@echo "\n=== 11/11 bring-up sketch: PanelDiag ==="
+	@echo "\n=== 12/12 bring-up sketch: PanelDiag ==="
 	./bringup_diag
 	@echo "\n=== and generated frames -> parser ==="
 	python3 ../../tools/hud_sim.py --stdout --frames 3000 | ./parse_stdin

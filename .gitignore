@@ -11,6 +11,7 @@ arduino/test/*.exe
 # host test binaries (arduino/test/Makefile)
 arduino/test/t
 arduino/test/geom
+arduino/test/heading
 arduino/test/parse_stdin
 arduino/test/can
 arduino/test/layout_e60
