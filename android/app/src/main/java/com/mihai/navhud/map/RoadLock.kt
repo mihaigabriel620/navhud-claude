@@ -21,7 +21,8 @@ import com.mihai.navhud.nav.RoadWay
  *  - Every later fix is projected onto *that* road, so the arrow moves only
  *    forwards or backwards along it.
  *  - Standing still ([STILL_MPS]) the position is frozen: GPS wander is not
- *    movement.
+ *    movement. Without the car's speed it stays frozen until the fix has
+ *    moved more than its accuracy ([HOLD_M] at least) along the road.
  *  - It changes road only while moving ([SWITCH_MPS]) and on clear evidence:
  *    another road nearer by [SWITCH_MARGIN_M] (or ours running against our
  *    heading) for [SWITCH_FIXES] fixes in a row, or we have run off the end of
@@ -57,6 +58,9 @@ class RoadLock {
 
         /** A road further than this across our heading is not ours (as AreaRoads.match). */
         const val ACROSS_DEG = 70.0
+
+        /** Without the car's speed, a hold ends only past this (or the fix's accuracy). */
+        const val HOLD_M = 10.0
     }
 
     var road: RoadWay? = null
@@ -101,11 +105,13 @@ class RoadLock {
      * @param facingDeg  which way the car points (compass, gyro), or null:
      *                   only to say which way along the road it faces before
      *                   it has driven anywhere
+     * @param speedFromCar [speedMps] is the bus's, not the fix's
+     * @param accuracyM  the fix's accuracy, metres (0 = unknown)
      * @return true when locked: [road], [lat], [lon] say where to draw
      */
     fun update(
         area: Area?, fixLat: Double, fixLon: Double, speedMps: Double, headingDeg: Double?,
-        facingDeg: Double? = null
+        facingDeg: Double? = null, speedFromCar: Boolean = true, accuracyM: Double = 0.0
     ): Boolean {
         facing = facingDeg
         val moving = speedMps >= SWITCH_MPS
@@ -117,7 +123,12 @@ class RoadLock {
             val d = Geo.haversine(fixLat, fixLon, p[0], p[1])
             if (d <= LOST_M) {
                 crossM = d
-                holding = speedMps < STILL_MPS
+                // A parked receiver reports 1-2 m/s of multipath wander, so on
+                // GPS speed alone a hold ends on distance, not speed: the fix
+                // must leave the held point by more than its own accuracy.
+                holding = if (holding && !speedFromCar)
+                    Geo.haversine(p[0], p[1], lat, lon) <= maxOf(accuracyM, HOLD_M)
+                else speedMps < STILL_MPS
                 if (holding) return true
                 if (moving && area != null) {
                     // Only a road nearer than ours can take over, so only

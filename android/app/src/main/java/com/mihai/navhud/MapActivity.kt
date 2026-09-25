@@ -2207,8 +2207,10 @@ class MapActivity : AppCompatActivity() {
             if (!snapWanted) roadLock.reset()
             else if (live && fixNs != lockedFixNs) {
                 lockedFixNs = fixNs
+                val car = HudService.carSpeedMps
                 roadLock.update(HudService.roadArea, loc.latitude, loc.longitude,
-                    HudService.carSpeedMps ?: speed, gpsBrg, fusion.heading)
+                    car ?: speed, gpsBrg, fusion.heading, speedFromCar = car != null,
+                    accuracyM = if (loc.hasAccuracy()) loc.accuracy.toDouble() else 0.0)
             }
             // Kept through an underpass, which is exactly when the coast
             // wants it: the lock only changes on a live fix.

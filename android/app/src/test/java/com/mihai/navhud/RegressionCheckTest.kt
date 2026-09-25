@@ -3,7 +3,9 @@ package com.mihai.navhud
 import com.mihai.navhud.alerts.CameraPolicy
 import com.mihai.navhud.alerts.CameraWatcher
 import com.mihai.navhud.alerts.SpeedCamera
+import com.mihai.navhud.map.RoadLock
 import com.mihai.navhud.nav.Area
+import com.mihai.navhud.nav.RoadWay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -102,5 +104,28 @@ class RegressionCheckTest {
             0, r.warns(7_000, 20_000, 75, 50))
         assertEquals("a limit below the one warned about is news",
             1, r.warns(27_000, 5_000, 75, 30))
+    }
+
+    // ---- R5: a parked GPS's 1-2 m/s of wander is not driving ----------------
+
+    @Test fun `without the car's speed, GPS speed jitter does not creep the held arrow`() {
+        val lat0 = 50.8000
+        val road = RoadWay(1, arrayOf(doubleArrayOf(lat0, 4.3000), doubleArrayOf(lat0, 4.3142)),
+            "Rue A", "", 50, "residential", 0)
+        val area = Area(lat0, 4.307, 2000.0, listOf(road), emptyList(), 0L)
+        val lock = RoadLock()
+        val start = Geo.destination(lat0, 4.3071, 0.0, 5.0)
+        lock.update(area, start[0], start[1], 0.0, null, speedFromCar = false, accuracyM = 15.0)
+        val heldLat = lock.lat
+        val heldLon = lock.lon
+        for ((i, east) in listOf(8.0, -6.0, 12.0, -10.0, 5.0).withIndex()) {
+            val w = Geo.destination(start[0], start[1], 90.0, east)
+            lock.update(area, w[0], w[1], 1.5, null, speedFromCar = false, accuracyM = 15.0)
+            assertEquals("wander $i held", heldLon, lock.lon, 0.0)
+            assertEquals(heldLat, lock.lat, 0.0)
+        }
+        val moved = Geo.destination(start[0], start[1], 90.0, 40.0)
+        lock.update(area, moved[0], moved[1], 1.5, null, speedFromCar = false, accuracyM = 15.0)
+        assertEquals("40 m along the road is movement", moved[1], lock.lon, 1e-6)
     }
 }
