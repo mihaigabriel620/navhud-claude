@@ -603,6 +603,26 @@ int main() {
 
   }
 
+#if defined(HUD_CAN)
+  printf("18c. $CAR never sends a speed the bus has stopped giving\n");
+  {
+    // The app prefers the car's speed to GPS whenever a $CAR line is fresh,
+    // so a frozen number here is a frozen speed on both displays.
+    const uint32_t now = g_millis;
+    car.kmh = 87.0f; car.tSpeed = now;
+    Serial.out_.clear();
+    sendCar();
+    CHECK(Serial.out_.rfind("$CAR,87,", 0) == 0, "a fresh speed is sent");
+    g_millis = now + CAR_STALE_MS + 100;           // 0x1A6 has gone quiet
+    Serial.out_.clear();
+    sendCar();
+    CHECK(Serial.out_.rfind("$CAR,-1,", 0) == 0,
+          "a stale speed is sent as -1, which the app refuses, then falls back to GPS");
+    printf("    %s", Serial.out_.c_str());
+    g_millis = now;
+  }
+#endif
+
   printf("19. the six display states\n");
   {
     uint8_t ign[1];

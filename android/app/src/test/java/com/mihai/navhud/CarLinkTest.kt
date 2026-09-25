@@ -54,6 +54,21 @@ class CarLinkTest {
         assertEquals(50, c.speedKph)                           // unchanged
     }
 
+    /**
+     * Firmware 2.8 sends -1 once the bus's speed frame (0x1A6) is stale; 2.7
+     * repeated the last speed for as long as the bus stayed up without it.
+     * The -1 line is refused, so the last good one ages out and GPS takes over.
+     */
+    @Test
+    fun `the board's -1 for a stale speed is refused and ages out to GPS`() {
+        val c = CarLink()
+        assertTrue(c.feed(line(87), 1_000L))
+        assertFalse(c.feed(line(-1), 1_500L))
+        assertEquals(87, c.speedKph)
+        assertTrue(c.fresh(2_000L))
+        assertFalse(c.fresh(1_000L + CarLink.STALE_MS))
+    }
+
     @Test
     fun `reads the optional raw battery count when the board sends it`() {
         val c = CarLink()

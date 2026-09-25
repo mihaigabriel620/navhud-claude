@@ -113,10 +113,19 @@ static void sendCar() {
   //                 morning and "no data" must not look like one. Nothing in
   //                 the app reads it yet and nothing on the glass draws it --
   //                 it is on the wire so one drive can confirm the decode.
+  //
+  //   1  kmh        -1 once 0x1A6 is stale (CAR_STALE_MS). car.kmh is never
+  //                 cleared, so this used to repeat the last speed for as long
+  //                 as the bus stayed up without it -- and the app, which
+  //                 prefers the car's speed to GPS whenever a line is fresh,
+  //                 showed that frozen number. The app refuses a line with a
+  //                 negative speed and falls back to GPS (CarLink.feed).
   char body[80];
-  const int coolant = carCoolantStale(car, millis()) ? -99 : (int)car.coolantC;
+  const uint32_t now = millis();
+  const int coolant = carCoolantStale(car, now) ? -99 : (int)car.coolantC;
+  const int kmh = carStale(car.tSpeed, now) ? -1 : (int)(car.kmh + 0.5f);
   snprintf(body, sizeof body, "CAR,%d,%u,%d,%d,%.1f,%u,%u,%d",
-           (int)(car.kmh + 0.5f), (unsigned)car.rpm, (int)car.ps,
+           kmh, (unsigned)car.rpm, (int)car.ps,
            (int)car.peakPs, car.volts, (unsigned)(car.ignitionOn ? 1 : 0),
            (unsigned)car.voltsRaw, coolant);
   sendLine(body);
