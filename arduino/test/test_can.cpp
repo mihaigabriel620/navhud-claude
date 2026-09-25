@@ -189,18 +189,17 @@ static void testSpeedAfterRepaint() {
   canPump(c, t - 10);
   put(false); cnt += perFrame;
   put(true);  cnt += perFrame;
+  // Then back to normal on a 10 ms clock: a frame every 100 ms, a drain every
+  // 30 ms, starting with the drain that ends the repaint.
   float worst = 0.0f;
   uint32_t k = t + 150;
-  for (int i = 0; i < 6; i++) {               // then frames every 100 ms again
-    canPump(c, k);
-    if (!carStale(c.tSpeed, k) && fabsf(c.kmh - 50.0f) > worst) worst = fabsf(c.kmh - 50.0f);
-    put(false);
-    const uint32_t next = t + 200 + 100 * (uint32_t)i;
-    for (k = next; k < next + 100; k += 30) {
+  for (uint32_t ms = t + 150; ms <= t + 800; ms += 10) {
+    if (ms >= t + 200 && (ms - (t + 200)) % 100 == 0) { put(false); cnt += perFrame; }
+    if ((ms - (t + 150)) % 30 == 0) {
+      k = ms;
       canPump(c, k);
-      if (fabsf(c.kmh - 50.0f) > worst) worst = fabsf(c.kmh - 50.0f);
+      if (!carStale(c.tSpeed, k) && fabsf(c.kmh - 50.0f) > worst) worst = fabsf(c.kmh - 50.0f);
     }
-    cnt += perFrame;
   }
   CHECK(worst < 8.0f, "after the repaint the speed stays near 50, worst error %.1f km/h", worst);
   CHECK(!carStale(c.tSpeed, k) && c.tSpeed > t + 150, "and it is being measured again, not held");
