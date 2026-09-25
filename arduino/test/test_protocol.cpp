@@ -263,31 +263,12 @@ int main() {
     CHECK(s.rbAngle == -95, "and a refused frame changes nothing");
   }
 
-  printf("13. $RBX: every exit's angle, the side of the road, and the pairing\n");
+  printf("13. left-hand traffic rides on the $HUD flags, bit 7\n");
   {
     HudParser q; HudState s; hudStateInit(s);
-    s.distToMan = 310;
-    CHECK(feedAll(q, frame("RBX,3,0,95,30,-80"), s) == HUD_RBX, "parses");
-    CHECK(s.rbxExit == 3 && s.rbxLeft == 0 && s.rbxCount == 3, "exit 3, right-hand traffic, 3 angles");
-    CHECK(s.rbxAngles[0] == 95 && s.rbxAngles[1] == 30 && s.rbxAngles[2] == -80, "angles in exit order");
-    CHECK(s.rbxDist == 310, "stamped with the distance to the manoeuvre");
-
-    CHECK(feedAll(q, frame("RBX,2,1"), s) == HUD_RBX, "no angles: 'this roundabout, nothing known'");
-    CHECK(s.rbxExit == 2 && s.rbxLeft == 1 && s.rbxCount == 0, "...clears the old ones");
-
-    CHECK(feedAll(q, frame("RBX,12,0,170,150,120,90,60,30,0,-30,-60,-90,-120,-150"), s) == HUD_RBX,
-          "twelve exits fit a line");
-    CHECK(s.rbxCount == 12 && s.rbxAngles[11] == -150, "all twelve kept");
-
-    hudStateInit(s);
-    CHECK(feedAll(q, frame("RBX,3,0,95,30"), s) == HUD_BAD, "fewer angles than the exit number refused");
-    CHECK(feedAll(q, frame("RBX,2,0,95,30,-80"), s) == HUD_BAD, "more angles than the exit number refused");
-    CHECK(feedAll(q, frame("RBX,0,0"), s) == HUD_BAD, "exit 0 refused");
-    CHECK(feedAll(q, frame("RBX,13,0"), s) == HUD_BAD, "exit 13 refused");
-    CHECK(feedAll(q, frame("RBX,2,2,10,20"), s) == HUD_BAD, "side must be 0 or 1");
-    CHECK(feedAll(q, frame("RBX,2,0,10,200"), s) == HUD_BAD, "an angle past 180 refused");
-    CHECK(feedAll(q, frame("RBX,2"), s) == HUD_BAD, "side missing refused");
-    CHECK(s.rbxExit == 0 && s.rbxCount == 0, "and a refused frame changes nothing");
+    CHECK(feedAll(q, frame("HUD,40,50,13,2,150,600,4000,196,A1"), s) == HUD_FRAME, "parses");
+    CHECK((s.flags & FLAG_LEFT_HAND) != 0, "bit 7 is FLAG_LEFT_HAND");
+    CHECK((s.flags & FLAG_ROUTE) != 0 && (s.flags & FLAG_GPS_OK) != 0, "and the others survive it");
   }
 
   printf(failures ? "\n%d CHECK(s) FAILED\n" : "\nall checks passed\n", failures);

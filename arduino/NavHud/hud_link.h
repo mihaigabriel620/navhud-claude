@@ -534,12 +534,6 @@ static bool linkPump(uint32_t now) {
       cur.rbAngleDist = tmp.rbAngleDist;
       got = true; lastFrameMs = now;
     }
-    else if (r == HUD_RBX) {
-      cur.rbxExit = tmp.rbxExit; cur.rbxLeft = tmp.rbxLeft; cur.rbxCount = tmp.rbxCount;
-      memcpy(cur.rbxAngles, tmp.rbxAngles, sizeof cur.rbxAngles);
-      cur.rbxDist = tmp.rbxDist;
-      got = true; lastFrameMs = now;
-    }
     if (r != HUD_NOTHING) tmp = cur;    // resync the scratch copy after each frame
   }
   return got;

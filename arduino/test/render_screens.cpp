@@ -108,41 +108,39 @@ static std::vector<std::pair<std::string, HudState>> extras() {
   return v;
 }
 
-/** A roundabout as the phone sends it: $HUD, then $RBX with every exit. */
-static HudState rab(int exitNo, bool left, std::initializer_list<int> angles, int dist = 150) {
-  HudState s = mk(38, 50, MAN_ROUNDABOUT, exitNo, dist, 700, 4100, FLAG_GPS_OK, "N5");
-  s.rbxExit = (uint8_t)exitNo; s.rbxLeft = left; s.rbxDist = dist;
-  for (int a : angles) s.rbxAngles[s.rbxCount++] = (int16_t)a;
+/** A roundabout as the phone sends it: $HUD, then $RAB with the exit's angle. */
+static HudState rab(int exitNo, int angle, bool left = false, int dist = 150) {
+  HudState s = mk(38, 50, MAN_ROUNDABOUT, exitNo, dist, 700, 4100,
+                  FLAG_GPS_OK | FLAG_ROUTE | (left ? FLAG_LEFT_HAND : 0), "N5");
+  s.rbAngle = (int16_t)angle; s.rbAngleExit = (uint8_t)exitNo;
+  s.rbAngleDist = dist;                            // stamped as it arrived
   return s;
 }
 
 /** The roundabout gallery: every case the owner is shown before flashing. */
 static std::vector<std::pair<std::string, HudState>> roundabouts() {
   std::vector<std::pair<std::string, HudState>> v;
-  v.push_back({"rab_3exits_take1_right",    rab(1, false, {90})});
-  v.push_back({"rab_3exits_take2_straight", rab(2, false, {90, 0})});
-  v.push_back({"rab_3exits_take3_left",     rab(3, false, {90, 0, -90})});
-  v.push_back({"rab_4exits_take2",          rab(2, false, {75, 5})});
-  v.push_back({"rab_4exits_take4_uturn",    rab(4, false, {90, 0, -90, -178})});
-  v.push_back({"rab_5exits_take4",          rab(4, false, {110, 50, -10, -70})});
-  v.push_back({"rab_7exits_take6",          rab(6, false, {140, 95, 50, 5, -40, -85})});
-  v.push_back({"rab_left_traffic_take2",    rab(2, true, {-90, 0})});
-  v.push_back({"rab_left_traffic_take3",    rab(3, true, {-90, 0, 90})});
-  v.push_back({"rab_far_dimmed",            rab(3, false, {90, 0, -90}, 1400)});
-  // An older app: $RAB only, no $RBX -- path and arrow, no stubs.
-  HudState s = mk(38, 50, MAN_ROUNDABOUT, 3, 150, 700, 4100, FLAG_GPS_OK, "N5");
-  s.rbAngle = -80; s.rbAngleExit = 3; s.rbAngleDist = 150;
-  v.push_back({"rab_old_app_rab_only", s});
-  // No angle from anywhere: the exit-number table.
+  // Clock positions: 12 is straight on, 3 is right, 9 is left.
+  v.push_back({"rab_9_oclock",           rab(3, -90)});
+  v.push_back({"rab_10_oclock",          rab(3, -60)});
+  v.push_back({"rab_12_oclock",          rab(2, 0)});
+  v.push_back({"rab_1_oclock",           rab(2, 30)});
+  v.push_back({"rab_4_oclock",           rab(1, 120)});
+  v.push_back({"rab_uturn",              rab(4, -178)});
+  v.push_back({"rab_left_traffic_9",     rab(1, -90, true)});
+  v.push_back({"rab_left_traffic_3",     rab(3, 90, true)});
+  v.push_back({"rab_left_traffic_uturn", rab(4, 178, true)});
+  v.push_back({"rab_far_dimmed",         rab(3, -90, false, 1400)});
+  // No angle from the phone: the exit-number guess.
   v.push_back({"rab_no_angle_table", mk(38, 50, MAN_ROUNDABOUT, 3, 150, 700, 4100,
-                                        FLAG_GPS_OK, "N5")});
+                                        FLAG_GPS_OK | FLAG_ROUTE, "N5")});
   // Exit 9, no angle, no table entry: a bare ring.
   v.push_back({"rab_no_angle_bare_ring", mk(38, 50, MAN_ROUNDABOUT, 9, 150, 700, 4100,
-                                            FLAG_GPS_OK, "N5")});
-  // The last roundabout's angles, with the next one 400 m away: not used.
-  s = rab(2, false, {90, 0}, 5);
+                                            FLAG_GPS_OK | FLAG_ROUTE, "N5")});
+  // The last roundabout's angle, with the next one 400 m away: not used.
+  HudState s = rab(2, 90, false, 5);
   s.distToMan = 400;
-  v.push_back({"rab_stale_angles_ignored", s});
+  v.push_back({"rab_stale_angle_ignored", s});
   return v;
 }
 

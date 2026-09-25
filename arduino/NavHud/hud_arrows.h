@@ -22,9 +22,10 @@
 // Drawn the way the owner picked from the Google Maps / Waze references
 // (docs/reference-icons/owner-picks): a thick ring, the part you drive --
 // in, round, out -- bold in the theme's bright colour, the rest of the ring
-// dim, a stub for every other exit the phone knows about, the exit number in
-// the middle with no box round it, and a big arrow on the exit. Anti-aliased
-// with TFT_eSPI's smooth arc and wide line.
+// dim, the exit number in the middle with no box round it, and a big arrow at
+// the exit's real angle, any way round the clock. No stubs for the other
+// exits: the owner tried them and chose the cleaner picture. Anti-aliased with
+// TFT_eSPI's smooth arc and wide line.
 //
 // Authored in the glyph box (-60..+60, units of u = size/120):
 #define RAB_R         30     // ring, outer edge
@@ -36,23 +37,18 @@
 #define RAB_HEAD_R0   40     // arrow head: base
 #define RAB_TIP_R     57     //             tip
 #define RAB_HEAD_W    13     //             half-width at the base
-#define RAB_STUB_W     7     // another exit
-#define RAB_STUB_R1   38     //   ends here
 // The exit arrow is kept this far round from the road in. A U-turn asks for
 // 180, which would lay the arrow on top of the entry road and read as one line
 // through a circle; 40 degrees apart the head clears the road in by 7 px and
 // they read as out-and-back. This is a symbol, not a survey.
 #define RAB_MAX_AIM  140
-// Stubs closer than this to the road in or to the arrow are left out: they
-// would merge with it.
-#define RAB_STUB_GAP  24
 
 /**
  * How far the distance to the manoeuvre may have grown since an angle arrived
  * and still be about the same roundabout, in metres.
  *
- * $RAB and $RBX arrive as their own frames, so an angle measured at one
- * roundabout could be aimed at the next. The exit number alone does not stop
+ * $RAB arrives as its own frame, so an angle measured at one roundabout
+ * could be aimed at the next. The exit number alone does not stop
  * that -- two roundabouts in a row, both "exit 2", is ordinary -- so each
  * angle is stamped with the distance to the manoeuvre as it arrives. Driving
  * towards one roundabout that only ever comes down; the next one starts far
@@ -75,7 +71,7 @@
 // rarely right, which is the worst way for a display to be wrong.
 //
 // So these are used only when the phone has sent no angle for this roundabout
-// on $RBX or $RAB -- see rabResolve().
+// on $RAB -- see rabResolve().
 static const float RAB_BEARINGS[7] =
     { 100.f, 30.f, -30.f, -80.f, -120.f, -150.f, -170.f };
 
@@ -87,8 +83,6 @@ struct RabDraw {
   int16_t aim;                            // the exit to take; HUD_RB_ANGLE_NONE = bare ring
   uint8_t exitNo;
   uint8_t left;                           // left-hand traffic: the ring runs clockwise
-  uint8_t nStubs;
-  int16_t stubs[HUD_RB_MAX_EXITS - 1];    // the exits before it
 };
 
 /** Is an angle stamped at `stampDist` still about the manoeuvre in `s`? */
@@ -97,8 +91,9 @@ static inline bool rabSameOne_(const HudState& s, int32_t stampDist) {
 }
 
 /**
- * What to draw for the roundabout in `s`: the phone's $RBX if it is about
- * this roundabout, else its $RAB, else the table, else a bare ring.
+ * What to draw for the roundabout in `s`: the phone's $RAB if it is about this
+ * roundabout, else the table, else a bare ring. Which way round comes from
+ * FLAG_LEFT_HAND on the $HUD frame.
  *
  * Zero-filled first, so two of these compare with memcmp.
  */
@@ -108,16 +103,8 @@ static RabDraw rabResolve(const HudState& s) {
   d.aim = HUD_RB_ANGLE_NONE;
   if (s.maneuver != MAN_ROUNDABOUT || s.rbExit < 1) return d;
   d.exitNo = s.rbExit;
+  d.left = (s.flags & FLAG_LEFT_HAND) ? 1 : 0;
 
-  if (s.rbxExit == s.rbExit && rabSameOne_(s, s.rbxDist)) {
-    d.left = s.rbxLeft;
-    if (s.rbxCount == s.rbExit) {
-      d.aim = s.rbxAngles[s.rbExit - 1];
-      d.nStubs = (uint8_t)(s.rbExit - 1);
-      for (uint8_t i = 0; i < d.nStubs; i++) d.stubs[i] = s.rbxAngles[i];
-      return d;
-    }
-  }
   if (s.rbAngle != HUD_RB_ANGLE_NONE && s.rbAngleExit == s.rbExit &&
       rabSameOne_(s, s.rbAngleDist)) {
     d.aim = s.rbAngle;
@@ -214,11 +201,6 @@ static void rabHead_(float tx, float ty, float w1x, float w1y, float w2x, float 
   }
 }
 
-static float rabAngleApart_(float a, float b) {
-  float d = fmodf(fabsf(a - b), 360.0f);
-  return d > 180.0f ? 360.0f - d : d;
-}
-
 /**
  * Roundabout. `col` is the path, `dim` the rest; `bg` is what is under it
  * (the smooth primitives blend their edges against it -- the panel cannot be
@@ -277,21 +259,12 @@ static void roundaboutArt(int cx, int cy, float u, const RabDraw& d, uint16_t co
   // ---- pass 1: smooth ----------------------------------------------------
   rabArc_(cx, cyc, ro, ri, to, from, dim, bg, true);     // the rest of the ring
   rabArc_(cx, cyc, ro, ri, from, to, col, bg, true);     // the part you drive
-  for (uint8_t i = 0; i < d.nStubs; i++) {               // the other exits
-    const float b = d.stubs[i];
-    if (rabAngleApart_(b, 180.0f) < RAB_STUB_GAP || rabAngleApart_(b, aim) < RAB_STUB_GAP)
-      continue;
-    float x0, y0, x1, y1;
-    rabPt_(cx, cyc, u, b, RAB_RM, &x0, &y0);
-    rabPt_(cx, cyc, u, b, RAB_STUB_R1, &x1, &y1);
-    tft.drawWideLine(x0, y0, x1, y1, RAB_STUB_W * u, dim, bg);
-  }
   tft.drawWideLine(inX0, inY0, inX1, inY1, roadW, col, bg);       // the road in
   tft.drawWideLine(sx0, sy0, sx1, sy1, roadW, col, bg);           // the shaft
 
   // ---- pass 2: the band, plain ---------------------------------------------
-  // The only seams are where the road in, the shaft and the stubs cross the
-  // band: their edges were blended against `bg` on top of it.
+  // The only seams are where the road in and the shaft cross the band: their
+  // edges were blended against `bg` on top of it.
   rabArc_(cx, cyc, ro, ri, from, to, col, bg, false);
 
   // ---- the head, last, as one shape with the end of the shaft -------------

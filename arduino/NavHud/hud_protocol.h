@@ -25,7 +25,6 @@
 #define HUD_STREET_MAX 21   // 20 chars + NUL
 #define HUD_LINE_MAX   96
 #define HUD_MAX_LANES  8
-#define HUD_RB_MAX_EXITS 12 // the most a $HUD frame's exit number can say
 
 // ---- maneuver codes (keep in sync with PROTOCOL.md and Maneuver.kt) --------
 enum : uint8_t {
@@ -54,7 +53,14 @@ enum : uint8_t {
   // "straight on" and drew an arrow at a parked car. A phone too old to send
   // this bit leaves it clear, so old app plus new firmware means no arrow --
   // which is the safe direction for this particular mistake to fail in.
-  FLAG_ROUTE      = 1 << 6
+  FLAG_ROUTE      = 1 << 6,
+  // Traffic keeps left where the next manoeuvre is (UK, Ireland, ...), so a
+  // roundabout runs clockwise and its driven path goes round the other way.
+  // One bit on the frame the manoeuvre is on, rather than a frame of its own:
+  // firmware that predates it tests only the bits it knows and ignores this
+  // one, and a phone too old to set it leaves it clear -- which is right for
+  // every country between Belgium and Romania.
+  FLAG_LEFT_HAND  = 1 << 7
 };
 
 // Camera alert kinds, matching the app's CameraPolicy/Kind ordering.
@@ -111,18 +117,6 @@ struct HudState {
   /** distToMan when that $RAB arrived: see rabResolve() in hud_arrows.h. */
   int32_t rbAngleDist;
 
-  /**
-   * $RBX: the angle of every exit up to and including the one to take, in exit
-   * order and in the $RAB convention, and which way the roundabout turns.
-   * rbxCount is 0 when the phone knows this roundabout but not its exits --
-   * which is still worth sending, because it clears the last roundabout's.
-   */
-  uint8_t rbxExit;        // 0 = no $RBX yet
-  uint8_t rbxLeft;        // 1 = left-hand traffic: the ring runs clockwise
-  uint8_t rbxCount;       // 0, or rbxExit
-  int16_t rbxAngles[HUD_RB_MAX_EXITS];
-  int32_t rbxDist;        // distToMan when it arrived
-
   uint8_t laneCount;
   uint8_t laneActive;     // bit i set when lane i is usable
   uint8_t lanes[HUD_MAX_LANES];         // every movement the lane allows
@@ -135,8 +129,6 @@ inline void hudStateInit(HudState& s) {
   s.street[0] = '\0';
   s.camKind = CAM_NONE; s.camDistance = 0; s.camLimit = 0;
   s.rbAngle = HUD_RB_ANGLE_NONE; s.rbAngleExit = 0; s.rbAngleDist = 0;
-  s.rbxExit = 0; s.rbxLeft = 0; s.rbxCount = 0; s.rbxDist = 0;
-  for (uint8_t i = 0; i < HUD_RB_MAX_EXITS; i++) s.rbxAngles[i] = 0;
   s.laneCount = 0; s.laneActive = 0;
   for (uint8_t i = 0; i < HUD_MAX_LANES; i++) { s.lanes[i] = 0; s.laneChosen[i] = 0; }
 }
@@ -148,7 +140,6 @@ enum HudParseResult : uint8_t {
   HUD_CAM,           // $CAM: camera fields of `out` updated
   HUD_LANE,          // $LANE: lane fields of `out` updated
   HUD_RAB,           // $RAB: the roundabout exit bearing updated
-  HUD_RBX,           // $RBX: every exit's angle and the side of the road
   HUD_GEOM,          // $GEOM: parser.geom holds new screen geometry
   HUD_GEOM_SAVE,     // $GEOMSAVE: write the current geometry to flash
   HUD_GEOM_QUERY,    // $GEOM?: send the current geometry back up the cable
@@ -219,7 +210,6 @@ class HudParser {
     if (strncmp(buf_, "CAM,", 4) == 0)  return parseCam_(out);
     if (strncmp(buf_, "LANE,", 5) == 0) return parseLane_(out);
     if (strncmp(buf_, "RAB,", 4) == 0)  return parseRab_(out);
-    if (strncmp(buf_, "RBX,", 4) == 0)  return parseRbx_(out);
     if (strcmp(buf_, "GEOMTEST,1") == 0) return HUD_GEOM_TEST_ON;
     if (strcmp(buf_, "GEOMTEST,0") == 0) return HUD_GEOM_TEST_OFF;
     if (strcmp(buf_, "GEOMSAVE") == 0)  return HUD_GEOM_SAVE;
@@ -297,45 +287,6 @@ class HudParser {
     out.rbAngle     = (int16_t)deg;
     out.rbAngleDist = out.distToMan;
     return HUD_RAB;
-  }
-
-  /**
-   * $RBX,<exit>,<side>[,<a1>,...,<aN>]  -- the whole roundabout, for the glyph.
-   *
-   * <side> is 0 where traffic keeps right (the ring runs anticlockwise) and 1
-   * where it keeps left. <a1>..<aN> are the angles of exits 1..N from the road
-   * you come in on, in the $RAB convention (0 ahead, positive right, +-180);
-   * the last one is the exit to take, so N is <exit>. N is 0 when the phone
-   * knows the roundabout but could not count its exits: that clears the last
-   * roundabout's angles rather than leaving them to be drawn on this one.
-   *
-   * Like $RAB it carries the exit number, and the distance to the manoeuvre is
-   * stamped on it as it arrives: together they tie it to one roundabout (see
-   * rabResolve in hud_arrows.h). $RAB stays for older firmware; this one says
-   * more and wins when both are there.
-   */
-  HudParseResult parseRbx_(HudState& out) {
-    char* f[4 + HUD_RB_MAX_EXITS];
-    const int n = split_(f, 4 + HUD_RB_MAX_EXITS);
-    if (n < 3) return HUD_BAD;
-    const long ex   = atol(f[1]);
-    const long side = atol(f[2]);
-    if (ex < 1 || ex > HUD_RB_MAX_EXITS) return HUD_BAD;
-    if (side != 0 && side != 1) return HUD_BAD;
-    const int count = n - 3;
-    if (count != 0 && count != ex) return HUD_BAD;
-    int16_t a[HUD_RB_MAX_EXITS];
-    for (int i = 0; i < count; i++) {
-      const long deg = atol(f[3 + i]);
-      if (deg < -180 || deg > 180) return HUD_BAD;   // see parseRab_
-      a[i] = (int16_t)deg;
-    }
-    out.rbxExit  = (uint8_t)ex;
-    out.rbxLeft  = (uint8_t)side;
-    out.rbxCount = (uint8_t)count;
-    for (int i = 0; i < HUD_RB_MAX_EXITS; i++) out.rbxAngles[i] = (i < count) ? a[i] : 0;
-    out.rbxDist  = out.distToMan;
-    return HUD_RBX;
   }
 
   // $CAM,<kind>,<distance>,<limit>

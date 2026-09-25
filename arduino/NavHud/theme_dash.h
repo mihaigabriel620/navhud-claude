@@ -283,8 +283,8 @@ struct DashShown {
   uint8_t  maneuver = 255;
   int32_t  dist     = -1;
   // Part of the glyph's shape, not of its position: a roundabout with a
-  // different exit, bearing, side of the road or set of stubs is a different
-  // picture and has to be repainted. Zero until a roundabout is drawn.
+  // different exit, bearing or side of the road is a different picture and
+  // has to be repainted. Zero until a roundabout is drawn.
   RabDraw  rb       = {};
   char     street[HUD_STREET_MAX] = { 0 };
   bool     camera   = false;
@@ -481,7 +481,7 @@ static void dashLimit_(const HudState& s, bool phoneUp) {
 static void dashTurn_(const HudState& s, bool phoneUp) {
   const uint8_t man = phoneUp ? s.maneuver : (uint8_t)MAN_NONE;
   const int32_t d   = phoneUp ? s.distToMan : -1;
-  // The roundabout's exit, bearings and stubs are part of the SHAPE. Two
+  // The roundabout's exit, bearing and side are part of the SHAPE. Two
   // roundabouts in a row with no other manoeuvre between them once left the
   // first one's arrow and digit on the glass for the second, because `man` had
   // not changed and `d` alone does not force a redraw. Resolved here so the

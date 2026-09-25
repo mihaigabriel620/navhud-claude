@@ -601,14 +601,6 @@ int main() {
     CHECK(cur.rbAngleExit == 2 && cur.rbAngle == -95, "a later $HUD frame keeps it");
     printf("    exit %u at %d deg\n", (unsigned)cur.rbAngleExit, (int)cur.rbAngle);
 
-    // And $RBX, the whole roundabout, the same way.
-    g_millis += 250;
-    Serial.feed(wrap("RBX,2,1,-60,-95"));
-    pump(1);
-    CHECK(cur.rbxExit == 2 && cur.rbxLeft == 1 && cur.rbxCount == 2 &&
-          cur.rbxAngles[0] == -60 && cur.rbxAngles[1] == -95, "the $RBX exits are kept in cur");
-    CHECK(shown.rbxCount == 2, "and a repaint was triggered for them");
-    CHECK(cur.rbxDist == 280, "stamped with the distance of the frame before it");
   }
 
   printf("19. the six display states\n");
