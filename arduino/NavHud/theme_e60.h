@@ -145,7 +145,11 @@ static void e60DrawSpeed(const HudState& s) {
     }
   }
 
-  tft.setTextColor(E60_AMBER_DIM, E60_BG);
+  // No background colour: font 4's 26 px cell starts at y 104, four rows
+  // above the bottom of the font 8 digits, and a background fill cut those
+  // rows off every speed. The whole block was cleared at the top of this
+  // function, so there is nothing under the label to paint over.
+  tft.setTextColor(E60_AMBER_DIM);
   tft.setTextDatum(BC_DATUM);
   tft.drawString("km/h", E60_SPD_CX, E60_UNIT_Y, 4);
 }
