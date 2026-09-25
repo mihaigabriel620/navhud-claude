@@ -7,6 +7,48 @@
 //  Configure TFT_eSPI first! Copy arduino/config/User_Setup.h over
 //  User_Setup.h in the TFT_eSPI library folder. See docs/BUILD.md.
 //
+//  ---- file map -----------------------------------------------------------
+//
+//  This file only starts things and runs the loop. Each job is one file:
+//
+//    hud_config.h     every knob: what is fitted, timings, brightness
+//    hud_pins.h       every pin, checked by the compiler
+//    hud_state.h      the variables the files share
+//    hud_bus.h        the SPI bus the panel and the MCP2515 share
+//    hud_protocol.h   the wire format: frame grammar, checksums, parser
+//    hud_link.h       the USB cable: frames up, commands down, typed commands
+//    hud_can.h        the MCP2515 driver, listen-only
+//    hud_car.h        the E60's CAN frames turned into speed, rpm, PS, volts
+//    hud_i2c.h        the I2C bus, and freeing it when a chip holds it low
+//    hud_compass.h    the QMC5883P: heading and its calibration
+//    hud_backlight.h  lit by the key, dimmed by the phone
+//    hud_display.h    which screen is up, and switching to it
+//    hud_theme.h      picks the theme; primitives both themes use
+//    theme_dash.h     the default layout, three bands
+//    theme_e60.h      the E60-style layout
+//    hud_arrows.h     turn, roundabout and U-turn glyphs
+//    hud_aa.h         the anti-aliased fill those glyphs are drawn with
+//    hud_canvas.h     every draw call, through the keystone on its way out
+//    hud_geom.h       the mirror and keystone maths
+//    hud_align.h      panel orientation and the alignment pattern
+//    hud_settings.h   what survives a power cycle; the only file writing flash
+//    hud_store.h      the byte layout of the saved alignment
+//
+//  If this breaks -> look here:
+//
+//    no car data, or the bus misbehaves ...... hud_can.h, then hud_bus.h
+//    a car number is wrong ................... hud_car.h
+//    a message missing or wrong on the cable . hud_link.h, hud_protocol.h
+//    compass not found ....................... hud_i2c.h, hud_compass.h
+//    heading wrong ........................... hud_compass.h
+//    the wrong screen is up .................. hud_display.h
+//    something drawn wrong ................... theme_dash.h / theme_e60.h
+//    a wrong or jagged arrow ................. hud_arrows.h, hud_aa.h
+//    picture mirrored or trapezoidal ......... hud_align.h, hud_geom.h
+//    panel dark, or too bright ............... hud_backlight.h
+//    a setting forgotten between boots ....... hud_settings.h
+//    garbage on the glass while CAN runs ..... hud_bus.h, hud_pins.h
+//
 //  ---- wiring -------------------------------------------------------------
 //
 //  The authoritative map is hud_pins.h, where the compiler checks it. This is
