@@ -347,7 +347,14 @@ static void cmdStatus() {
 #ifdef HUD_MAG
   snprintf(b, sizeof b, "  compass : %s", compass.describe());
   diag(b);
-  if (compass.present()) {
+  if (!compass.present()) {
+    uint8_t id = 0;
+    const bool acked = compass.probe(id);
+    snprintf(b, sizeof b, "            0x2C %s, chip id 0x%02X (want 80)%s",
+             acked ? "ACKed" : "did NOT ack", (unsigned)id,
+             acked ? "" : ": check its VCC 3V3, GND, SDA D3, SCL D4");
+    diag(b);
+  } else {
     snprintf(b, sizeof b, "            heading %.1f deg, field %.1f uT, range +-%u G%s",
              heading.deg, heading.fieldUt, (unsigned)compass.rangeG,
              heading.healthy() ? "" : "  <- NOT the Earth's field");
@@ -410,6 +417,22 @@ static void cmdStatus() {
   } else {
     diag("            Optional. Without it the heading is only right with the");
     diag("            box level: 1 deg of tilt is about 2 deg of heading here.");
+  }
+  // Everything that answers on the bus, named where this board knows the chip:
+  // the quickest way to tell a loose wire from a chip at an address nobody
+  // expected. A stuck-low SDA reads as an answer everywhere, hence the cap.
+  {
+    int n = snprintf(b, sizeof b, "  i2c     :");
+    uint8_t found = 0;
+    for (uint8_t a = 0x08; a < 0x78; a++) {
+      if (!i2cAcks(a) || ++found > 8) continue;
+      const char* who = a == 0x2C ? " QMC5883P" : (a == 0x68 || a == 0x69) ? " MPU-6050" :
+                        a == 0x0D ? " QMC5883L" : a == 0x1E ? " HMC5883L" : "";
+      n += snprintf(b + n, sizeof b - n, " 0x%02X%s", a, who);
+    }
+    if (found == 0)     snprintf(b + n, sizeof b - n, " nothing answers");
+    else if (found > 8) snprintf(b + n, sizeof b - n, " ... %u in all: SDA held low?", found);
+    diag(b);
   }
   if (i2cWasStuck) {
     diag("            The I2C bus was being held low at boot and had to be");

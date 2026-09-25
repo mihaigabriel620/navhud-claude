@@ -816,6 +816,8 @@ int main() {
     Serial.feed("status\r\n");
     g_millis += 10; pump(1);
     CHECK(Serial.out_.find("raw field") != std::string::npos, "the raw field is shown");
+    CHECK(Serial.out_.find("i2c     : 0x2C QMC5883P 0x68 MPU-6050") != std::string::npos,
+          "and every chip that answers on the bus, by name");
     CHECK(Serial.out_.find("upside down") == std::string::npos,
           "the MPU, mounted upside down and set so, reads level");
     CHECK(Serial.out_.find("wrong way up") == std::string::npos,
@@ -847,6 +849,24 @@ int main() {
     Wire.mpuPresent = true;
     drive(0, 4000);                                // back, for what follows
     CHECK(motion.present(), "and one plugged back in is found");
+  }
+
+  printf("18j. a compass wire off: `status` says what does and does not answer\n");
+  {
+    Wire.qmcPresent = false;                       // nothing ACKs at 0x2C
+    drive(0, 1500);
+    CHECK(!compass.present(), "the silent compass is written off");
+    Serial.out_.clear();
+    Serial.feed("status\r\n");
+    g_millis += 10; pump(1);
+    CHECK(Serial.out_.find("0x2C did NOT ack") != std::string::npos, "the compass's address is probed");
+    CHECK(Serial.out_.find("i2c     : 0x68 MPU-6050\r") != std::string::npos,
+          "and the scan shows the MPU alone");
+    const size_t at = Serial.out_.find("i2c     :");
+    if (at != std::string::npos) printf("    %s\n", Serial.out_.substr(at, Serial.out_.find('\r', at) - at).c_str());
+    Wire.qmcPresent = true;
+    drive(0, 4000);
+    CHECK(compass.present(), "plugged back in, it is found again");
   }
 #endif
 

@@ -92,6 +92,12 @@ static bool i2cRecover() {
 /** What recover() found, so setup() and `status` can report it. */
 static bool i2cWasStuck = false;
 
+/** Does anything acknowledge at this address? For `status`'s bus scan. */
+static bool i2cAcks(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
 /** Bring the bus up. Call once, before anything on it is touched. */
 static void i2cBegin() {
   i2cWasStuck = !i2cRecover();
