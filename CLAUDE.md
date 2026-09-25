@@ -74,7 +74,7 @@ Waze / Google Maps everywhere.
 - Build: `arduino-cli compile --fqbn esp8266:esp8266:d1_mini arduino/NavHud`
   with core esp8266:esp8266 3.1.2, libraries TFT_eSPI 2.5.43 and mcp_can 1.5.1;
   **copy `arduino/config/User_Setup.h` into the TFT_eSPI library folder** or it
-  compiles fine and drives the wrong pins. 2.8: flash 56 %, RAM 45 %, IRAM 94 %
+  compiles fine and drives the wrong pins. 2.9: flash 56 %, RAM 45 %, IRAM 94 %
   (IRAM is the tight one — no new IRAM_ATTR code). CI does this compile.
 - CI: `.github/workflows/firmware.yml` on every push to `arduino/`/`tools/`:
   `make check`, `make render` (PNGs as artifact `hud-screens`), and the real

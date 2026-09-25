@@ -39,8 +39,10 @@ guesses from the exit number, and when it cannot guess it draws a bare ring.
 The phone's turn card draws the same. All these pictures are the firmware's own
 drawing, rendered on a PC: `cd arduino/test && make docs-images`.
 
-Open `tools/layout_preview.html` in a browser to play the whole drive, flip
-themes, and tune the layout before you flash anything.
+To see every screen exactly as the firmware draws it before you flash
+anything, run `cd arduino/test && make render` (PNGs of both themes in
+`arduino/test/out/`). `tools/layout_preview.html` is the old 320×240 browser
+preview and no longer matches the HUD.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in 1.8.1, and
 [docs/FEATURES.md](docs/FEATURES.md) for the full list of what it does.
