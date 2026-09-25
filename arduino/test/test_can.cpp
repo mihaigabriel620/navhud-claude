@@ -14,6 +14,7 @@ SPIClass SPI;
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include "../NavHud/hud_config.h"
 #include "../NavHud/hud_car.h"
 bool canOk = false;
@@ -154,6 +155,56 @@ static void testPump() {
   canPump(c, t + 450);
   CHECK(SPI.transactions == before, "and the bus is not touched again");
   SPI.stuck = -1;
+}
+
+/**
+ * A full repaint blocks the loop for 100-185 ms. The frames the MCP2515 holds
+ * through it are the OLDEST of that window (a full buffer drops the newer
+ * ones), but they are stamped when they are finally read. Differencing a fresh
+ * frame against one of those reads the distance of the whole repaint over the
+ * time since the read: a spike.
+ */
+static void testSpeedAfterRepaint() {
+  printf("0x1A6 across a 150 ms repaint\n");
+  SPI.reset(); canOk = canBegin();
+  CarState c;
+  uint8_t d[8] = {0};
+  const uint16_t perFrame = 50;               // 50 km/h: 50 counts per 100 ms
+  uint16_t cnt = 1000;
+  uint32_t t = 10000;                         // frame times: every 100 ms
+  auto put = [&](bool buf1) {
+    d[0] = (uint8_t)cnt; d[1] = (uint8_t)(cnt >> 8);
+    SPI.deliver(buf1, CAR_ID_SPEED, d, 8);
+  };
+  // Steady driving, drained every 30 ms.
+  for (int i = 0; i < 8; i++) {
+    put(false);
+    for (uint32_t k = t; k < t + 100; k += 30) canPump(c, k);
+    cnt += perFrame; t += 100;
+  }
+  CHECK(c.kmh > 45.0f && c.kmh < 55.0f, "steady 50 km/h before, got %.1f", c.kmh);
+
+  // The repaint: nothing drained from t-10 to t+150. The frames at t and t+100
+  // wait in RXB0 and RXB1; nothing else fits.
+  canPump(c, t - 10);
+  put(false); cnt += perFrame;
+  put(true);  cnt += perFrame;
+  float worst = 0.0f;
+  uint32_t k = t + 150;
+  for (int i = 0; i < 6; i++) {               // then frames every 100 ms again
+    canPump(c, k);
+    if (!carStale(c.tSpeed, k) && fabsf(c.kmh - 50.0f) > worst) worst = fabsf(c.kmh - 50.0f);
+    put(false);
+    const uint32_t next = t + 200 + 100 * (uint32_t)i;
+    for (k = next; k < next + 100; k += 30) {
+      canPump(c, k);
+      if (fabsf(c.kmh - 50.0f) > worst) worst = fabsf(c.kmh - 50.0f);
+    }
+    cnt += perFrame;
+  }
+  CHECK(worst < 8.0f, "after the repaint the speed stays near 50, worst error %.1f km/h", worst);
+  CHECK(!carStale(c.tSpeed, k) && c.tSpeed > t + 150, "and it is being measured again, not held");
+  printf("  worst error after the repaint: %.1f km/h\n", worst);
 }
 
 static void testIgnition() {
@@ -335,6 +386,7 @@ static void testUnknownIds() {
 int main() {
   testBringUp();
   testPump();
+  testSpeedAfterRepaint();
   testIgnition();
   testSpeed();
   testRpmTorqueVolts();

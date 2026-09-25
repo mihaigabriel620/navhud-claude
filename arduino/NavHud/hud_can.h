@@ -280,8 +280,14 @@ static uint8_t canPump(CarT& car, uint32_t now) {
   // would dip and overshoot by nearly 40 % around every screen transition.
   // A speed we cannot timestamp honestly is not a speed, so the baseline is
   // dropped and re-acquired on the next frame, one frame later.
-  if (canHavePumped_ && (uint32_t)(now - canLastPumpMs_) > CAN_STALE_GAP_MS)
-    carRebaseline(car);
+  //
+  // And the frames waiting after such a gap are not fed as speed at all. They
+  // are the OLDEST of the gap -- a full buffer drops the newer ones -- so once
+  // stamped `now` they became the new baseline, and the next fresh frame read
+  // the whole repaint's distance over one frame's time: 200 km/h at a true 50.
+  // Dropping them costs one frame; the next two re-acquire.
+  const bool gap = canHavePumped_ && (uint32_t)(now - canLastPumpMs_) > CAN_STALE_GAP_MS;
+  if (gap) carRebaseline(car);
   canLastPumpMs_ = now;
   canHavePumped_ = true;
 
@@ -319,6 +325,7 @@ static uint8_t canPump(CarT& car, uint32_t now) {
     // speed frame and was decoded from whatever bytes were left in the buffer.
     if (id & 0xC0000000) continue;
     if (len > 8) continue;                        // belt and braces
+    if (gap && id == CAR_ID_SPEED) continue;      // see the top of this function
 
     carFeed(car, (uint16_t)id, buf, len, now);
   }
