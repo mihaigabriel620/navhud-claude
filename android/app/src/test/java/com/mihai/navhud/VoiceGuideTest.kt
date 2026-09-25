@@ -83,7 +83,8 @@ class VoiceGuideTest {
                          Man.KEEP_LEFT, Man.KEEP_RIGHT)) {
             assertArrayEquals(intArrayOf(1200, 500, 200), VoiceGuide.thresholdsFor(120, m))
             assertEquals(3, VoiceGuide.thresholdsFor(70, m).size)
-            assertEquals(3, VoiceGuide.thresholdsFor(30, m).size)
+            // In town, two: three calls on close turns was too much talk.
+            assertArrayEquals(VoiceGuide.SLOW, VoiceGuide.thresholdsFor(30, m))
         }
         for (m in listOf(Man.LEFT, Man.RIGHT, Man.SLIGHT_RIGHT, Man.ROUNDABOUT, Man.UTURN)) {
             assertArrayEquals(VoiceGuide.FAST, VoiceGuide.thresholdsFor(120, m))
@@ -91,8 +92,7 @@ class VoiceGuideTest {
         }
         // Scaled down with speed: every exit call lands about the same seconds ahead.
         for ((kph, band) in listOf(120 to VoiceGuide.FAST_EXIT,
-                                   70 to VoiceGuide.MEDIUM_EXIT,
-                                   30 to VoiceGuide.SLOW_EXIT)) {
+                                   70 to VoiceGuide.MEDIUM_EXIT)) {
             val mps = kph / 3.6
             assertTrue("first exit call at $kph km/h", band[0] / mps in 25.0..45.0)
             assertTrue("last exit call at $kph km/h", band[2] / mps in 4.0..9.0)

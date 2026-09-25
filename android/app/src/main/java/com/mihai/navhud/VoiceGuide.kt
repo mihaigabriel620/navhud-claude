@@ -69,11 +69,12 @@ class VoiceGuide internal constructor(
          * Motorway exits and forks get three calls, like Waze and Google Maps:
          * a lane change at 120 km/h needs warning well before the gore, and a
          * single "in 800 metres" was forgotten by the time the exit came. The
-         * same seconds ahead at every speed, so the bands scale down.
+         * same seconds ahead at every speed, so the bands scale down. Not in
+         * town: below 50 km/h a fork or slip road gets the normal two calls --
+         * three on close turns was the app talking too much.
          */
         internal val FAST_EXIT   = intArrayOf(1200, 500, 200)   // >= 90 km/h
         internal val MEDIUM_EXIT = intArrayOf(700, 300, 120)    // >= 50 km/h
-        internal val SLOW_EXIT   = intArrayOf(300, 120, 50)     // town
 
         /** Exits, slip roads and forks: the maneuvers that get three calls. */
         internal fun isExit(maneuver: Int): Boolean = when (maneuver) {
@@ -170,7 +171,7 @@ class VoiceGuide internal constructor(
             return when {
                 speedKph >= 90 -> if (exit) FAST_EXIT else FAST
                 speedKph >= 50 -> if (exit) MEDIUM_EXIT else MEDIUM
-                else -> if (exit) SLOW_EXIT else SLOW
+                else -> SLOW
             }
         }
 

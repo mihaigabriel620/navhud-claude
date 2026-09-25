@@ -146,4 +146,13 @@ class RegressionCheckTest {
         assertTrue(t.offRoute)
         assertEquals(20, f.limitKph)
     }
+
+    // ---- R7: a fork in town is not a motorway exit -------------------------
+
+    @Test fun `forks and ramps in town get two calls, motorway exits three`() {
+        for (m in listOf(Man.FORK_LEFT, Man.RAMP_RIGHT, Man.KEEP_LEFT)) {
+            assertEquals("$m at 40 km/h", 2, VoiceGuide.thresholdsFor(40, m).size)
+            assertEquals(listOf(1200, 500, 200), VoiceGuide.thresholdsFor(120, m).toList())
+        }
+    }
 }
