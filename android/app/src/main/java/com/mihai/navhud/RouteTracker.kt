@@ -428,8 +428,11 @@ class RouteTracker(val route: Route) {
             // destination marker rather than a misleading "carry straight on".
             maneuver = if (arrived || next == null) Man.ARRIVE else next.code,
             roundaboutExit = if (next?.code == Man.ROUNDABOUT) next.exit else 0,
+            // Only with an exit number to tie it to. $RAB cannot carry one
+            // without it, so the HUD draws a bare ring for Mapbox's "roundabout
+            // turn"; the card has to as well, or the two disagree.
             roundaboutBearing =
-                if (next?.code == Man.ROUNDABOUT) next.exitBearing else null,
+                if (next?.code == Man.ROUNDABOUT && next.exit in 1..12) next.exitBearing else null,
             distToManeuverM = if (next != null) (next.alongM - along).roundToInt() else 0,
             etaSeconds = etaS,
             remainingM = remaining.roundToInt(),

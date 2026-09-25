@@ -41,7 +41,8 @@ class RoundaboutBearingTest {
      */
     private fun ring(exit: Int, side: String = "right", banner: String = "",
                      before: String = ""","bearing_before":2.0,"bearing_after":62.0""",
-                     withIntersections: Boolean = true, lastNode: String? = null): String {
+                     withIntersections: Boolean = true, lastNode: String? = null,
+                     type: String = "roundabout"): String {
         fun out(n: Int) = if (exit == n) 1 else 2
         val west = lastNode
             ?: """{"location":[4.3094,50.8004],"bearings":[20,268,170],"entry":[false,true,true],"in":0,"out":${out(3)}}"""
@@ -60,7 +61,7 @@ class RoundaboutBearingTest {
         {"name":"Grote Baan","distance":400.0,"driving_side":"$side"$banner,
          "maneuver":{"type":"depart","modifier":"","location":[4.30,50.80]}},
         {"name":"Ring","distance":200.0,"driving_side":"$side",
-         "maneuver":{"type":"roundabout","modifier":"slight right","exit":$exit,
+         "maneuver":{"type":"$type","modifier":"slight right"${if (exit > 0) ",\"exit\":$exit" else ""},
                      "location":[4.3100,50.8000]$before}$ints},
         {"name":"Steenweg","distance":300.0,
          "maneuver":{"type":"turn","modifier":"left","location":[4.32,50.80]}}
@@ -137,6 +138,39 @@ class RoundaboutBearingTest {
                          flags = HudFrame.FLAG_ROUTE or HudFrame.FLAG_LEFT_HAND, street = "A1")
         val body = f.encode().substringAfter('$').substringBefore('*')
         assertEquals("HUD,-1,0,13,2,0,0,0,192,A1", body)
+    }
+
+    // ---- the frame both displays draw from ------------------------------------
+
+    private fun firstFrame(json: String): HudFrame {
+        val r = parse(json)
+        return RouteTracker(r).update(r.pts[0][0], r.pts[0][1], 10f, 0f, hasFix = true, nowMs = 100_000L)
+    }
+
+    @Test fun `the tracker's frame carries the exit, its angle and the side of the road`() {
+        val f = firstFrame(ring(3))
+        assertEquals(Man.ROUNDABOUT, f.maneuver)
+        assertEquals(3, f.roundaboutExit)
+        assertEquals(-94, f.roundaboutBearing)
+        assertEquals(0, f.flags and HudFrame.FLAG_LEFT_HAND)
+        val uk = firstFrame(ring(3, side = "left"))
+        assertTrue(uk.flags and HudFrame.FLAG_LEFT_HAND != 0)
+    }
+
+    /**
+     * Mapbox's "roundabout turn" has no exit number. The HUD cannot be sent an
+     * angle without one ($RAB ties the two together) and draws a bare ring, so
+     * the phone's card must not draw an arrow from the banner either: the two
+     * displays side by side would disagree.
+     */
+    @Test fun `a roundabout with no exit number carries no angle, even with a banner`() {
+        val banner = ""","bannerInstructions":[{"distanceAlongGeometry":400.0,
+            "primary":{"text":"Ring","type":"roundabout turn","degrees":270,"driving_side":"right"}}]"""
+        val f = firstFrame(ring(0, banner = banner, type = "roundabout turn"))
+        assertEquals(Man.ROUNDABOUT, f.maneuver)
+        assertEquals(0, f.roundaboutExit)
+        assertNull(f.roundaboutBearing)
+        assertNull(f.rabLine())
     }
 
     // ---- what goes on the wire ---------------------------------------------
