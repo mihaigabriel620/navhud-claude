@@ -1785,7 +1785,11 @@ class HudService : Service(), LocationListener {
 
     private fun fetchCameras(r: Route) {
         if (cameraPolicy == CameraPolicy.OFF) {
-            watcher = null; watcherCameras = emptyList(); return
+            watcher = null; watcherCameras = emptyList()
+            // Nothing held now, so refetch as soon as alerts are allowed again
+            // (maybeRefreshCameras), not 30 min after the last real fetch.
+            lastCameraFetchMs = 0L
+            return
         }
         val gen = routeGen
         val cg = cameraGen
