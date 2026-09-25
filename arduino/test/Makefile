@@ -124,8 +124,12 @@ render: render_dash render_e60
 	./render_dash out
 	./render_e60 out
 
+# The pictures in docs/img/ (README), cut from out/. Needs python3 with Pillow.
+docs-images: render
+	python3 docs_images.py
+
 clean:
 	rm -f $(BINS) render_dash render_e60 *.exe
 	rm -rf out
 
-.PHONY: all check clean render
+.PHONY: all check clean render docs-images

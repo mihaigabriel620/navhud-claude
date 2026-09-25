@@ -80,6 +80,8 @@ Waze / Google Maps everywhere.
   the python reference models — needs python3) and `make render` (PNGs of every
   screen state, both themes, into `arduino/test/out/`, readable orientation;
   also runs pixel checks — a field drawn alone must survive the full screen).
+  `make docs-images` rebuilds README's pictures in `docs/img/` from those
+  renders (needs Pillow); rerun it whenever what the HUD draws changes.
   On the owner's PC use `mingw32-make` from WinLibs GCC (not on PATH in older
   shells:
   `%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*\mingw64\bin`).

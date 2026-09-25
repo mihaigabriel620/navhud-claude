@@ -7,25 +7,37 @@ spoken guidance, and pushes speed limit, turn arrow, distance and ETA down a USB
 cable to an Arduino-class board driving a TFT.
 
 ```
-   Android head unit                               ESP32 / Arduino
+   Android head unit                               ESP8266 (D1 mini)
   ┌────────────────────────┐                      ┌──────────────────┐
   │ GPS @ 1 Hz             │                      │  NMEA-style      │
   │ Mapbox Directions      │   USB serial         │  parser          │
   │   + maxspeed           │ ───────────────────► │        ↓         │
-  │ RouteTracker           │   $HUD,...*CS        │  ILI9341 TFT     │
-  │   projection, limits   │   115200 8N1, 4 Hz   │  320×240         │
-  │ Map · search · voice   │                      │  E60 amber theme │
+  │ RouteTracker           │   $HUD,...*CS        │  ST7796 TFT      │
+  │   projection, limits   │   115200 8N1, 4 Hz   │  480×320         │
+  │ Map · search · voice   │                      │  dash/E60 themes │
   └────────────────────────┘                      └──────────────────┘
 ```
 
-![The four main display states in the E60 theme](docs/img/hud-e60.png)
+![Four moments of a drive in the default dash theme](docs/img/hud-states.png)
 
-Top to bottom: approaching a roundabout with the exit number, cruising the
-motorway 8 over the limit (BMW's bracket treatment on the number), a stretch
-where the map has no speed-limit data — the dashed inner ring means "this is the
-last limit I knew about" — and arrival.
+The default dash theme, top to bottom: approaching a roundabout (exit 2, the
+arrow at the exit's real angle), 8 over the limit on the motorway (the speed
+turns red), the ramp off it, and arrival. Along the top, the car's own data from
+the CAN bus: rev bar, battery, power and peak power.
 
-A full-colour theme is included too; one `#define` switches between them.
+![The same four moments in the E60 theme](docs/img/hud-e60.png)
+
+The E60 theme (define `HUD_THEME_E60_CLASSIC`) puts BMW's brackets round an
+over-limit speed, and a dashed inner ring round a limit on a stretch where the
+map has no speed-limit data — "this is the last limit I knew about".
+
+![Roundabout exits as the HUD draws them](docs/img/hud-roundabouts.png)
+
+Roundabouts: the ring dim, the path you drive bright, the arrow at the exit's
+real angle from the route, mirrored where traffic keeps left. With no angle it
+guesses from the exit number, and when it cannot guess it draws a bare ring.
+The phone's turn card draws the same. All these pictures are the firmware's own
+drawing, rendered on a PC: `cd arduino/test && make docs-images`.
 
 Open `tools/layout_preview.html` in a browser to play the whole drive, flip
 themes, and tune the layout before you flash anything.
@@ -62,7 +74,6 @@ tools/layout_preview.html  the display in a browser, for tuning the layout
 tools/geo_reference.py     Python port of Geo.kt, verifies the geometry
 tools/tracker_reference.py Python port of RouteTracker.kt, verifies the logic
 tools/voice_reference.py   Python port of VoiceGuide.kt, prints the transcript
-apk/                a signed, installable build — see apk/README.md
 docs/BUILD.md       parts, wiring, power, head units, mounting
 docs/PROVIDERS.md   why Mapbox, and how to swap in HERE / TomTom / Valhalla
 docs/WAZE.md        feature-by-feature comparison with Waze
@@ -71,10 +82,11 @@ PROTOCOL.md         the wire format
 
 ## Install the app
 
-A signed APK is in [`apk/NavHUD-1.0.apk`](apk/) — Android 7.0 or newer. Copy it
-across, open it with a file manager, allow the install. Then paste a free Mapbox
-token on the Setup screen (the token is entered in the app, not baked into the
-build, so this APK works for anyone). Full notes in [apk/README.md](apk/README.md).
+Every version is a signed APK on the
+[Releases page](https://github.com/mihaigabriel620/navhud-claude/releases) —
+Android 7.0 or newer. Copy it across, open it with a file manager, allow the
+install. Then paste a free Mapbox token on the Setup screen (the token is entered
+in the app, not baked into the build, so this APK works for anyone).
 
 ## Getting it running
 
