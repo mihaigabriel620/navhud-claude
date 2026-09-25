@@ -338,63 +338,8 @@ void loop() {
   // the phone.
   backlightUpdate(up, got);
 
-  // ---- what should be on the glass ---------------------------------------
-  //
-  // hud_display.h decides WHICH screen; this decides how to get there from
-  // whatever is drawn now. The split is deliberate: the rule is a thing you
-  // read, the transition is a thing you debug.
-  //
-  // SCREEN_ALIGN and SCREEN_BOOT are both "leave the glass alone" -- the
-  // alignment pattern is drawn by applyGeom() above, and the boot splash was
-  // drawn by setup() and is inside its grace period. Frames still arrive and
-  // still update `cur` underneath either of them, so dismissing the pattern
-  // brings the drive display straight back, and the backlight and the compass
-  // below still run, because the car is still a car while somebody is aiming
-  // the screen at the windscreen.
-  const HudScreen want = displayWanted(up, now);
-  if (want != SCREEN_ALIGN && want != SCREEN_BOOT) {
-    const bool switching = (want != (HudScreen)screenNow) || geomRepaint;
-    geomRepaint = false;
-
-    if (want == SCREEN_DRIVE) {
-      if (switching)  { themeRenderFull(cur); shown = cur; }
-      else if (got)   { themeRenderDelta(cur, shown); shown = cur; }
-      themeTick(cur, now);                   // blinking, if the theme wants it
-    } else if (want == SCREEN_CAR) {
-      // The panel is not blank just because the phone is: the car half runs on
-      // every drive, phone or no phone.
-      themeRenderCarOnly(now, switching);
-      if (switching) displayForgetPhone();
-    } else {                                 // SCREEN_NOLINK
-      // Never leave a stale speed limit on the glass. Blank and say so.
-      //
-      // Always, even when the panel is already dark. Skipping the paint to
-      // save the 123 ms looks like a free win and is not: the old drive
-      // display would still be sitting in the panel's own RAM, and the next
-      // time the key lit the backlight it would light that -- a speed limit
-      // from the last trip, on the glass, with nothing to take it off again.
-      // Darkening first (above) is what makes the paint free instead.
-      if (switching) {
-        // Say which thing is missing. "Check the USB cable" is right when the
-        // phone is the only source the board has -- and actively misleading
-        // when the cable is fine and the CAN module is the one that did not
-        // come up, which is exactly the state a bench build with a half-wired
-        // MCP2515 sits in.
-#ifdef HUD_CAN
-        const char* why = !canOk ? "no phone, and no CAN either"
-                                 : "check the USB cable";
-#else
-        const char* why = "check the USB cable";
-#endif
-        themeSplash("NO LINK", why, true);
-        displayForgetPhone();
-      }
-    }
-
-    screenNow = (uint8_t)want;
-    everDrew  = true;
-    linkUp    = (want == SCREEN_DRIVE);
-  }
+  // ---- what should be on the glass (hud_display.h) -----------------------
+  displayUpdate(up, got, now);
 
 
 #ifdef HUD_MAG
