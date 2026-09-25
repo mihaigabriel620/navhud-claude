@@ -349,7 +349,11 @@ static void dashVolts_(uint32_t now) {
   tft.setTextDatum(ML_DATUM);
   tft.setTextPadding(74);            // "14.2V" measures 69 px at 28
   if (blank) {
-    tft.setTextColor(DASH_BG, DASH_BG);
+    // Any colour but the background's: TFT_eSPI fills the padding only when
+    // the text and background colours differ, so BG-on-BG cleared nothing and
+    // the last reading stayed lit through every crank and every lost 0x3B4.
+    // A space has no lit pixels, so the colour never shows.
+    tft.setTextColor(DASH_DIM, DASH_BG);
     tft.drawString(" ", DASH_VOLT_X, DASH_VOLT_Y, DASH_FN_MID);
   } else {
     const bool bad = (v10 < 130 || v10 > 150);

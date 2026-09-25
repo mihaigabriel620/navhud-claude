@@ -183,6 +183,23 @@ static void pixelChecks() {
     themeRenderCarOnly(kNow, true);
     expectSurvives("battery reading beside PS " + std::to_string(ps), alone, snap());
   }
+  // A battery reading that goes stale must leave the glass: the blank is a
+  // padded space, and TFT_eSPI fills padding only when the text colour differs
+  // from the background.
+  {
+    carLive(87, true, 2200, 14.2f, 64, 212);
+    tft.fillScreen(DASH_BG); dashForget_();
+    dashVolts_(kNow);
+    car.tVolt = 0;                                   // 0x3B4 gone quiet
+    dashVolts_(kNow);
+    int left = 0;
+    const std::vector<uint16_t> fb = snap();
+    for (int y = 0; y < DASH_B1_BOT; y++)
+      for (int x = DASH_VOLT_X; x < DASH_VOLT_X + 74; x++)
+        if (fb[(size_t)y * HUD_SCR_W + x]) left++;
+    if (left) { printf("  FAIL stale battery reading: %d px still lit\n", left); g_failed++; }
+    else      printf("  ok   a stale battery reading is cleared\n");
+  }
 #endif
   // Every roundabout: the glyph drawn alone must survive the whole screen (no
   // other field's clear cuts into it), and the glyph's own clear must take
