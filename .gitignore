@@ -7,3 +7,16 @@ local.properties
 arduino/test/out/
 arduino/test/.tft_espi/
 arduino/test/*.exe
+# host test binaries (arduino/test/Makefile)
+arduino/test/t
+arduino/test/geom
+arduino/test/parse_stdin
+arduino/test/can
+arduino/test/layout_e60
+arduino/test/sketch_dash
+arduino/test/sketch_e60
+arduino/test/sketch_bench
+arduino/test/bringup_diag
+arduino/test/render_dash
+arduino/test/render_e60
+tools/__pycache__/

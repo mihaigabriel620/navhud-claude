@@ -1,13 +1,9 @@
 CXX      ?= g++
-# CAN_USE_LIBRARY=0 everywhere on the host: the tests exercise the hand-written
-# driver against a register-level MCP2515 simulator, which is the only place its
-# protocol is ever checked. The library is the shipping default on hardware and
-# is somebody else's to test.
-CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wno-unused-function -O2 -DHUD_TEST -DCAN_USE_LIBRARY=0
+CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wno-unused-function -O2 -DHUD_TEST
 INC      := -I. -I../NavHud
 
-BINS := t geom parse_stdin can can500 can16 can16_500 mount layout_e60 \
-        sketch_dash sketch_imu sketch_e60 sketch_bench bringup_diag
+BINS := t geom parse_stdin can layout_e60 \
+        sketch_dash sketch_e60 sketch_bench bringup_diag
 
 all: $(BINS)
 
@@ -26,41 +22,18 @@ parse_stdin: parse_stdin.cpp ../NavHud/hud_protocol.h
 # than no suite at all -- it reports the last build's result as though it were
 # this one's. Caught by a negative test that passed when it had to fail.
 SKETCH_HEADERS := $(wildcard ../NavHud/*.h)
-THEME_DEPS := $(SKETCH_HEADERS) tft_stub.h TFT_eSPI.h EEPROM.h SPI.h Wire.h
+THEME_DEPS := $(SKETCH_HEADERS) tft_stub.h TFT_eSPI.h EEPROM.h SPI.h Wire.h mcp_can.h Arduino.h
 
-# The CAN half, against a register-level MCP2515 simulator built from the
-# datasheet. The driver talks to a chip nobody can watch, so this is the only
-# place its register protocol is ever checked.
-can: test_can.cpp $(SKETCH_HEADERS) SPI.h tft_stub.h
+# The CAN half: canBegin()/canPump() through a stand-in for mcp_can 1.5.1
+# (mcp_can.h) over a register-level MCP2515 simulator built from the datasheet
+# (SPI.h), and the E60 decoders. The bit timing is the library's own business
+# since 2.4 -- CAN_BITRATE and CAN_XTAL are handed to it -- so the test pins
+# what is passed, not the CNF bytes the library derives from it.
+can: test_can.cpp $(SKETCH_HEADERS) SPI.h mcp_can.h Arduino.h tft_stub.h
 	$(CXX) $(CXXFLAGS) $(INC) -DHUD_HOST_TEST -o $@ test_can.cpp
-
-# The other three crystal/bit-rate combinations. An assertion behind an #if for
-# a configuration nobody compiles is not a test: the timing check used to cover
-# only 8 MHz / 500 kbit/s, and when the default moved to K-CAN's 100 kbit/s it
-# stopped running entirely without anything going red.
-can500: test_can.cpp $(SKETCH_HEADERS) SPI.h tft_stub.h
-	$(CXX) $(CXXFLAGS) $(INC) -DHUD_HOST_TEST -DCAN_BITRATE_KBPS=500 -o $@ test_can.cpp
-
-can16: test_can.cpp $(SKETCH_HEADERS) SPI.h tft_stub.h
-	$(CXX) $(CXXFLAGS) $(INC) -DHUD_HOST_TEST -DCAN_XTAL_MHZ=16 -o $@ test_can.cpp
-
-can16_500: test_can.cpp $(SKETCH_HEADERS) SPI.h tft_stub.h
-	$(CXX) $(CXXFLAGS) $(INC) -DHUD_HOST_TEST -DCAN_XTAL_MHZ=16 -DCAN_BITRATE_KBPS=500 -o $@ test_can.cpp
 
 sketch_dash: test_sketch.cpp ../NavHud/NavHud.ino $(THEME_DEPS)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_sketch.cpp
-
-# The gyroscope is an option, so it is off in every other build -- which is
-# exactly how a header rots. This one compiles it.
-sketch_imu: test_sketch.cpp ../NavHud/NavHud.ino ../NavHud/hud_imu.h Wire.h $(THEME_DEPS)
-	$(CXX) $(CXXFLAGS) $(INC) -DHUD_IMU -DHUD_MAG -o $@ test_sketch.cpp
-
-# The mounting calibration. Pure maths against simulated rotations, because a
-# sign error here does not crash and does not warn -- it produces a compass that
-# reads correctly at north and south and mirrored at east and west, which looks
-# like bad luck rather than a bug.
-mount: test_mount.cpp ../NavHud/hud_mount.h
-	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_mount.cpp
 
 layout_e60: test_layout.cpp corpus.h $(THEME_DEPS)
 	$(CXX) $(CXXFLAGS) $(INC) -DHUD_THEME_E60_CLASSIC -o $@ test_layout.cpp
@@ -90,44 +63,38 @@ bringup_diag: test_bringup.cpp $(BRINGUP_DEPS)
 	$(CXX) $(CXXFLAGS) $(INC) -DBRINGUP_DIAG -o $@ test_bringup.cpp
 
 # The whole suite: protocol, screen and map geometry, navigation logic, both
-# themes' layout,
-# the real sketch running against a scripted serial stream, and two end-to-end
-# passes of generated frames through the exact parser the sketch compiles.
+# themes' layout, the CAN half, the real sketch running against a scripted
+# serial stream, and two end-to-end passes of generated frames through the
+# exact parser the sketch compiles.
+#
+# tools/check_layout.py (the dash layout against the hud-editor.html bench) is
+# not run: the bench page did not survive the 1.26 restore, so there is nothing
+# to compare against. theme_dash.h is the layout's only source now, and the
+# layout tests below still catch a field off the panel or on top of another.
 check: all
-	@echo "=== 0/12 firmware layout matches the bench ==="
-	python3 ../../tools/check_layout.py
-	@echo
-	@echo "=== 1/12 protocol unit tests ==="
+	@echo "=== 1/11 protocol unit tests ==="
 	./t
-	@echo "\n=== 2/12 screen geometry (mirror, keystone, persistence) ==="
+	@echo "\n=== 2/11 screen geometry (mirror, keystone, persistence) ==="
 	./geom
-	@echo "\n=== 3/12 map geometry (polyline, projection, heading) ==="
+	@echo "\n=== 3/11 map geometry (polyline, projection, heading) ==="
 	python3 ../../tools/geo_reference.py
-	@echo "\n=== 4/12 navigation logic (RouteTracker) ==="
+	@echo "\n=== 4/11 navigation logic (RouteTracker) ==="
 	python3 ../../tools/tracker_reference.py --check
-	@echo "\n=== 5/12 voice guidance (VoiceGuide) ==="
+	@echo "\n=== 5/11 voice guidance (VoiceGuide) ==="
 	python3 ../../tools/voice_reference.py --check
-	@echo "\n=== 6/12 E60 theme layout ==="
+	@echo "\n=== 6/11 E60 theme layout ==="
 	./layout_e60
-	@echo "\n--- and the mounting calibration ---"
-	./mount
-	@echo "\n=== 7/12 sketch on the host, E60 theme ==="
+	@echo "\n=== 7/11 sketch on the host, E60 theme ==="
 	./sketch_e60
-	@echo "\n=== 8/12 sketch on the host, bench mode ==="
+	@echo "\n=== 8/11 sketch on the host, bench mode ==="
 	./sketch_bench
-	@echo "\n=== 9/12 CAN: MCP2515 register protocol + E60 decoders ==="
+	@echo "\n=== 9/11 CAN: bring-up, drain guards, E60 decoders ==="
 	./can
-	@echo "--- and the bit timing for the other three crystal/rate combinations ---"
-	./can500 | head -4
-	./can16 | head -4
-	./can16_500 | head -4
-	@echo "\n=== 10/12 sketch on the host, merged dash theme ==="
+	@echo "\n=== 10/11 sketch on the host, dash theme ==="
 	./sketch_dash
-	@echo "\n--- and again with the gyroscope compiled in ---"
-	./sketch_imu
-	@echo "\n=== 11/12 bring-up sketch: PanelDiag ==="
+	@echo "\n=== 11/11 bring-up sketch: PanelDiag ==="
 	./bringup_diag
-	@echo "\n=== 12/12 generated frames -> parser ==="
+	@echo "\n=== and generated frames -> parser ==="
 	python3 ../../tools/hud_sim.py --stdout --frames 3000 | ./parse_stdin
 	python3 ../../tools/tracker_reference.py --emit | ./parse_stdin
 

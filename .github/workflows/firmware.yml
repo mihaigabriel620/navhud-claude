@@ -1,0 +1,64 @@
+# Checks the HUD firmware on GitHub's machines, so a cloud session (which
+# cannot download the ESP8266 core) still gets a real compile.
+#
+#   1. host tests      cd arduino/test && make check
+#   2. screen images   make render -> every screen of both themes as PNG,
+#                      downloadable as the artifact "hud-screens"
+#   3. real compile    arduino-cli, esp8266:esp8266 3.1.2 for the D1 mini, with
+#                      TFT_eSPI 2.5.43 (arduino/config/User_Setup.h copied into
+#                      it, or it builds for the wrong pins) and mcp_can 1.5.1.
+#                      The size report (flash / RAM / IRAM) is in the log;
+#                      IRAM is the tight one.
+#
+# Nothing here is flashed. Only the owner flashes the board.
+name: Firmware
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'arduino/**'
+      - 'tools/**'
+      - '.github/workflows/firmware.yml'
+  workflow_dispatch:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04   # pinned, like android.yml
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Host tests
+        working-directory: arduino/test
+        run: make check
+
+      - name: Render every screen
+        working-directory: arduino/test
+        run: make render
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hud-screens
+          path: arduino/test/out/*.png
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: ESP8266 core 3.1.2
+        env:
+          URL: https://arduino.esp8266.com/stable/package_esp8266com_index.json
+        run: |
+          arduino-cli core update-index --additional-urls "$URL"
+          arduino-cli core install esp8266:esp8266@3.1.2 --additional-urls "$URL"
+
+      # Straight from the authors' repositories at the pinned tags, the same
+      # way `make render` fetches TFT_eSPI.
+      - name: Libraries, and the panel's User_Setup.h
+        run: |
+          lib="$HOME/Arduino/libraries"
+          mkdir -p "$lib"
+          git clone --quiet --depth 1 --branch V2.5.43 https://github.com/Bodmer/TFT_eSPI.git "$lib/TFT_eSPI"
+          git clone --quiet --depth 1 --branch 1.5.1 https://github.com/coryjfowler/MCP_CAN_lib.git "$lib/mcp_can"
+          cp arduino/config/User_Setup.h "$lib/TFT_eSPI/User_Setup.h"
+
+      - name: Compile for the Wemos D1 mini
+        run: arduino-cli compile --fqbn esp8266:esp8266:d1_mini --warnings default arduino/NavHud

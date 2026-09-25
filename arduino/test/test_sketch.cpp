@@ -4,12 +4,12 @@
 #include "tft_stub.h"
 #include "SPI.h"
 SPIClass SPI;      // the MCP2515 simulator the sketch will talk to
-// Ahead of the #ifdef below, because HUD_IMU is a setting in that file now
-// rather than something only the Makefile passes in -- and without it these
-// builds compiled the IMU (through the sketch) while leaving the Wire instance
-// it needs undefined, which is a link error rather than anything readable.
+// Ahead of the #ifdef below, because HUD_MAG is a setting in that file rather
+// than something only the Makefile passes in -- the compass needs the Wire
+// instance, and leaving it undefined is a link error rather than anything
+// readable.
 #include "../NavHud/hud_config.h"
-#ifdef HUD_IMU
+#ifdef HUD_MAG
 #include "Wire.h"
 TwoWire Wire;
 #endif
@@ -34,10 +34,10 @@ static void pump(int iterations) { for (int i = 0; i < iterations; i++) loop(); 
 
 int main() {
   printf("theme: %s\n\n",
-#if defined(HUD_THEME_MODERN)
-         "modern"
-#else
+#if defined(HUD_THEME_E60_CLASSIC)
          "e60"
+#else
+         "dash"
 #endif
   );
 
@@ -584,6 +584,7 @@ int main() {
   printf("19. the six display states\n");
   {
     uint8_t ign[1];
+    (void)ign;                                  // unused in a bench build
     // ---- phone up -> the drive layout, whatever the car is doing ----------
     g_millis += 250;
     Serial.feed(wrap("HUD,60,50,0,0,0,0,0,4,"));

@@ -17,11 +17,11 @@
 // what that configuration declares. The sketch has a #error that fires when
 // the library was never set up for this panel -- the white-screen case -- and
 // the host build has to look like a set-up library, not like an escape hatch.
-// If these two ever stop matching config/User_Setup_ESP8266.h, the guard is
-// testing something that does not ship.
+// If these two ever stop matching config/User_Setup.h, the guard is testing
+// something that does not ship.
 #define ST7796_DRIVER
 #define TFT_DC   5
-#define TFT_CS   15
+#define TFT_CS   4
 #define TFT_SCLK 14
 #define TFT_MOSI 13
 #define TFT_RST  -1
@@ -61,7 +61,7 @@ struct WiFiStub {
   void mode(int) {}
   void forceSleepBegin() {}
 };
-static WiFiStub WiFi;
+[[maybe_unused]] static WiFiStub WiFi;
 #define WIFI_OFF 0
 
 static uint32_t g_millis = 0;
@@ -71,9 +71,15 @@ inline void delayMicroseconds(uint32_t) {}
 inline void yield() {}
 static uint32_t g_micros = 0;
 inline uint32_t micros() { g_micros += 1000; return g_micros; }
-inline void pinMode(int, int) {}
 #define HUD_STUB_HAS_DIGITALWRITE 1
 static int g_pinState[64] = {0};
+#ifndef INPUT_PULLUP
+#define INPUT_PULLUP 2
+#endif
+// A released open-drain line with a pull-up reads high, as it does on the
+// board. Without this the I2C bus-recovery check saw both lines "held low" on
+// every host boot.
+inline void pinMode(int p, int m) { if (m == INPUT_PULLUP && p >= 0 && p < 64) g_pinState[p] = 1; }
 inline void digitalWrite(int p, int v) { if (p >= 0 && p < 64) g_pinState[p] = v; }
 inline int  digitalRead(int p)         { return (p >= 0 && p < 64) ? g_pinState[p] : 0; }
 inline void analogWrite(int, int) {}

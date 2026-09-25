@@ -1,17 +1,23 @@
-// Host tests for the CAN half: the MCP2515 driver against a scripted SPI
-// slave, and the E60 decoders against hand-built frames.
+// Host tests for the CAN half: canBegin()/canPump()/canOverflows() from
+// hud_can.h against the MCP2515 simulator in SPI.h (through the mcp_can stand-in
+// in mcp_can.h), and the E60 decoders in hud_car.h against hand-built frames.
 //
-// This is the code with the least chance of being verified any other way --
-// the register writes go into a chip I cannot see, and the decoders turn bytes
-// into numbers that end up in front of a driver. So they get tested here.
+// Since 2.4 the register protocol belongs to coryjfowler's library, so what is
+// ours -- and tested here -- is the pre-flight probe, the listen-only mode, and
+// the guards canPump() puts in front of the library: an impossible length, the
+// extended and remote-request flags, a controller that has gone away, and the
+// timestamp gap after a long repaint. The decoders turn bytes into numbers that
+// end up in front of a driver, so they get tested here too.
 #include "tft_stub.h"
 #include "SPI.h"
 SPIClass SPI;
 
 #include <cstdio>
 #include <cstring>
-#include "hud_can.h"
-#include "hud_car.h"
+#include "../NavHud/hud_config.h"
+#include "../NavHud/hud_car.h"
+bool canOk = false;
+#include "../NavHud/hud_can.h"
 
 static int fails = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { \
@@ -20,147 +26,116 @@ static int fails = 0;
 static void testBringUp() {
   printf("MCP2515 bring-up\n");
   SPI.reset();
-  bool ok = canBegin(CAR_IDS, CAR_ID_COUNT);
-  CHECK(ok, "bring-up should succeed against a working controller");
-  CHECK(SPI.resets == 1, "the chip must be reset exactly once, saw %d", SPI.resets);
+  canOk = canBegin();
+  CHECK(canOk, "bring-up should succeed against a working controller");
+  CHECK(canFault == CANFAULT_NONE, "no fault on a working controller");
+  CHECK(canProbeByte == 0x80, "the pre-flight reads CANSTAT's reset value, got 0x%02X",
+        canProbeByte);
+  // LISTEN-ONLY is the safety property: in it the chip cannot put a dominant
+  // bit on the car's bus, not even an ACK.
+  CHECK((SPI.reg[0x0E] & 0xE0) == MCP_LISTENONLY,
+        "must end in listen-only so it can never transmit on a live bus (CANSTAT 0x%02X)",
+        SPI.reg[0x0E]);
+  CHECK((SPI.reg[0x60] & 0x60) == 0x60, "RXB0 RXM must be 11: filters off");
+  CHECK((SPI.reg[0x70] & 0x60) == 0x60, "RXB1 RXM must be 11: filters off");
+  CHECK(canDev.lastSpeedset == CAN_100KBPS, "K-CAN is 100 kbit/s");
+  CHECK(canDev.lastClockset == MCP_8MHZ, "the module's crystal is 8 MHz");
   CHECK(SPI.open == 0, "every transaction must be closed, %d left open", SPI.open);
   CHECK(SPI.maxOpen <= 1, "transactions must not nest on a shared bus");
-  CHECK(SPI.clock <= 10000000u, "MCP2515 tops out at 10 MHz, driver asked for %u", SPI.clock);
 
-  // ---- bit timing, the one thing a crystal mismatch silently breaks ------
-  //
-  // Pinned against a second, independent source: coryjfowler/MCP_CAN_lib's
-  // published tables (mcp_can_dfs.h). Those bytes were arrived at separately
-  // from ours -- ours were decoded by hand from the datasheet's
-  // TQ = 2*(BRP+1)/FOSC and the segment fields of Registers 5-1..5-3 -- and
-  // they agree exactly. Two derivations landing on the same four bytes is
-  // worth more than either one alone, because this is the number that fails
-  // silently: a controller at the wrong bit rate does not receive corrupted
-  // frames, it receives NOTHING, and $CANDROP sits at zero looking healthy.
-  //
-  // Every combination is asserted, and the Makefile builds all four, because
-  // an assertion behind an #if for a configuration nobody compiles is not a
-  // test. This block used to cover only 8 MHz / 500 kbit/s, and when the
-  // default moved to K-CAN's 100 kbit/s it silently stopped running at all.
-#if   (CAN_XTAL_MHZ == 8)  && (CAN_BITRATE_KBPS == 500)
-  const uint8_t w1 = 0x00, w2 = 0xD1, w3 = 0x81;   //  8 TQ x 250 ns
-#elif (CAN_XTAL_MHZ == 8)  && (CAN_BITRATE_KBPS == 100)
-  const uint8_t w1 = 0x81, w2 = 0xF6, w3 = 0x84;   // 20 TQ x 500 ns, K-CAN
-#elif (CAN_XTAL_MHZ == 16) && (CAN_BITRATE_KBPS == 500)
-  const uint8_t w1 = 0x40, w2 = 0xE5, w3 = 0x83;   // 16 TQ x 125 ns
-#elif (CAN_XTAL_MHZ == 16) && (CAN_BITRATE_KBPS == 100)
-  const uint8_t w1 = 0x44, w2 = 0xE5, w3 = 0x83;   // 16 TQ x 625 ns
-#else
-  #error "No pinned bit timing for this crystal and bit rate. Add one, with the arithmetic, before shipping it."
-#endif
-  CHECK(SPI.reg[MCP_CNF1] == w1, "CNF1 = 0x%02X for %dk/%dMHz, got 0x%02X",
-        w1, (int)CAN_BITRATE_KBPS, (int)CAN_XTAL_MHZ, SPI.reg[MCP_CNF1]);
-  CHECK(SPI.reg[MCP_CNF2] == w2, "CNF2 = 0x%02X for %dk/%dMHz, got 0x%02X",
-        w2, (int)CAN_BITRATE_KBPS, (int)CAN_XTAL_MHZ, SPI.reg[MCP_CNF2]);
-  CHECK(SPI.reg[MCP_CNF3] == w3, "CNF3 = 0x%02X for %dk/%dMHz, got 0x%02X",
-        w3, (int)CAN_BITRATE_KBPS, (int)CAN_XTAL_MHZ, SPI.reg[MCP_CNF3]);
-
-  // And the arithmetic itself, so a byte that matches the library but means
-  // the wrong thing still fails. CNF1[5:0] is BRP-1, CNF2[2:0] is PRSEG-1,
-  // CNF2[5:3] is PHSEG1-1, CNF3[2:0] is PHSEG2-1; a bit is 1 + PRSEG + PHSEG1
-  // + PHSEG2 quanta and a quantum is 2*(BRP+1)/FOSC.
-  {
-    const int brp    = (w1 & 0x3F) + 1;
-    const int prseg  = (w2 & 0x07) + 1;
-    const int phseg1 = ((w2 >> 3) & 0x07) + 1;
-    const int phseg2 = (w3 & 0x07) + 1;
-    const int tq     = 1 + prseg + phseg1 + phseg2;
-    const long bps   = (long)(CAN_XTAL_MHZ * 1000000L) / (2L * brp * tq);
-    const int  sample = (100 * (1 + prseg + phseg1)) / tq;
-    CHECK(bps == CAN_BITRATE_KBPS * 1000L,
-          "%d TQ at BRP %d on a %d MHz crystal is %ld bit/s, wanted %ld",
-          tq, brp, (int)CAN_XTAL_MHZ, bps, CAN_BITRATE_KBPS * 1000L);
-    CHECK(sample >= 70 && sample <= 80,
-          "sample point %d%% is outside 70-80%%, which is where a car bus wants it",
-          sample);
-    printf("  %3dk/%2dMHz: %2d TQ, BRP %d, sample %d%%  (CNF %02X %02X %02X)\n",
-           (int)CAN_BITRATE_KBPS, (int)CAN_XTAL_MHZ, tq, brp, sample, w1, w2, w3);
-  }
-
-  // ---- the mode it ends up in ------------------------------------------
-#if CAN_LISTEN_ONLY
-  CHECK((SPI.reg[MCP_CANCTRL] & MCP_MODE_MASK) == MCP_MODE_LISTEN,
-        "must end in listen-only so it can never transmit on a live bus");
-#endif
-
-  // ---- receive path setup ----------------------------------------------
-  CHECK((SPI.reg[MCP_RXB0CTRL] & 0x04) != 0, "BUKT must be set: RXB0 rolls into RXB1");
-  // RXM = 11, masks and filters genuinely off. 00 leaves them ON, which is what
-  // this used to assert -- and it passed, because the simulator had no filter
-  // model at all. It worked on the car by coincidence: all five ids were
-  // programmed into filters with exact-match masks, so all five arrived either
-  // way. Add a sixth, or change one, and they would simply have stopped.
-  CHECK((SPI.reg[MCP_RXB0CTRL] & 0x60) == 0x60, "RXB0 RXM must be 11: filters off");
-  CHECK((SPI.reg[MCP_RXB1CTRL] & 0x60) == 0x60, "RXB1 RXM must be 11: filters off");
-
-  // The behaviour that setting actually buys, checked rather than asserted.
-  // An id that is NOT one of ours must still reach the driver, because software
-  // is where the sorting happens and $CANDROP only means anything if the
-  // hardware is handing us the whole bus.
-  {
-    const uint8_t junk[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    SPI.filtered = 0;
-    SPI.deliver(false, 0x3FE, junk, 8);        // an id in no filter anywhere
-    CHECK(SPI.filtered == 0, "a frame we do not want must still be delivered");
-    CanFrame f;
-    CHECK(canRead(f) && f.id == 0x3FE,
-          "...and must reach the driver, which then ignores it in software");
-  }
-  CHECK(SPI.reg[MCP_CANINTE] == 0x00, "no INT pin is wired, so no interrupts enabled");
-
-  // ---- masks and filters -----------------------------------------------
-  CHECK(SPI.reg[MCP_RXM0SIDH] == 0xFF && (SPI.reg[MCP_RXM0SIDH + 1] & 0xE0) == 0xE0,
-        "mask 0 should be an exact match on all eleven id bits");
-  // 0x0A8 -> SIDH 0x15, SIDL 0x00
-  CHECK(SPI.reg[MCP_RXF_SIDH[0]] == (CAR_IDS[0] >> 3),
-        "filter 0 should carry the first id we asked for");
-  // The extended-id filter bytes MUST be zero: with RXM=00 and a standard
-  // frame the chip matches them against the first two DATA bytes, and junk
-  // there makes frames vanish for no visible reason (Register 4-1).
-  for (int i = 0; i < 6; i++) {
-    CHECK(SPI.reg[MCP_RXF_SIDH[i] + 2] == 0x00 && SPI.reg[MCP_RXF_SIDH[i] + 3] == 0x00,
-          "filter %d extended bytes must be zeroed", i);
-    CHECK((SPI.reg[MCP_RXF_SIDH[i] + 1] & 0x08) == 0x00,
-          "filter %d EXIDE must be clear: we want standard frames", i);
-  }
+  // A dead module names its wire instead of "init failed".
+  SPI.reset(); SPI.stuck = 0xFF;
+  CHECK(!canBegin(), "MISO floating high is not a controller");
+  CHECK(canFault == CANFAULT_MISO_HIGH, "...and says so, got %d", (int)canFault);
+  SPI.reset(); SPI.stuck = 0x00;
+  CHECK(!canBegin(), "MISO held low is not a controller");
+  CHECK(canFault == CANFAULT_MISO_LOW, "...and says so, got %d", (int)canFault);
+  CHECK(strlen(canFaultText()) > 10, "the fault text is a sentence");
+  SPI.reset();
+  canOk = canBegin();
 }
 
-static void testFrameParse() {
-  printf("frame parse\n");
-  SPI.reset();
-  canBegin(CAR_IDS, CAR_ID_COUNT);
-  const uint8_t payload[8] = { 0x10, 0x27, 0, 0, 0, 0, 0, 0 };
-  SPI.deliver(false, 0x1A6, payload, 8);
+/** Put one frame on the wire and drain it at time t. */
+static uint8_t frame(CarState& c, uint32_t id, const uint8_t* d, uint8_t len, uint32_t t,
+                     bool ext = false, bool rtr = false) {
+  SPI.deliver(false, id, d, len, ext, rtr);
+  return canPump(c, t);
+}
 
-  CanFrame f;
-  CHECK(canRead(f), "a frame was waiting and should have been read");
-  CHECK(f.id == 0x1A6, "id should be 0x1A6, got 0x%03X", f.id);
-  CHECK(f.len == 8, "dlc should be 8, got %u", f.len);
-  CHECK(f.d[0] == 0x10 && f.d[1] == 0x27, "payload should survive intact");
+static void testPump() {
+  printf("canPump: what reaches the decoders\n");
+  SPI.reset(); canOk = canBegin();
+  CarState c;
+  uint8_t d[8] = {0};
 
-  // An extended frame is drained but is not ours. It must NOT report "bus
-  // empty" -- that stops the caller's drain loop with frames still queued.
-  SPI.deliver(false, 0x1A6, payload, 8, /*extended=*/true);
-  CHECK(canRead(f), "an extended frame is still a frame taken off the bus");
-  CHECK(f.id == CAN_ID_NOT_OURS, "...but it must be marked as not ours");
-  {
-    CarState c; CarState before = c;
-    CHECK(!carFeed(c, f.id, f.d, f.len, 1000), "and the decoder must refuse it");
-    CHECK(memcmp(&before, &c, sizeof c) == 0, "...without touching the state");
+  d[0] = 0x45;
+  CHECK(frame(c, CAR_ID_IGNITION, d, 1, 1000) == 1, "one frame drained");
+  CHECK(c.ignitionOn, "0x130 reached the decoder");
+
+  // 0x1A6 every 100 ms, 100 counts each: (100 / 100 ms) * CAR_SPEED_K.
+  uint16_t cnt = 5000; uint32_t t = 1000;
+  for (int i = 0; i < 5; i++) {
+    d[0] = (uint8_t)cnt; d[1] = (uint8_t)(cnt >> 8);
+    // Pump often enough that the stale-gap rule does not rebaseline.
+    for (uint32_t k = t - 60; k < t; k += 30) canPump(c, k);
+    frame(c, CAR_ID_SPEED, d, 8, t);
+    cnt += 100; t += 100;
   }
+  CHECK(!carStale(c.tSpeed, t), "the speed is fresh");
+  CHECK(c.kmh > 99.0f && c.kmh < 101.0f, "100 counts per 100 ms is 100 km/h, got %.1f", c.kmh);
+  const uint32_t tSpeed = c.tSpeed;
 
-  CHECK(!canRead(f), "with both buffers empty there is no frame");
+  // An extended frame whose low 16 bits happen to read 0x1A6 is somebody
+  // else's frame -- the id is truncated to 16 bits on its way to carFeed, so
+  // only the flag in bit 31 tells them apart.
+  // Keep draining every 30 ms from here on, as the loop does. The payload is
+  // a plausible next count, so only the guard can keep it out.
+  d[0] = (uint8_t)(cnt + 10); d[1] = (uint8_t)((cnt + 10) >> 8);
+  canPump(c, t - 60); canPump(c, t - 30);
+  frame(c, 0x000001A6u, d, 8, t, /*ext=*/true);
+  CHECK(c.tSpeed == tSpeed, "an extended frame must not be decoded as 0x1A6");
+  // A remote request carries no data, whatever its length field says: the
+  // bytes in the buffer are the last frame's.
+  canPump(c, t + 30);
+  frame(c, CAR_ID_SPEED, d, 8, t + 60, false, /*rtr=*/true);
+  CHECK(c.tSpeed == tSpeed, "a remote request must not be decoded as 0x1A6");
 
-  // The rollover buffer has to be read too, or half the traffic is invisible.
-  const uint8_t p2[2] = { 0xAA, 0xBB };
-  SPI.deliver(true, 0x0AA, p2, 2);
-  CHECK(canRead(f), "a frame in RXB1 must be read as well as one in RXB0");
-  CHECK(f.id == 0x0AA, "id from RXB1 should be 0x0AA, got 0x%03X", f.id);
+  // A length of 9..15 is legal on the wire and overruns the library's buffer.
+  const uint32_t bad = canBadDlc();
+  SPI.deliver(false, CAR_ID_RPM, d, 12);
+  canPump(c, t + 90);
+  CHECK(canBadDlc() == bad + 1, "a DLC of 12 is refused and counted");
+  CHECK(canDev.overruns == 0, "...before the library is allowed to read it");
+  CHECK((SPI.reg[0x2C] & 0x01) == 0, "...and the buffer is released for the next frame");
+  d[4] = 0x80; d[5] = 0x25;                 // 2400 rpm
+  CHECK(frame(c, CAR_ID_RPM, d, 8, t + 120) == 1, "the next frame is read normally");
+  CHECK(c.rpm == 2400, "2400 rpm, got %u", (unsigned)c.rpm);
+
+  // Overflow: a second frame into a full buffer is lost, and EFLG latches it.
+  const uint32_t ovf0 = canOverflows();
+  SPI.deliver(false, CAR_ID_RPM, d, 8);
+  SPI.deliver(false, CAR_ID_RPM, d, 8);
+  CHECK(canOverflows() == ovf0 + 1, "a lost frame is counted once");
+  CHECK((SPI.reg[0x2D] & 0xC0) == 0, "...and the latched flag cleared");
+  CHECK(canOverflows() == ovf0 + 1, "a cleared flag is not counted again");
+  canPump(c, t + 150);
+
+  // A gap longer than CAN_STALE_GAP_MS: the frames waiting are older than the
+  // stamp they would get, so the speed baseline is dropped.
+  CHECK(c.haveLast, "a speed baseline exists before the gap");
+  canPump(c, t + 150 + CAN_STALE_GAP_MS + 100);
+  CHECK(!c.haveLast && c.histN == 0, "a long gap between drains drops the speed baseline");
+
+  // The module dies mid-drive: MISO floats high and every status reads 0xFF.
+  SPI.stuck = 0xFF;
+  CHECK(canPump(c, t + 400) == 0, "nothing is read from a dead controller");
+  CHECK(!canOk, "canOk drops, so the rest of the firmware stops believing the bus");
+  CHECK(canFault == CANFAULT_MISO_HIGH, "and the fault is named");
+  CHECK(canDev.overruns == 0, "no 15-byte frame reached the library");
+  const int before = SPI.transactions;
+  canPump(c, t + 450);
+  CHECK(SPI.transactions == before, "and the bus is not touched again");
+  SPI.stuck = -1;
 }
 
 static void testIgnition() {
@@ -177,7 +152,7 @@ static void testIgnition() {
   CHECK(c.ignitionOn && !c.cranking, "running");
 
   // peak must reset across an ignition cycle
-  c.peakPs = 200;
+  c.peakPs = 200; c.haveLast = true;
   d[0] = 0x00; carFeed(c, CAR_ID_IGNITION, d, 1, 2000);
   d[0] = 0x45; carFeed(c, CAR_ID_IGNITION, d, 1, 2010);
   CHECK(c.peakPs == 0, "peak PS holds until the ignition cycles, then clears");
@@ -210,29 +185,43 @@ static void testSpeed() {
   feed(1000, 1000);
   CHECK(carStale(c.tSpeed, 1000), "the first frame is a baseline, not a speed");
 
-  // 100 ticks in 100 ms -> 1 tick/ms * 80.4672 = 80.5 km/h
+  // 100 ticks in 100 ms -> 1 tick/ms * CAR_SPEED_K (100) = 100 km/h
   feed(1100, 1100);
-  CHECK(c.kmh > 80.0f && c.kmh < 81.0f, "expected ~80.5 km/h, got %.2f", c.kmh);
+  CHECK(c.kmh > 99.0f && c.kmh < 101.0f, "expected ~100 km/h, got %.2f", c.kmh);
 
-  // the 16-bit counter wrapping must not produce a spike
-  c.lastCnt = 65500; c.lastCntMs = 2000; c.haveLast = true; c.kmh = 80.0f;
+  // The 16-bit counter wrapping must not produce a spike.
+  carRebaseline(c);
+  feed(65500, 2000);
   feed(36, 2100);            // 65500 -> 36 is a wrap of 72 ticks
-  CHECK(c.kmh > 57.0f && c.kmh < 58.0f, "wrap should read ~57.9 km/h, got %.2f", c.kmh);
+  CHECK(c.kmh > 71.0f && c.kmh < 73.0f, "wrap should read ~72 km/h, got %.2f", c.kmh);
 
-  // a gap longer than the window is not a speed, but must still re-baseline
-  c.haveLast = false; c.kmh = 50.0f; c.tSpeed = 3000;
+  // A gap longer than CAR_DT_MAX_MS is not a speed.
+  carRebaseline(c); c.kmh = 50.0f; c.tSpeed = 3000;
   feed(1000, 3000); feed(60000, 8000);
   CHECK(c.kmh == 50.0f, "a 5 s gap must be discarded, not turned into a number");
-  CHECK(c.lastCnt == 60000, "...but the baseline still advances");
+  CHECK(c.tSpeed == 3000, "...and must not be stamped fresh");
 
-  // and an implausible delta is refused outright
-  c.haveLast = true; c.lastCnt = 0; c.lastCntMs = 9000; c.kmh = 10.0f;
-  feed(60000, 9100);
-  CHECK(c.kmh == 10.0f, "a 48000 km/h delta must not reach the glass");
+  // And an implausible delta is refused outright, and the history dropped so
+  // it cannot poison the next readings.
+  carRebaseline(c); c.kmh = 10.0f;
+  feed(0, 9000); feed(60000, 9100);
+  CHECK(c.kmh == 10.0f, "a 60000 km/h delta must not reach the glass");
+  CHECK(c.histN == 1, "the history restarts from the frame after the bad one");
+
+  // The sliding window: a steady 50 km/h with 100 ms frames whose timestamps
+  // jitter by +-10 ms reads close to 50 once the window has filled.
+  carRebaseline(c);
+  uint16_t cnt = 0; uint32_t t = 20000;
+  const int jit[8] = { 0, 10, -10, 5, -5, 10, -10, 0 };
+  for (int i = 0; i < 8; i++) {
+    feed(cnt, (uint32_t)(t + jit[i]));
+    cnt += 50; t += 100;
+  }
+  CHECK(c.kmh > 46.0f && c.kmh < 54.0f, "jittered 50 km/h reads %.1f", c.kmh);
 }
 
 static void testRpmTorqueVolts() {
-  printf("0x0AA rpm, 0x0A8 torque, 0x3B4 battery\n");
+  printf("0x0AA rpm, 0x0A8 torque, 0x3B4 battery, 0x1D0 coolant\n");
   CarState c;
   uint8_t d[8] = {0};
   // rpm: bytes 4-5 little-endian, /4.  2400 rpm -> raw 9600 -> 0x2580
@@ -257,6 +246,12 @@ static void testRpmTorqueVolts() {
   CHECK(c.torqueNm == -100, "overrun torque should be -100 Nm, got %d", c.torqueNm);
   CHECK(c.peakPs == 103, "and peak must not fall when the live value does");
 
+  // An impossible torque is refused, not committed and marked fresh.
+  memset(d, 0, sizeof d);
+  d[2] = 0x7F; d[1] = 0xF0;          // raw 2047 -> 1023 Nm
+  carFeed(c, CAR_ID_TORQUE, d, 8, 1025);
+  CHECK(c.torqueNm == -100 && c.tTorque == 1020, "1023 Nm must be refused");
+
   // Battery: the low 12 bits, divided by 68. Both bytes below are the exact
   // samples from the E60 K-CAN documentation, with the voltages it states --
   // so this test fails the moment somebody "simplifies" the scale back to the
@@ -277,6 +272,15 @@ static void testRpmTorqueVolts() {
   d[0] = 0x00; d[1] = 0x00;
   carFeed(c, CAR_ID_BATTERY, d, 8, 1040);
   CHECK(c.volts > 12.15f, "0 V is not a car battery and must be refused");
+
+  // Coolant: byte 0, offset 48. 0xFF is an unpopulated byte, not 207 C.
+  memset(d, 0, sizeof d);
+  d[0] = 138;
+  carFeed(c, CAR_ID_COOLANT, d, 8, 1050);
+  CHECK(c.coolantC == 90, "138 - 48 = 90 C, got %d", c.coolantC);
+  d[0] = 0xFF;
+  carFeed(c, CAR_ID_COOLANT, d, 8, 1060);
+  CHECK(c.coolantC == 90 && c.tCoolant == 1050, "0xFF must be refused");
 }
 
 static void testStaleness() {
@@ -288,6 +292,9 @@ static void testStaleness() {
   CHECK(!carStale(c.tRpm, 10500), "500 ms old is still fresh");
   CHECK(carStale(c.tRpm, 11000), "1000 ms old is stale and must be blanked");
   CHECK(carStale(c.tVolt, 10000), "never heard is stale, not zero");
+  // millis() wraps after 49.7 days; the age must still come out right.
+  CHECK(!carStale(0xFFFFFF00u, 0x00000100u), "a 512 ms age across the wrap is fresh");
+  CHECK(carStale(0xFFFFF000u, 0x00000100u), "a 4 s age across the wrap is stale");
 
   CHECK(!carStopped(c, 10000), "no speed frame yet: we do not know it is stopped");
   c.tSpeed = 10000; c.kmh = 0.0f;
@@ -300,8 +307,8 @@ static void testUnknownIds() {
   printf("software filtering\n");
   CarState c;
   uint8_t d[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-  // Listen-only mode ignores the hardware filters, so every id on the bus
-  // reaches carFeed. Anything not ours must change nothing at all.
+  // The filters are off (MCP_ANY), so every id on the bus reaches carFeed.
+  // Anything not ours must change nothing at all.
   CarState before = c;
   CHECK(!carFeed(c, 0x0BB, d, 8, 1000), "an id we do not use is not ours");
   CHECK(memcmp(&before, &c, sizeof c) == 0, "...and must not touch the state");
@@ -309,7 +316,7 @@ static void testUnknownIds() {
 
 int main() {
   testBringUp();
-  testFrameParse();
+  testPump();
   testIgnition();
   testSpeed();
   testRpmTorqueVolts();
