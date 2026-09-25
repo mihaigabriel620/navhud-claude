@@ -215,7 +215,8 @@ than at a thousand-line sketch. In rough order of how often you will open them:
 | `hud_can.h` | The MCP2515 itself: SPI, registers, bit timing, listen-only | No frames arrive, or `$CANDROP` climbs |
 | `hud_car.h` | Turning E60 CAN bytes into speed, rpm, torque, volts, key state | A number on the glass is wrong but the bus is clearly alive |
 | `hud_link.h` | Everything crossing the USB cable, both directions | A message is missing or malformed |
-| `hud_align.h` | Mirror, rotation, keystone, and the EEPROM sector they live in | The picture is the wrong way round, trapezoidal, or forgets itself |
+| `hud_align.h` | Mirror, rotation, keystone | The picture is the wrong way round or trapezoidal |
+| `hud_settings.h` | The flash: screen alignment and compass calibration, the only file that writes it | A setting forgets itself between boots |
 | `hud_state.h` | The variables the modules share | "What else touches this?" |
 | `theme_dash.h` | The three-band E60 layout that ships | Something is in the wrong place on screen |
 | `theme_e60.h` | The older nav-only E60 layout (`HUD_THEME_E60_CLASSIC`) | Only if you turned that on |
@@ -227,9 +228,9 @@ Two rules hold the split together, and both are load-bearing:
 
 - **`hud_state.h` is included once**, by the sketch, which defines
   `HUD_STATE_OWNER` first. Every other module sees `extern` declarations.
-- **`hud_align.h` and `hud_link.h` call into each other** — the command
-  dispatch saves geometry, and the geometry reports over the cable — so each
-  forward-declares the handful of functions it needs from the other. The
+- **`hud_align.h`, `hud_settings.h` and `hud_link.h` call into each other** —
+  the command dispatch saves geometry, and saving reports over the cable — so
+  each forward-declares the handful of functions it needs from the others. The
   alternative was splitting the cable in half, which would give "where does the
   board send things from" two answers.
 

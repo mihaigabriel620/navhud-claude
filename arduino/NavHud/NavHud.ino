@@ -102,6 +102,7 @@
 
 
 #include "hud_align.h"
+#include "hud_settings.h"
 #include "hud_link.h"
 
 void setup() {

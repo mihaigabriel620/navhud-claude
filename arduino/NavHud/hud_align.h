@@ -1,28 +1,23 @@
 // ---------------------------------------------------------------------------
-//  hud_align.h -- the panel's orientation, and the flash it is kept in.
+//  hud_align.h -- the panel's orientation.
 //
-//  Mirror, rotation, keystone, the alignment pattern the app draws them with,
-//  and the EEPROM sector all of it is saved to. The compass calibration lives
-//  in the same sector, which is why it is loaded and saved from here too.
+//  Mirror, rotation, keystone, and the alignment pattern the app draws them
+//  with. Saving them is hud_settings.h, the one file that writes flash.
 //
-//  If the picture is the wrong way round, trapezoidal, or forgets itself
-//  between boots, it is this file.
+//  If the picture is the wrong way round or trapezoidal, it is this file; if
+//  it forgets itself between boots, it is hud_settings.h.
 // ---------------------------------------------------------------------------
 #ifndef HUD_ALIGN_H
 #define HUD_ALIGN_H
 
 // Defined in hud_link.h, which is included after this one because its command
-// dispatch calls saveGeom() and sendGeom() below. Two forward declarations
-// break the cycle; the alternative is splitting one of the two files in half,
-// and "where does the board send things from" having two answers is worse.
+// dispatch calls sendGeom() below. Two forward declarations break the cycle;
+// the alternative is splitting one of the two files in half, and "where does
+// the board send things from" having two answers is worse.
 static void sendLine(const char* body);
 static void diag(const char* s);
 
 // ---- screen geometry -------------------------------------------------------
-
-#if defined(ARDUINO_ARCH_ESP8266) || defined(ESP32) || defined(HUD_HOST_TEST)
-  #define HUD_HAVE_EEPROM 1
-#endif
 
 /** What the panel and the driver think they are, on the serial line. */
 static void reportPanel() {
@@ -126,94 +121,6 @@ static void sendGeom() {
            g.corners.dx[0], g.corners.dy[0], g.corners.dx[1], g.corners.dy[1],
            g.corners.dx[2], g.corners.dy[2], g.corners.dx[3], g.corners.dy[3]);
   sendLine(body);
-}
-
-/**
- * EEPROM.begin() exactly once.
- *
- * Shared by the geometry and the compass calibration, which live in the same
- * sector: calling begin() a second time re-reads flash over anything staged
- * and, on some cores, hands back a second buffer. File scope rather than a
- * function-local static because there are now four callers, and the host test
- * calls loadGeom() repeatedly to model power cycles.
- */
-static bool eepromReady = false;
-static void eepromOpen() {
-  if (!eepromReady) { EEPROM.begin(HUD_STORE_EEPROM); eepromReady = true; }
-}
-
-static void loadGeom() {
-  tft.geom.mirrorX = HUD_DEFAULT_MIRROR_X;
-  tft.geom.mirrorY = HUD_DEFAULT_MIRROR_Y;
-#ifdef HUD_BENCH
-  // Straight through, ignoring flash. Nothing is erased -- the stored
-  // alignment is still there the moment this is commented out again.
-  tft.geom.mirrorX = false;
-  tft.geom.mirrorY = false;
-  tft.geom.corners = GeomCorners{{0, 0, 0, 0}, {0, 0, 0, 0}};
-  tft.geom.rebuild(HUD_SCR_W, HUD_SCR_H);
-  savedGeom = tft.geom;
-  diag("  HUD_BENCH: unmirrored, saved alignment ignored, Save disabled,");
-  diag("             backlight forced on regardless of the key.");
-  return;
-#endif
-#ifdef HUD_HAVE_EEPROM
-  // Once. begin() allocates the RAM shadow of the flash sector, and calling it
-  // again mid-run would at best re-read flash over anything staged and at worst
-  // hand back a second buffer. setup() is the only caller in the firmware; the
-  // host test calls loadGeom() repeatedly to model power cycles, which is
-  // exactly the case this guard has to survive.
-  eepromOpen();
-  uint8_t b[HUD_STORE_BYTES];
-  for (int i = 0; i < HUD_STORE_BYTES; i++) b[i] = EEPROM.read(i);
-  hudStoreUnpack(b, tft.geom);   // leaves the defaults alone if it is blank
-#endif
-  tft.geom.rebuild(HUD_SCR_W, HUD_SCR_H);
-  savedGeom = tft.geom;
-}
-
-#ifdef HUD_MAG
-/** Read the stored compass calibration, if there is a believable one. */
-static void loadCompassCal() {
-  eepromOpen();
-  uint8_t b[HUD_MAG_STORE_BYTES];
-  for (int i = 0; i < HUD_MAG_STORE_BYTES; i++) b[i] = EEPROM.read(HUD_MAG_STORE_OFF + i);
-  if (compass.unpack(b)) diag("  compass : calibration restored from flash");
-}
-
-/** Write it. Shares the sector with the geometry, so this is one erase. */
-static void saveCompassCal() {
-  eepromOpen();
-  uint8_t b[HUD_MAG_STORE_BYTES];
-  compass.pack(b);
-  for (int i = 0; i < HUD_MAG_STORE_BYTES; i++) EEPROM.write(HUD_MAG_STORE_OFF + i, b[i]);
-  EEPROM.commit();
-}
-
-/** Throw it away, in RAM and in flash. */
-static void forgetCompassCal() {
-  compass.forget();
-  saveCompassCal();
-}
-#endif
-
-static void saveGeom() {
-#ifdef HUD_BENCH
-  // Refusing beats silently overwriting a real alignment with bench defaults.
-  sendLine("GEOMERR,bench");
-  return;
-#endif
-#ifdef HUD_HAVE_EEPROM
-  if (geomSame(tft.geom, savedGeom)) { sendLine("GEOMOK,0"); return; }
-  uint8_t b[HUD_STORE_BYTES];
-  hudStorePack(tft.geom, b);
-  for (int i = 0; i < HUD_STORE_BYTES; i++) EEPROM.write(i, b[i]);
-  const bool ok = EEPROM.commit();
-  if (ok) savedGeom = tft.geom;
-  sendLine(ok ? "GEOMOK,1" : "GEOMERR,flash");
-#else
-  sendLine("GEOMERR,noflash");
-#endif
 }
 
 #endif  // HUD_ALIGN_H
