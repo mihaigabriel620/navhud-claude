@@ -28,7 +28,9 @@ the HUD does all the maths itself; the app only receives numbers.
 
 **After flashing**: type `spin` once and drive (or turn the box) a full
 circle, then `spin stop`. The saved calibration changed format and the 2.9 one
-is refused rather than misread. `north` is optional since app 1.34.
+is refused rather than misread. `north` is optional since app 1.34. In the car
+the calibration is written to flash at the first stop; on the desk, where no
+speed ever arrives, the new `save` command writes it at once.
 
 **Wiring**: GY-521 SDA → D3, SCL → D4 (in parallel with the compass), VCC →
 3V3, GND, AD0 → GND (0x68). `MPU_AXIS_SIGN` in `hud_config.h` is set for the

@@ -869,6 +869,29 @@ int main() {
     drive(0, 4000);
     CHECK(compass.present(), "plugged back in, it is found again");
   }
+
+  printf("18k. `save` writes the calibration now, stopped or not\n");
+  {
+    car.kmh = 50.0f; car.tSpeed = g_millis;        // moving: nothing is written by itself
+    Serial.feed("north 45\r\n");
+    g_millis += 10; car.tSpeed = g_millis; pump(1);
+    CHECK(magSavePending, "`north` waits for a standstill");
+    const float wanted = heading.northOffsetDeg;
+    Serial.out_.clear();
+    Serial.feed("save\r\n");
+    g_millis += 10; car.tSpeed = g_millis; pump(1);
+    CHECK(!magSavePending && Serial.out_.find("written to flash.") != std::string::npos,
+          "`save` writes it at once");
+    heading.northOffsetDeg = 0.0f;
+    loadCompassCal();                              // a power cycle, as far as flash goes
+    CHECK(heading.northOffsetDeg == wanted, "and that is what comes back");
+    Serial.out_.clear();
+    Serial.feed("save\r\n");
+    g_millis += 10; car.tSpeed = g_millis; pump(1);
+    CHECK(Serial.out_.find("nothing new to save") != std::string::npos,
+          "a second `save` has nothing to do");
+    car.kmh = 0.0f;
+  }
 #endif
 
   printf("19. the six display states\n");

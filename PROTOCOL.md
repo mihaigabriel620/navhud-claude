@@ -109,6 +109,7 @@ every line that does not start with `$`.
 | `spin stop` | finish it: kept if both axes swept far enough, otherwise it says why and keeps going |
 | `north <deg>` | "the car is pointing this way now" (0-359): sets the compass's north offset |
 | `forget` | erase the compass calibration |
+| `save` | write the waiting calibration to flash now (it otherwise waits for a standstill) |
 
 A kept calibration, `north` and `forget` do not write to flash where they are
 typed. A calibration or `north` queued after a `forget` cancels it. `EEPROM.commit()`
@@ -117,7 +118,8 @@ of milliseconds, and up to 400 ms by the datasheet — during which nothing fill
 the UART receive buffer. A `$CAM` or `$LANE` clearing frame lost in that window
 is lost for good, because both are edge-triggered. So the write is deferred to
 the next standstill, or happens immediately when there is no CAN bus at all,
-which is the bench case.
+which is the bench case. `save` does it at once: on a desk with the CAN module
+fitted, no speed ever arrives to say "stopped".
 
 ### `$CAM` — speed camera alert (phone → Arduino, 4 Hz while an alert is up)
 

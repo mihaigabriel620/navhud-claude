@@ -274,6 +274,7 @@ static void cmdHelp() {
   diag("  spin stop       finish it and save, or say why it was refused");
   diag("  north <deg>     the car is pointing this way right now (0-359)");
   diag("  forget          erase the compass calibration");
+  diag("  save            write it to flash now (it otherwise waits for the car to stop)");
 #endif
   diag("  help            this");
   diag("");
@@ -484,7 +485,7 @@ static void cmdSpin(const char* rest) {
     // silently ends the session while printing "keep going".
     if (heading.calFinish()) {
       magQueueSave();
-      diag("calibration accepted. Saving at the next standstill.");
+      diag("calibration accepted. Saving at the next standstill, or type `save`.");
       snprintf(b, sizeof b, "  offset %+.1f %+.1f %+.1f uT",
                heading.offset[0], heading.offset[1], heading.offset[2]);
       diag(b);
@@ -524,8 +525,9 @@ static void cmdNorth(const char* rest) {
   const float want = (float)atof(rest);
   if (want < 0.0f || want >= 360.0f) { diag("0 to 359, please."); return; }
   if (!heading.setNorth(want)) { diag("no reading from the compass yet."); return; }
-  char b[80];
-  snprintf(b, sizeof b, "north set: offset is now %+.1f deg. Saving at the next standstill.",
+  char b[112];
+  snprintf(b, sizeof b,
+           "north set: offset is now %+.1f deg. Saving at the next standstill, or type `save`.",
            heading.northOffsetDeg);
   diag(b);
   magQueueSave();
@@ -533,7 +535,22 @@ static void cmdNorth(const char* rest) {
 
 static void cmdForget() {
   magForgetPending = true;
-  diag("compass calibration will be erased at the next standstill.");
+  diag("compass calibration will be erased at the next standstill, or type `save`.");
+}
+
+/**
+ * save -- do the waiting calibration write now instead of at the next
+ * standstill: on the desk, where no bus ever says "stopped", or parked with
+ * the key out. The write freezes the board for tens of milliseconds, up to
+ * 400 (hud_settings.h), which is why it waits for a stop by itself and only
+ * happens anywhere else when somebody types it.
+ */
+static void cmdSave() {
+  if (!magSavePending && !magForgetPending) {
+    diag("nothing new to save: flash already has the calibration in use.");
+    return;
+  }
+  settingsSaveDeferred(true);
 }
 #endif  // HUD_MAG
 
@@ -548,6 +565,7 @@ static void linkCommand(const char* line) {
   if ((n = cmdIs(line, "spin")))   { cmdSpin(line + n);  return; }
   if ((n = cmdIs(line, "north")))  { cmdNorth(line + n); return; }
   if (cmdIs(line, "forget"))       { cmdForget();        return; }
+  if (cmdIs(line, "save"))         { cmdSave();          return; }
 #endif
   diag("");
   diag("Not a command. Type 'help'.");
