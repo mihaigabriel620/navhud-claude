@@ -811,6 +811,32 @@ int main() {
     drive(0, 3000);
   }
 
+  printf("18g1. a brisk lift, 375 deg/s, does not swing the heading\n");
+  {
+    // The screen lifted by hand: 60 degrees nose-up in 0.16 s, pointing east,
+    // where a pitch error moves the heading most. The chip clips at its full
+    // scale, like the real one, and a clipped rate is rotation `up` never
+    // hears about. Started on an MPU read, so each 20 ms read covers 20 ms of
+    // the lift and nothing is lost at the ends.
+    const double wasHeading = Wire.box.headingDeg;
+    Wire.box.headingDeg = 90;
+    drive(0, 3000);
+    const float before = heading.deg;
+    for (uint32_t n = Wire.mpuReads; Wire.mpuReads == n; ) { g_millis += 10; pump(1); }
+    for (int i = 0; i < 16; i++) {
+      Wire.box.pitchDeg += 3.75; Wire.box.rateYDps = -375.0;   // nose up is -Y
+      g_millis += 10; pump(1);
+    }
+    Wire.box.rateYDps = 0;
+    for (int i = 0; i < 10; i++) { g_millis += 10; pump(1); }   // 0.1 s: no parked block yet
+    const float d = fabsf(fmodf(heading.deg - before + 540.0f, 360.0f) - 180.0f);
+    CHECK(d < 2.0f, "the heading holds through the lift, within 2 degrees");
+    printf("    before %.1f deg, just after %.1f deg, pitch %.1f\n", before, heading.deg,
+           heading.pitchDeg());
+    Wire.box.pitchDeg = 0; Wire.box.headingDeg = wasHeading;
+    drive(0, 3000);
+  }
+
   printf("18g2. `status` says the axis settings match the mounting\n");
   {
     Serial.out_.clear();

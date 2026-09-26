@@ -20,15 +20,21 @@
 //    CONFIG     (1Ah)  0x05  digital low-pass, 10 Hz (13.4 ms delay on the
 //                            gyro): far more than a car turns at, and it keeps
 //                            engine vibration out of 50 Hz sampling.
-//    GYRO_CONFIG  (1Bh) 0x00 +-250 deg/s, the finest step, 131 LSB per deg/s.
+//    GYRO_CONFIG  (1Bh) 0x10 +-1000 deg/s, 32.8 LSB per deg/s. A hand lifting
+//                            the screen turns it faster than 250 deg/s, and a
+//                            rate the chip clips is rotation `up` never hears
+//                            about: at +-250 a brisk lift swung the heading 37
+//                            degrees until the box was still again. A car
+//                            turns at under 100.
 //    ACCEL_CONFIG (1Ch) 0x00 +-2 g, 16384 LSB per g. Anything harder than that
 //                            is a pothole, and the heading ignores it anyway.
 //
-//  Both ranges are the chip's reset values and the library's conversion
-//  defaults, and they are written through setRegister() rather than the
-//  library's setAccelSensitivity(): that one refuses to write once any earlier
-//  transfer has failed (0.6.2 never clears its error), which is exactly the
-//  state a chip found again after a brown-out is in.
+//  Both ranges are written through setRegister() rather than the library's
+//  setGyroSensitivity() / setAccelSensitivity(): those refuse to write once
+//  any earlier transfer has failed (0.6.2 never clears its error), which is
+//  exactly the state a chip found again after a brown-out is in. So the
+//  library keeps converting at its defaults, +-2 g and +-250 deg/s, and read()
+//  scales the gyro by MPU_GYRO_SCALE.
 // ---------------------------------------------------------------------------
 #ifndef HUD_MOTION_H
 #define HUD_MOTION_H
@@ -38,6 +44,10 @@
 #include "hud_config.h"
 
 #define MPU_ADDR 0x68             // AD0 low, which is how the GY-521 comes
+
+#define MPU_GYRO_CONFIG 0x10      // FS_SEL 2: +-1000 deg/s
+/** The library's 131 LSB per deg/s is +-250's; +-1000 is a quarter of that. */
+#define MPU_GYRO_SCALE  4.0f
 
 /**
  * Failed reads in a row before the chip is written off. At 50 Hz this is a
@@ -62,7 +72,7 @@ class HudMotion {
     if (!chip_.begin()) return false;                     // ACK, then awake
     if (chip_.setRegister(GY521_PWR_MGMT_1, 0x01) != GY521_OK) return false;
     if (chip_.setRegister(GY521_CONFIG, 0x05) != GY521_OK) return false;
-    if (chip_.setRegister(GY521_GYRO_CONFIG, 0x00) != GY521_OK) return false;
+    if (chip_.setRegister(GY521_GYRO_CONFIG, MPU_GYRO_CONFIG) != GY521_OK) return false;
     if (chip_.setRegister(GY521_ACCEL_CONFIG, 0x00) != GY521_OK) return false;
     chip_.setThrottle(false);                             // hud_sensors.h paces it
     whoAmI = chip_.getRegister(GY521_WHO_AM_I);
@@ -80,7 +90,8 @@ class HudMotion {
     // value, sleeping, and still answers on the bus. Awake, gravity alone
     // never reads zero.
     if (a[0] == 0.0f && a[1] == 0.0f && a[2] == 0.0f) return fail_();
-    const float g[3] = { chip_.getGyroX(), chip_.getGyroY(), chip_.getGyroZ() };
+    const float g[3] = { chip_.getGyroX() * MPU_GYRO_SCALE, chip_.getGyroY() * MPU_GYRO_SCALE,
+                         chip_.getGyroZ() * MPU_GYRO_SCALE };
     fails_ = 0;
     remap_(a, acc);
     remap_(g, gyr);

@@ -15,6 +15,11 @@ the HUD does all the maths itself; the app only receives numbers.
   horizontal). Gravity is carried by the gyro and only re-read from the
   accelerometer when that is gravity: parked, or driving steadily in a straight
   line, so braking, pulling away and corners do not bend it.
+- **A quick lift does not swing the arrow either.** The gyro runs at ±1000 °/s,
+  not ±250: a hand lifting the screen turns it faster than 250 °/s, the chip
+  clipped, and the turn it did not report was missing from gravity — the
+  heading swung about 37° and jumped back once the box was still. A car turns
+  at under 100 °/s.
 - **The HUD sends the car's turn rate as `$IMU`** (PROTOCOL.md), 20 times a
   second, about the true vertical so a crooked box does not matter. The app
   already prefers it to the phone's own gyroscope. It starts once the gyro's
