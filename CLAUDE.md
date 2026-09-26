@@ -69,7 +69,9 @@ Waze / Google Maps everywhere.
   what, where to look when something breaks); keep it that way.
 - Heading: `hud_heading.h` is pure maths (tilt-compensated heading from the
   MPU's gravity, gyro-carried and re-read only when parked or driving steadily;
-  turn rate about the true vertical for `$IMU`; `spin` in the true horizontal),
+  turn rate about the true vertical for `$IMU`; `spin` flat in the true
+  horizontal, or turned every way for a sphere fit that measures the vertical
+  part of the offset too),
   host-tested by `test_heading.cpp`. The chips are `hud_compass.h` (the
   QMC5883P by direct register access, exactly 2.9's bytes and order — no
   library: Adafruit's failed on this chip in 2.1 and again in 3.0's first

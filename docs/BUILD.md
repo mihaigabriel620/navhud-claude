@@ -209,7 +209,10 @@ box itself can then sit at any angle on the dash.
 **Calibration.** The gyro's zero is learned by itself whenever the car is
 parked — two seconds after the key goes in, and topped up at every stop. The
 compass still wants one `spin` (a slow full circle, then `spin stop`), which
-with the MPU fitted is right at whatever angle the box sits.
+with the MPU fitted is right at whatever angle the box sits. For the heading
+to hold while the box is tilted by hand, as on the desk, do one `spin` on the
+desk first turning the box every way (like a phone's figure 8): that measures
+the vertical part of the offset too, and the flat circle in the car keeps it.
 
 **You do not need it.** Without it the compass is the flat one — right only
 with the box level — and the app uses the phone's own gyroscope, or plain GPS

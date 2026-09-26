@@ -105,8 +105,8 @@ every line that does not start with `$`.
 | `help` | lists these |
 | `status` | everything the board currently knows: link, bus, sensors, calibration |
 | `wipe` | rebuild the screen in four stages, to find where a mark comes from |
-| `spin` | start the compass calibration: drive a slow circle, or turn the box round on the dash |
-| `spin stop` | finish it: kept if both axes swept far enough, otherwise it says why and keeps going |
+| `spin` | start the compass calibration: drive a slow circle, or turn the box round flat; on the desk, turn it every way (tipped forward, back and onto both sides while turning, like a phone's figure 8), which also measures the vertical part that tilting needs |
+| `spin stop` | finish it: kept as "flat" if both horizontal directions swept far enough with the box flat, as "every way" if the samples covered enough of the sphere; otherwise it says how far each got and keeps going. A flat one keeps the vertical part an every-way one measured |
 | `north <deg>` | "the car is pointing this way now" (0-359): sets the compass's north offset |
 | `forget` | erase the compass calibration |
 | `save` | write the waiting calibration to flash now (it otherwise waits for a standstill) |

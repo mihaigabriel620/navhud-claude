@@ -28,11 +28,20 @@ the HUD does all the maths itself; the app only receives numbers.
 - **`spin` is tilt-correct**: the circle is measured in the true horizontal, so
   a tilted box no longer puts part of the Earth's vertical field into the
   offset. The per-axis soft-iron gains are gone (they assumed a level box).
+- **`spin` can also be done every way**, like a phone's figure 8: tip the box
+  forward, back and onto both sides while turning it, and `spin stop` fits a
+  sphere and measures all three axes of the offset. A flat circle cannot see
+  the vertical one, and tilting the screen brings it into the heading: on the
+  owner's desk the arrow swung when the screen was lifted — 15 µT of it is 32°
+  at 45° of tilt, and 0.04° after an every-way `spin`. A flat `spin` later, in
+  the car, keeps the vertical part. `spin stop` says which kind it kept, or how
+  far each got.
 - **Without the MPU nothing changes**: the same flat compass as 2.9, no `$IMU`.
   Either chip can be missing at boot and is looked for again every 3 s.
 
-**After flashing**: type `spin` once and drive (or turn the box) a full
-circle, then `spin stop`. The saved calibration changed format and the 2.9 one
+**After flashing**: on the desk, type `spin`, turn the box every way for half a
+minute, `spin stop`, `save`; in the car, `spin` and a slow full circle, then
+`spin stop`. The saved calibration changed format and the 2.9 one
 is refused rather than misread. `north` is optional since app 1.34. In the car
 the calibration is written to flash at the first stop; on the desk, where no
 speed ever arrives, the new `save` command writes it at once.

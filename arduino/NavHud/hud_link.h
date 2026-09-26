@@ -471,9 +471,10 @@ static void magQueueSave() {
 /**
  * spin -- start or finish a compass calibration.
  *
- * Drive a slow full circle, or pick the board up and turn it round. The result
- * is kept only if both horizontal axes actually swept an arc: a calibration
- * taken while parked would centre the circle on wherever the car happened to be
+ * Drive a slow full circle, or pick the board up and turn it round flat -- or
+ * every way, which measures the vertical part too (HudHeading::calStart). The
+ * result is kept only if the samples really went round: a calibration taken
+ * while parked would centre the circle on wherever the car happened to be
  * pointing, which is worse than none at all because it looks like it worked.
  */
 static void cmdSpin(const char* rest) {
@@ -485,26 +486,46 @@ static void cmdSpin(const char* rest) {
     // silently ends the session while printing "keep going".
     if (heading.calFinish()) {
       magQueueSave();
-      diag("calibration accepted. Saving at the next standstill, or type `save`.");
+      snprintf(b, sizeof b, "calibration accepted, %s. Saving at the next standstill, or type `save`.",
+               heading.calEveryWay ? "every way" : "flat");
+      diag(b);
       snprintf(b, sizeof b, "  offset %+.1f %+.1f %+.1f uT",
                heading.offset[0], heading.offset[1], heading.offset[2]);
       diag(b);
+      if (heading.calEveryWay) {
+        snprintf(b, sizeof b, "  field %.1f uT, the samples within %.1f uT of it",
+                 heading.calRadiusUt, heading.calFitUt);
+        diag(b);
+      } else {
+        diag("  (the vertical part is unchanged: only turning it every way measures it)");
+      }
     } else {
-      // Two lines rather than one: the single string overran b[128] and the
-      // compiler was right to say so -- it was being cut off mid-sentence.
-      snprintf(b, sizeof b, "not enough yet: %u samples of %d, and both",
+      // One line per way, each saying how far it got. Short lines: a single
+      // string overran b[128] once and was cut off mid-sentence.
+      snprintf(b, sizeof b, "not enough yet: %u samples (%d needed).",
                (unsigned)heading.calCount(), (int)COMPASS_CAL_MIN_SAMPLES);
       diag(b);
-      snprintf(b, sizeof b,
-               "horizontal directions must sweep %.0f uT. Keep turning, then `spin stop`.",
-               (double)COMPASS_CAL_MIN_SPAN_UT);
+      snprintf(b, sizeof b, "  flat: swept %.0f and %.0f uT of %.0f each, %s",
+               heading.calSpan(0), heading.calSpan(1), (double)COMPASS_CAL_MIN_SPAN_UT,
+               heading.calSpan(2) <= COMPASS_CAL_FLAT_UT ? "kept flat" : "but it was tipped");
       diag(b);
+      if (heading.calCover < COMPASS_CAL_COVER) {
+        snprintf(b, sizeof b, "  every way: %.0f%% of the tipping needed",
+                 100.0 * heading.calCover / COMPASS_CAL_COVER);
+      } else {
+        snprintf(b, sizeof b, "  every way: a %.1f uT field, the samples %.1f uT off it -- a magnet near?",
+                 heading.calRadiusUt, heading.calFitUt);
+      }
+      diag(b);
+      diag("Keep going, then `spin stop`.");
     }
     return;
   }
   heading.calStart();
-  diag("calibrating. Drive a slow full circle, or turn the box right round on");
-  diag("the dash, then type `spin stop`.");
+  diag("calibrating. In the car: drive a slow full circle. On the desk: turn the");
+  diag("box every way -- tip it forward, back and onto both sides while turning");
+  diag("it, like a phone's figure 8 -- which also measures what tilting the screen");
+  diag("needs. Then type `spin stop`.");
 }
 
 /**

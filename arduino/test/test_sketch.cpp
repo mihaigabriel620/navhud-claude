@@ -918,6 +918,47 @@ int main() {
           "a second `save` has nothing to do");
     car.kmh = 0.0f;
   }
+
+  printf("18l. `spin` turned every way on the desk measures all three axes\n");
+  {
+    // Rolled right over at three headings, then flipped end over end, through
+    // the fake chips. One axis at a time, so each body rate is just that
+    // axis's: roll right-side-down is +X, nose up -Y, clockwise -Z.
+    auto rotate = [](int axis, double dps, double deg) {
+      for (int i = 0; i < (int)(deg / dps / 0.01 + 0.5); i++) {
+        if (axis == 0) { Wire.box.rollDeg += dps * 0.01; Wire.box.rateXDps = dps; }
+        if (axis == 1) { Wire.box.pitchDeg += dps * 0.01; Wire.box.rateYDps = -dps; }
+        if (axis == 2) { Wire.box.headingDeg += dps * 0.01; Wire.box.rateZDps = -dps; }
+        g_millis += 10; pump(1);
+      }
+      Wire.box.rateXDps = Wire.box.rateYDps = Wire.box.rateZDps = 0;
+    };
+    Serial.feed("spin\r\n");
+    g_millis += 10; pump(1);
+    rotate(0, 90, 90);                             // a quarter roll: not enough either way
+    Serial.out_.clear();
+    Serial.feed("spin stop\r\n");
+    g_millis += 10; pump(1);
+    CHECK(Serial.out_.find("not enough yet") != std::string::npos &&
+          Serial.out_.find("  every way: ") != std::string::npos && heading.calibrating(),
+          "stopped early: refused, how far each way got, and still running");
+    const size_t e = Serial.out_.find("  flat:");
+    if (e != std::string::npos) printf("    %s\n", Serial.out_.substr(e, Serial.out_.find("Keep") - e - 2).c_str());
+    rotate(0, 90, 270);
+    for (int k = 0; k < 3; k++) { rotate(2, 90, 60); rotate(0, 90, 360); }
+    rotate(1, 90, 360);
+    Serial.out_.clear();
+    Serial.feed("spin stop\r\n");
+    g_millis += 10; pump(1);
+    CHECK(Serial.out_.find("calibration accepted, every way") != std::string::npos,
+          "accepted as every way");
+    CHECK(fabsf(heading.offset[0]) < 0.5f && fabsf(heading.offset[1]) < 0.5f &&
+          fabsf(heading.offset[2]) < 0.5f, "and the fake chip's offset is none at all");
+    const size_t at = Serial.out_.find("  field");
+    if (at != std::string::npos) printf("    %s\n", Serial.out_.substr(at, Serial.out_.find('\r', at) - at).c_str());
+    Wire.box.rollDeg = 0; Wire.box.pitchDeg = 0;
+    Wire.box.headingDeg = fmod(Wire.box.headingDeg, 360.0);
+  }
 #endif
 
   printf("19. the six display states\n");

@@ -54,6 +54,24 @@
 #ifndef COMPASS_CAL_MIN_SPAN_UT
   #define COMPASS_CAL_MIN_SPAN_UT 25.0f
 #endif
+/**
+ * A flat circle stays within this along the vertical it started from,
+ * microtesla. A sloping car park moves it by a few, a hand turning the box on
+ * the desk with 8 degrees of wobble by about 8.
+ */
+#ifndef COMPASS_CAL_FLAT_UT
+  #define COMPASS_CAL_FLAT_UT 12.0f
+#endif
+/**
+ * Turned every way: how thick the cloud of samples must be in its thinnest
+ * direction, as a fraction of the field. A flat circle is 0.02; tipping the box
+ * 25 degrees each way while turning it, 0.11; 60 degrees, 0.25.
+ */
+#ifndef COMPASS_CAL_COVER
+  #define COMPASS_CAL_COVER 0.1f
+#endif
+/** Turned every way, the samples must lie this close to a sphere, as a fraction of it. */
+#define COMPASS_CAL_FIT 0.1f
 /** Earth's field is 25-65 uT; outside this something magnetic is close. */
 #define COMPASS_MIN_FIELD_UT  15.0f
 #define COMPASS_MAX_FIELD_UT  120.0f
@@ -201,10 +219,17 @@ class HudHeading {
 
   // ---- calibration -----------------------------------------------------------
 
+  /** What the last calFinish() found, for `spin stop` to report. */
+  bool  calEveryWay = false;             // the one accepted measured all three axes
+  float calCover = 0;                    // see COMPASS_CAL_COVER
+  float calRadiusUt = 0, calFitUt = 0;   // the sphere, and how far the samples were off it
+  /** How far the samples swept along the two horizontal directions (0, 1) and the vertical (2). */
+  float calSpan(uint8_t i) const { return hi_[i] > lo_[i] ? hi_[i] - lo_[i] : 0.0f; }
+
   /**
-   * Start a hard-iron calibration: drive a slow full circle, or turn the box
-   * round on the dash's plane.
+   * Start a hard-iron calibration. Two ways, told apart at the end:
    *
+   * FLAT: drive a slow full circle, or turn the box round on the dash's plane.
    * The circle the field traces is flat in the TRUE horizontal, which is only
    * the box's XY plane when the box is level. So the extremes are taken along
    * two horizontal directions worked out from `up` now, and the offset kept is
@@ -212,6 +237,13 @@ class HudHeading {
    * axes -- as the flat compass did -- puts part of the Earth's vertical field
    * into the offset as soon as the box is tilted, and the tilt compensation
    * then works from a field that is not the Earth's.
+   *
+   * EVERY WAY: on the desk, tip the box forward, back and onto both sides while
+   * turning it, like a phone's figure 8. The field then traces a sphere round
+   * the offset, and its centre is all three axes of it -- including the
+   * vertical part a flat circle cannot see, which is what tilting the screen
+   * brings into the heading: 15 uT of it swung the heading 32 degrees at 45
+   * degrees of tilt.
    */
   void calStart() {
     calOn_ = true; calN_ = 0;
@@ -224,7 +256,11 @@ class HudHeading {
     normalize_(h);
     memcpy(h1_, h, sizeof h1_);
     cross_(up, h1_, h2_);
-    lo_[0] = lo_[1] = 1e9f; hi_[0] = hi_[1] = -1e9f;
+    memcpy(h3_, up, sizeof h3_);
+    for (uint8_t i = 0; i < 3; i++) { lo_[i] = 1e9f; hi_[i] = -1e9f; }
+    sN_ = sQ_ = sQQ_ = 0;
+    for (uint8_t i = 0; i < 3; i++) { sU_[i] = 0; sQU_[i] = 0; }
+    for (uint8_t i = 0; i < 6; i++) sUU_[i] = 0;
   }
 
   /**
@@ -235,16 +271,30 @@ class HudHeading {
    */
   bool calFinish() {
     if (calN_ < COMPASS_CAL_MIN_SAMPLES) return false;
-    // Both horizontal directions must have swept a real arc. One alone means
-    // the box was rocked, not turned, and the centre from that is nonsense.
-    if (hi_[0] - lo_[0] < COMPASS_CAL_MIN_SPAN_UT) return false;
-    if (hi_[1] - lo_[1] < COMPASS_CAL_MIN_SPAN_UT) return false;
-
-    // The centre, in the horizontal plane only. Along `up` the car's own field
-    // and the Earth's vertical one look the same and cannot be told apart, and
-    // along `up` they cannot move the heading either.
-    const float c1 = (hi_[0] + lo_[0]) * 0.5f, c2 = (hi_[1] + lo_[1]) * 0.5f;
-    for (uint8_t i = 0; i < 3; i++) offset[i] = c1 * h1_[i] + c2 * h2_[i];
+    float o[3];
+    const bool everyWay = sphere_(o);
+    // Flat is looked at first: its centre is the midpoint of extremes, which
+    // stays exact for a field the metal round the chip has made egg-shaped,
+    // where a sphere fitted to part of the egg is pulled off centre. Both
+    // horizontal directions must have swept a real arc -- one alone means the
+    // box was rocked, not turned -- and the box must have stayed flat, or the
+    // extremes are not the circle's.
+    if (calSpan(0) >= COMPASS_CAL_MIN_SPAN_UT && calSpan(1) >= COMPASS_CAL_MIN_SPAN_UT &&
+        calSpan(2) <= COMPASS_CAL_FLAT_UT) {
+      // The centre, in the horizontal plane only. Along `up` the car's own
+      // field and the Earth's vertical one look the same and cannot be told
+      // apart, so that part stays what it was: measured by an every-way
+      // calibration, or nothing.
+      const float c1 = (hi_[0] + lo_[0]) * 0.5f, c2 = (hi_[1] + lo_[1]) * 0.5f;
+      const float keep = dot_(offset, h3_);
+      for (uint8_t i = 0; i < 3; i++) offset[i] = c1 * h1_[i] + c2 * h2_[i] + keep * h3_[i];
+      calEveryWay = false;
+    } else if (everyWay) {
+      memcpy(offset, o, sizeof offset);
+      calEveryWay = true;
+    } else {
+      return false;
+    }
     calOn_ = false;
     haveCal_ = true;
     return true;
@@ -324,8 +374,14 @@ class HudHeading {
 
   bool     calOn_ = false, haveCal_ = false;
   uint16_t calN_ = 0;
-  float    h1_[3] = { 1, 0, 0 }, h2_[3] = { 0, 1, 0 };
-  float    lo_[2] = { 1e9f, 1e9f }, hi_[2] = { -1e9f, -1e9f };
+  float    h1_[3] = { 1, 0, 0 }, h2_[3] = { 0, 1, 0 }, h3_[3] = { 0, 0, 1 };
+  float    lo_[3] = { 1e9f, 1e9f, 1e9f }, hi_[3] = { -1e9f, -1e9f, -1e9f };
+  // The every-way sums, of u = m - ref_ and q = |u|^2. Doubles: they are what
+  // the sphere is solved from, and a few thousand samples of q*q overrun a
+  // float's seven digits.
+  float    ref_[3] = { 0, 0, 0 };
+  double   sN_ = 0, sQ_ = 0, sQQ_ = 0, sU_[3] = { 0, 0, 0 }, sQU_[3] = { 0, 0, 0 };
+  double   sUU_[6] = { 0, 0, 0, 0, 0, 0 };  // xx xy xz yy yz zz
 
   float    gRef_ = 1.0f;                 // what this accelerometer reads for 1 g
   float    rateSum_ = 0, rateT_ = 0;
@@ -446,12 +502,92 @@ class HudHeading {
     // Plain extremes. Noise pushes both ends out alike, which moves the span
     // and not the centre; a dead band on the bounds, which the flat compass
     // had, held each end short by up to its width and moved the centre.
-    const float p[2] = { dot_(m, h1_), dot_(m, h2_) };
-    for (uint8_t i = 0; i < 2; i++) {
+    const float p[3] = { dot_(m, h1_), dot_(m, h2_), dot_(m, h3_) };
+    for (uint8_t i = 0; i < 3; i++) {
       if (p[i] < lo_[i]) lo_[i] = p[i];
       if (p[i] > hi_[i]) hi_[i] = p[i];
     }
     if (calN_ < 65000) calN_++;
+
+    // Every way. Relative to the first sample, so the sums stay small.
+    if (sN_ == 0) memcpy(ref_, m, sizeof ref_);
+    double u[3];
+    for (uint8_t i = 0; i < 3; i++) u[i] = (double)m[i] - ref_[i];
+    const double q = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+    sN_ += 1; sQ_ += q; sQQ_ += q * q;
+    for (uint8_t i = 0; i < 3; i++) { sU_[i] += u[i]; sQU_[i] += q * u[i]; }
+    sUU_[0] += u[0] * u[0]; sUU_[1] += u[0] * u[1]; sUU_[2] += u[0] * u[2];
+    sUU_[3] += u[1] * u[1]; sUU_[4] += u[1] * u[2]; sUU_[5] += u[2] * u[2];
+  }
+
+  /**
+   * The every-way offset: the centre of the sphere the samples lie on. Least
+   * squares on |u|^2 = 2 u.c + k, which is linear in the centre c and in k =
+   * R^2 - |c|^2. False unless the samples cover enough of the sphere -- a flat
+   * circle fits any sphere through it, and the vertical then comes out as
+   * noise -- and lie on it.
+   */
+  bool sphere_(float* o) {
+    calCover = calRadiusUt = calFitUt = 0;
+    const double n = sN_;
+    if (n < 4) return false;
+    const double* S = sUU_;
+    double a[4][5] = {
+      { 4 * S[0], 4 * S[1], 4 * S[2], 2 * sU_[0], 2 * sQU_[0] },
+      { 4 * S[1], 4 * S[3], 4 * S[4], 2 * sU_[1], 2 * sQU_[1] },
+      { 4 * S[2], 4 * S[4], 4 * S[5], 2 * sU_[2], 2 * sQU_[2] },
+      { 2 * sU_[0], 2 * sU_[1], 2 * sU_[2], n, sQ_ } };
+    double c[4];
+    if (!solve4_(a, c)) return false;
+    const double r2 = c[3] + c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+    if (!(r2 > 0)) return false;
+    const double r = sqrt(r2);
+
+    // How far off the sphere the samples were: the equation's residual is
+    // about 2R times the distance. Summed from the same sums, no second pass.
+    const double cSc = c[0] * c[0] * S[0] + c[1] * c[1] * S[3] + c[2] * c[2] * S[5] +
+                       2 * (c[0] * c[1] * S[1] + c[0] * c[2] * S[2] + c[1] * c[2] * S[4]);
+    const double ssr = sQQ_ + 4 * cSc + n * c[3] * c[3] -
+                       4 * (c[0] * sQU_[0] + c[1] * sQU_[1] + c[2] * sQU_[2]) - 2 * c[3] * sQ_ +
+                       4 * c[3] * (c[0] * sU_[0] + c[1] * sU_[1] + c[2] * sU_[2]);
+
+    // How thick the cloud is in its thinnest direction. For the covariance,
+    // det / (sum of its principal 2x2 minors) lies between a third of the
+    // smallest eigenvalue and the smallest eigenvalue, with no eigen-solver.
+    const double m0 = sU_[0] / n, m1 = sU_[1] / n, m2 = sU_[2] / n;
+    const double xx = S[0] / n - m0 * m0, xy = S[1] / n - m0 * m1, xz = S[2] / n - m0 * m2,
+                 yy = S[3] / n - m1 * m1, yz = S[4] / n - m1 * m2, zz = S[5] / n - m2 * m2;
+    const double det = xx * (yy * zz - yz * yz) - xy * (xy * zz - yz * xz) + xz * (xy * yz - yy * xz);
+    const double minors = xx * yy - xy * xy + xx * zz - xz * xz + yy * zz - yz * yz;
+
+    calRadiusUt = (float)r;
+    calFitUt = (float)(sqrt(ssr > 0 ? ssr / n : 0) / (2 * r));
+    calCover = (float)(det > 0 && minors > 0 ? sqrt(det / minors) / r : 0);
+    if (calCover < COMPASS_CAL_COVER) return false;
+    if (r < COMPASS_MIN_FIELD_UT || r > COMPASS_MAX_FIELD_UT) return false;
+    if (calFitUt > COMPASS_CAL_FIT * r) return false;
+    for (uint8_t i = 0; i < 3; i++) o[i] = (float)(ref_[i] + c[i]);
+    return true;
+  }
+
+  /** a x = the last column, 4 by 4, partial pivoting. False when singular. */
+  static bool solve4_(double a[4][5], double* x) {
+    for (uint8_t c = 0; c < 4; c++) {
+      uint8_t p = c;
+      for (uint8_t r = c + 1; r < 4; r++) if (fabs(a[r][c]) > fabs(a[p][c])) p = r;
+      if (!(fabs(a[p][c]) > 1e-9)) return false;
+      if (p != c) for (uint8_t k = 0; k < 5; k++) { const double t = a[c][k]; a[c][k] = a[p][k]; a[p][k] = t; }
+      for (uint8_t r = c + 1; r < 4; r++) {
+        const double f = a[r][c] / a[c][c];
+        for (uint8_t k = c; k < 5; k++) a[r][k] -= f * a[c][k];
+      }
+    }
+    for (int8_t r = 3; r >= 0; r--) {
+      double s = a[r][4];
+      for (uint8_t k = r + 1; k < 4; k++) s -= a[r][k] * x[k];
+      x[r] = s / a[r][r];
+    }
+    return true;
   }
 };
 

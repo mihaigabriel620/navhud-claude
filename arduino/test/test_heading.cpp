@@ -390,6 +390,99 @@ int main() {
     CHECK(fabs(c.h.bias[2]) < 0.01, "the turn did not move the bias");
   }
 
+  // The owner's desk, 3.0's first build: `spin` turned the box round flat, the
+  // screen was lifted, and the arrow swung. The box's own field has a vertical
+  // part, and a flat circle cannot see it.
+  printf("13. turned every way, the vertical part is measured too, and lifting holds\n");
+  Car every;
+  {
+    Car flat;
+    Car* cars[2] = { &flat, &every };
+    for (Car* c : cars) {
+      c->speed = -1;                               // the desk: no bus
+      c->hardIron[0] = 3.4; c->hardIron[1] = -11.2; c->hardIron[2] = 15;
+      c->box.headingDeg = 250;
+      c->hold(3);
+      c->h.calStart();
+    }
+    for (int i = 0; i < 1300; i++) flat.step(30);  // round on the desk, 520 deg
+    for (int i = 0; i < 1500; i++) {               // 30 s, tipped up to 60 deg every way
+      const double t = i * 0.02;
+      const double p = 60 * sin(2 * M_PI * t / 9), r = 60 * sin(2 * M_PI * t / 13);
+      every.step(25, (p - every.box.pitchDeg) / 0.02, (r - every.box.rollDeg) / 0.02);
+    }
+    CHECK(flat.h.calFinish() && !flat.h.calEveryWay, "round and flat: a flat calibration");
+    CHECK(every.h.calFinish() && every.h.calEveryWay, "every way: an every-way one");
+    CHECK(fabs(every.h.offset[0] - 3.4) < 0.3 && fabs(every.h.offset[1] + 11.2) < 0.3 &&
+          fabs(every.h.offset[2] - 15) < 0.3, "with all three axes of the offset");
+    printf("    every way: offset %.2f %.2f %.2f uT, field %.1f uT, fit %.2f uT, cover %.2f\n",
+           every.h.offset[0], every.h.offset[1], every.h.offset[2], every.h.calRadiusUt,
+           every.h.calFitUt, every.h.calCover);
+
+    // Level at every heading, then the screen lifted 45 deg at 90 deg/s.
+    double worst[2] = { 0, 0 };
+    for (int k = 0; k < 2; k++) {
+      Car& c = *cars[k];
+      c.box.pitchDeg = 0; c.box.rollDeg = 0;
+      c.hold(2);
+      for (int hd = 0; hd < 360; hd += 30) {
+        c.box.headingDeg = hd; c.hold(1.2);
+        for (int i = 0; i < 25; i++) c.step(0, 90);
+        c.hold(0.3);
+        worst[k] = fmax(worst[k], fabs(angDiff(c.h.deg, hd)));
+        for (int i = 0; i < 25; i++) c.step(0, -90);
+      }
+    }
+    CHECK(worst[0] > 20, "after a flat one, lifting the screen swings the heading");
+    CHECK(worst[1] < 1.0, "after an every-way one it does not");
+    printf("    lifted 45 deg: flat calibration %.1f deg out, every way %.2f deg\n",
+           worst[0], worst[1]);
+  }
+
+  printf("14. then a flat circle in the car keeps the vertical part\n");
+  {
+    every.hardIron[0] += 6; every.hardIron[1] -= 4;   // the car's own metal, round the dash
+    every.box.pitchDeg = 0; every.box.rollDeg = 0;
+    every.hold(3);
+    every.h.calStart();
+    every.speed = 3;
+    for (int i = 0; i < 1100; i++) every.step(20);
+    every.speed = 0;
+    CHECK(every.h.calFinish() && !every.h.calEveryWay, "a flat calibration");
+    CHECK(fabs(every.h.offset[0] - 9.4) < 0.3 && fabs(every.h.offset[1] + 15.2) < 0.3 &&
+          fabs(every.h.offset[2] - 15) < 0.3, "the horizontal part new, the vertical part kept");
+    double worst = 0;
+    for (int hd = 0; hd < 360; hd += 30) {
+      every.box.headingDeg = hd; every.hold(1.2);
+      for (int i = 0; i < 25; i++) every.step(0, 90);
+      every.hold(0.3);
+      worst = fmax(worst, fabs(angDiff(every.h.deg, hd)));
+      for (int i = 0; i < 25; i++) every.step(0, -90);
+    }
+    CHECK(worst < 1.0, "so lifting still holds");
+    printf("    offset %.2f %.2f %.2f uT, lifted 45 deg %.2f deg out\n",
+           every.h.offset[0], every.h.offset[1], every.h.offset[2], worst);
+  }
+
+  printf("15. tipped about a little, neither flat nor every way, is refused\n");
+  {
+    Car c;
+    c.speed = -1;
+    c.hardIron[2] = 15;
+    c.hold(3);
+    c.h.calStart();
+    for (int i = 0; i < 1500; i++) {               // turned round, wobbling 16 deg
+      const double t = i * 0.02;
+      const double p = 16 * sin(2 * M_PI * t / 3), r = 16 * sin(2 * M_PI * t / 4.1);
+      c.step(30, (p - c.box.pitchDeg) / 0.02, (r - c.box.rollDeg) / 0.02);
+    }
+    CHECK(!c.h.calFinish() && c.h.calibrating(), "refused, and still running");
+    CHECK(c.h.calSpan(2) > COMPASS_CAL_FLAT_UT && c.h.calCover < COMPASS_CAL_COVER,
+          "for being neither");
+    printf("    vertical sweep %.1f uT (flat is under %.0f), cover %.3f (every way is %.2f)\n",
+           c.h.calSpan(2), (double)COMPASS_CAL_FLAT_UT, c.h.calCover, (double)COMPASS_CAL_COVER);
+  }
+
   printf(failures ? "\n%d CHECK(s) FAILED\n" : "\nall checks passed\n", failures);
   return failures ? 1 : 0;
 }
